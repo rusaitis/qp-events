@@ -184,8 +184,96 @@
   - Remove original scripts after they're absorbed into `src/qp/` + `scripts/`
   - Remove old `cassinilib/`, `wavesolver/`, `KMAGhelper/`
 
-- [ ] **32. Final verification**
-  - `pixi run pytest` — all tests pass
-  - `pixi run python -c "import qp"` — clean import
+- [x] **32. Final verification**
+  - `uv run pytest` — all tests pass
+  - `uv run python -c "import qp"` — clean import
   - All 13 figures reproduced and compared against originals
   - No circular imports, no star imports, no hardcoded paths
+
+---
+
+## Phase 6: Dwell Time Grid from Raw PDS Data
+
+Build a clean dwell-time accumulation pipeline from raw PDS MAG data. Accumulate
+spacecraft time into a spherical grid (r, magnetic\_latitude, local\_time) plus
+invariant latitude via KMAG tracing. Store as xarray Dataset in zarr format with
+full metadata.
+
+### 6A — Infrastructure
+
+- [x] **33. Add xarray + zarr dependencies**
+  - Add `xarray` and `zarr` to pyproject.toml dependencies
+  - `uv sync` to install
+
+- [x] **34. Create `src/qp/dwell/grid.py`**
+  - `DwellGridConfig` dataclass: r\_bins, lat\_bins, lt\_bins, inv\_lat\_bins,
+    r\_range, lat\_range, lt\_range, with sensible defaults
+    (60×90×48 = r 0–60 R\_S @ 1 R\_S, lat -90°–90° @ 2°, LT 0–24h @ 0.5h)
+  - `accumulate_dwell_time(x, y, z, dt_minutes, config)` → 3D numpy array
+    Converts KSM (x,y,z) → (r, mag\_lat, LT) using qp.coords.ksm, bins, accumulates
+  - `accumulate_with_regions(x, y, z, region_codes, dt_minutes, config)` → dict of 3D arrays
+    Separate grids for total / MS / SH / SW
+
+- [x] **35. Create `src/qp/dwell/io.py`**
+  - `to_xarray(grids_dict, config, attrs)` → xarray.Dataset with named dims (r, mag\_lat, lt),
+    coordinate arrays (bin centers), and metadata attributes
+  - `save_zarr(dataset, path)` / `load_zarr(path)` → xarray.Dataset
+
+- [x] **36. Create `src/qp/dwell/tracing.py`**
+  - `compute_invariant_latitudes(x, y, z, times_unix, trace_every_n=60, step=0.1)`
+    → arrays of (inv\_lat\_north, inv\_lat\_south, is\_closed)
+  - Uses SaturnField + trace\_fieldline\_bidirectional + conjugate\_latitude
+  - Configurable `trace_every_n` (minutes) to control speed/accuracy tradeoff
+  - Progress logging every 1000 traces
+
+- [x] **37. Create `src/qp/dwell/__init__.py`**
+  - Export DwellGridConfig, accumulate\_dwell\_time, accumulate\_with\_regions,
+    compute\_invariant\_latitudes, to\_xarray, save\_zarr, load\_zarr
+
+### 6B — Testing
+
+- [x] **38. Create `tests/test_dwell_grid.py`** (26 tests, all passing)
+  - Test: single point bins into correct (r, lat, LT) cell
+  - Test: uniform circular orbit → uniform LT distribution
+  - Test: total accumulated time = n\_points × dt
+  - Test: region filtering separates MS / SH / SW correctly
+  - Test: grid symmetry for orbit symmetric about equator
+  - Test: edge cases — poles, midnight/noon LT boundary, r = 0
+  - Test: DwellGridConfig with different bin counts produces correct shapes
+  - Test: xarray round-trip (to\_xarray → save\_zarr → load\_zarr → compare)
+  - Test: xarray Dataset has correct dimension names, coordinate values, attrs
+  - Test: invariant latitude from dipole field matches analytical |lat\_footpoint|
+
+### 6C — Processing Script
+
+- [x] **39. Create `scripts/compute_dwell_grid.py`**
+  - CLI flags: `--year-from`, `--year-to`, `--year`, `--trace-every`,
+    `--output`, `--no-trace`
+  - Read raw PDS KSM 1-min data year by year via qp.io.pds
+  - Build crossing timeline from BS\_MP\_Crossing.txt (raw text, not .npy)
+  - For each year:
+    - Parse x, y, z from PDS rows
+    - Compute r, mag\_lat, LT
+    - Look up region code for each timestamp
+    - Accumulate into spatial grid
+  - If tracing enabled:
+    - Subsample at `--trace-every` cadence
+    - Run KMAG traces, compute invariant latitudes
+    - Accumulate into inv\_lat grid
+  - Build xarray Dataset, attach metadata (mission dates, total samples, git hash)
+  - Save to zarr
+  - Print validation: total hours vs expected, per-region breakdown
+
+### 6D — Verification Plots
+
+- [x] **40. Create `scripts/plot_dwell_slices.py`**
+  - Load zarr dataset
+  - **Equatorial slice** (|lat| < 5°): 2D polar heatmap in (r, LT) — shows
+    where Cassini spent time near Saturn's equatorial plane
+  - **Noon-midnight meridian** (x-z plane, LT ≈ 0h & 12h): 2D (r, lat) heatmap
+  - **Dawn-dusk meridian** (y-z plane, LT ≈ 6h & 18h): 2D (r, lat) heatmap
+  - **Orbit trajectory overlay**: scatter raw (x, y) positions on equatorial slice
+  - **Total time integral**: sum all bins, compare with (MISSION\_END - MISSION\_START)
+    ≈ 13.2 years ≈ 115,500 hours. Print and assert within 1%
+  - **Region breakdown bar chart**: total hours in MS / SH / SW / unknown
+  - Paper style, dark background, save to Output/

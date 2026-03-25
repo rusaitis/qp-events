@@ -14,6 +14,8 @@ dependencies = [
     "seaborn",
     "pandas",
     "numba",
+    "xarray",
+    "zarr",
 ]
 
 [project.optional-dependencies]
@@ -48,3 +50,4 @@ ignore = ["E402"]
 "__init__.py" = ["F401", "F403"]
 "src/qp/fieldline/_numba_kernels.py" = ["E501", "E702"]
 "tests/*" = ["E501"]
+"scripts/*" = ["E501"]
