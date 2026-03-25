@@ -1,0 +1,122 @@
+# Build directories
+build*/
+Debug*/
+Release*/
+data*/
+
+# Example files
+examples/
+
+# Local build and notes
+PLAN.md
+NOTES.md
+plan-*.md
+
+# Pixi
+.pixi/
+
+# Test artifacts
+tests/*.png
+tests/*.csv
+tests/test_output*/
+
+# Script output
+scripts/output/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.ipynb_checkpoints/
+
+# Eclipse IDE
+.cproject
+.project
+.settings/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# Compiled output
+*.o
+*.a
+*.so
+*.dylib
+
+# Scratch/local directories
+scratch*/
+.cache/
+
+# Tags files (ctags/gtags)
+tags
+TAGS
+.tags
+
+# macOS
+.DS_Store
+
+# VS Code
+.vscode/
+
+# Vim / Neovim
+*.swp
+*.swo
+*~
+.netrwhist
+*.un~
+
+# Vim sessions
+Session.vim
+*.vim.session
+
+# Neovim
+.nvim/
+.nvimrc.lua
+
+# LLM config
+CLAUDE.md
+CLAUDE.local.md
+.claude/settings.local.json
+.claude/cache/
+.claude/tmp/
+.claude/
+.cursorrules
+.cursor/
+.copilot/
+copilot-instructions.md
+
+# Cassini data (25 GB PDS archive)
+DATA/
+
+# Generated output (.npy files, figures — 1.5 GB)
+Output/
+
+# KMAG compiled Fortran binary (platform-specific, rebuild from source)
+KMAGhelper/KMAG
+fortran/KMAG
+
+# Fortran egg-info
+*.egg-info/
+
+# Output and data files (common in simulation codes)
+*.h5
+*.hdf5
+*.dat
+*.log
+
+# Images and plots (top-level generated output; Documentation/ is tracked)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.svg
+/*.mp4
+# pixi environments
+.pixi/*
+!.pixi/config.toml

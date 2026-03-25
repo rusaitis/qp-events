@@ -1,0 +1,50 @@
+[project]
+name = "qp"
+version = "0.1.0"
+description = "Analysis of quasi-periodic Alfvén waves in Saturn's magnetosphere"
+authors = [
+    { name = "Liutauras Rusaitis", email = "liutauras.rusaitis@nasa.gov" },
+]
+requires-python = ">=3.13"
+dependencies = [
+    "numpy",
+    "scipy",
+    "matplotlib",
+    "statsmodels",
+    "seaborn",
+    "pandas",
+    "numba",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "mypy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E402"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"src/qp/fieldline/_numba_kernels.py" = ["E501", "E702"]
+"tests/*" = ["E501"]
