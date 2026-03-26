@@ -32,7 +32,43 @@ def magnetic_latitude(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> np.ndarray:
     # Offset to dipole origin
     z_off = z - DIPOLE_OFFSET_Z
     r = np.sqrt(x**2 + y**2 + z_off**2)
-    return np.degrees(np.arcsin(z_off / r))
+    return np.where(r > 0, np.degrees(np.arcsin(np.clip(z_off / r, -1, 1))), 0.0)
+
+
+def dipole_invariant_latitude(x: ArrayLike, y: ArrayLike, z: ArrayLike) -> np.ndarray:
+    r"""Dipole invariant latitude (footpoint latitude) for the offset dipole.
+
+    For a dipole field line passing through position $(r, \lambda)$, the
+    L-shell is $L = r / \cos^2(\lambda)$ and the invariant latitude is
+    $\lambda_{\mathrm{inv}} = \arccos(1 / \sqrt{L})$.
+
+    Parameters
+    ----------
+    x, y, z : array_like
+        Position in KSM coordinates ($R_S$).
+
+    Returns
+    -------
+    ndarray
+        Invariant latitude in degrees (signed by hemisphere).
+        NaN for points inside the planet ($L < 1$).
+    """
+    x, y, z = np.asarray(x, float), np.asarray(y, float), np.asarray(z, float)
+    z_off = z - DIPOLE_OFFSET_Z
+    r = np.sqrt(x**2 + y**2 + z_off**2)
+
+    # Magnetic latitude from offset dipole
+    lat_rad = np.where(r > 0, np.arcsin(np.clip(z_off / r, -1, 1)), 0.0)
+    cos_lat = np.cos(lat_rad)
+
+    # L-shell: L = r / cos²(λ)
+    L = np.where(cos_lat != 0, r / cos_lat**2, np.inf)
+
+    # Invariant latitude: cos²(λ_inv) = 1/L
+    inv_lat_rad = np.where(L >= 1.0, np.arccos(np.clip(1.0 / np.sqrt(L), 0, 1)), np.nan)
+
+    # Sign matches hemisphere of spacecraft
+    return np.degrees(np.copysign(inv_lat_rad, z_off))
 
 
 def local_time(x: ArrayLike, y: ArrayLike) -> np.ndarray:

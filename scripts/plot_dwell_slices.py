@@ -180,7 +180,10 @@ def main():
         if expected_h > stored_h:
             out_of_range = expected_h - stored_h
             print(f"  Out of range:   {out_of_range:,.1f} hours ({out_of_range/expected_h*100:.1f}%)")
-        print("  ✓ Grid integral matches stored total")
+        if pct_diff > 0.1:
+            print(f"  WARNING: Grid integral differs from stored total by {pct_diff:.2f}%")
+        else:
+            print("  ✓ Grid integral matches stored total")
 
 
 if __name__ == "__main__":

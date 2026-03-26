@@ -269,13 +269,12 @@ def trace_fieldline(
     """
     pos = np.asarray(start_position, dtype=float).copy()
     positions = [pos.copy()]
-    fields = []
 
     B = field_func(pos)
-    fields.append(B.copy())
+    fields = [B.copy()]
 
     for _ in range(max_steps):
-        B = field_func(pos)
+        # B at current pos is already computed (from init or previous step)
         B_mag = np.linalg.norm(B)
         if B_mag == 0:
             break
@@ -302,9 +301,9 @@ def trace_fieldline(
         if r < r_surf:
             break
 
-        B_new = field_func(pos)
+        B = field_func(pos)  # reused at top of next iteration
         positions.append(pos.copy())
-        fields.append(B_new.copy())
+        fields.append(B.copy())
 
     pos_arr = np.array(positions)
     field_arr = np.array(fields)

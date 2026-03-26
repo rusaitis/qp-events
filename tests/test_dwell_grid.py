@@ -9,7 +9,8 @@ import numpy as np
 import pytest
 
 from qp.dwell.grid import DwellGridConfig, accumulate_dwell_time, accumulate_with_regions
-from qp.dwell.io import load_zarr, save_zarr, to_xarray
+from qp.dwell.io import ZarrEncoding, load_zarr, save_zarr, to_xarray
+from qp.dwell.tracing import TracingConfig
 
 
 # ============================================================================
@@ -20,7 +21,7 @@ from qp.dwell.io import load_zarr, save_zarr, to_xarray
 class TestDwellGridConfig:
     def test_default_shape(self):
         cfg = DwellGridConfig()
-        assert cfg.shape == (70, 90, 48)
+        assert cfg.shape == (100, 180, 96)
 
     def test_custom_shape(self):
         cfg = DwellGridConfig(n_r=30, n_lat=45, n_lt=24)
@@ -157,7 +158,7 @@ class TestAccumulateDwellTime:
     def test_default_config(self):
         """accumulate_dwell_time should work with default config."""
         grid = accumulate_dwell_time(x=[10.0], y=[0.0], z=[0.0])
-        assert grid.shape == (70, 90, 48)
+        assert grid.shape == (100, 180, 96)
         assert grid.sum() == pytest.approx(1.0)
 
 
@@ -184,26 +185,26 @@ class TestAccumulateWithRegions:
         grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
 
         total = grids["total"]
-        parts = grids["ms"] + grids["sh"] + grids["sw"] + grids["unknown"]
+        parts = grids["magnetosphere"] + grids["magnetosheath"] + grids["solar_wind"] + grids["unknown"]
         np.testing.assert_allclose(total, parts)
 
     def test_all_ms(self, small_config):
-        """All points in MS → ms grid equals total."""
+        """All points in magnetosphere → magnetosphere grid equals total."""
         x = np.array([10.0, 15.0])
         y = np.array([0.0, 5.0])
         z = np.array([0.0, 1.0])
         codes = np.array([0, 0])
 
         grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
-        np.testing.assert_allclose(grids["ms"], grids["total"])
-        assert grids["sh"].sum() == 0.0
-        assert grids["sw"].sum() == 0.0
+        np.testing.assert_allclose(grids["magnetosphere"], grids["total"])
+        assert grids["magnetosheath"].sum() == 0.0
+        assert grids["solar_wind"].sum() == 0.0
 
     def test_returns_all_keys(self, small_config):
         grids = accumulate_with_regions(
             [10.0], [0.0], [0.0], [0], dt_minutes=1.0, config=small_config,
         )
-        assert set(grids.keys()) == {"total", "ms", "sh", "sw", "unknown"}
+        assert set(grids.keys()) == {"total", "magnetosphere", "magnetosheath", "solar_wind", "unknown"}
 
 
 # ============================================================================
@@ -216,10 +217,11 @@ class TestXarrayIO:
     def sample_dataset(self):
         cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
         grid = np.random.default_rng(42).uniform(0, 10, cfg.shape)
-        return to_xarray({"total": grid, "ms": grid * 0.7}, cfg, attrs={"source": "test"})
+        return to_xarray({"total": grid, "magnetosphere": grid * 0.7}, cfg, attrs={"source": "test"})
 
     def test_dimensions(self, sample_dataset):
-        assert list(sample_dataset.dims) == ["r", "magnetic_latitude", "local_time"]
+        # Data dimensions (excludes non-dimension coords like bin edges)
+        assert set(sample_dataset["total"].dims) == {"r", "magnetic_latitude", "local_time"}
 
     def test_coordinate_values(self, sample_dataset):
         assert len(sample_dataset.coords["r"]) == 5
@@ -228,7 +230,7 @@ class TestXarrayIO:
 
     def test_data_variables(self, sample_dataset):
         assert "total" in sample_dataset.data_vars
-        assert "ms" in sample_dataset.data_vars
+        assert "magnetosphere" in sample_dataset.data_vars
 
     def test_attributes(self, sample_dataset):
         assert sample_dataset.attrs["source"] == "test"
@@ -244,13 +246,23 @@ class TestXarrayIO:
                 sample_dataset["total"].values, loaded["total"].values,
             )
             np.testing.assert_allclose(
-                sample_dataset["ms"].values, loaded["ms"].values,
+                sample_dataset["magnetosphere"].values, loaded["magnetosphere"].values,
             )
             assert loaded.attrs["source"] == "test"
 
     def test_coordinate_metadata(self, sample_dataset):
         assert sample_dataset.coords["r"].attrs["units"] == "R_S"
         assert "latitude" in sample_dataset.coords["magnetic_latitude"].attrs["long_name"].lower()
+
+    def test_bin_edges_present(self, sample_dataset):
+        """Bin edges should be stored as non-dimension coordinates."""
+        assert "r_edges" in sample_dataset.coords
+        assert "lat_edges" in sample_dataset.coords
+        assert "lt_edges" in sample_dataset.coords
+        # Edges have one more element than centers
+        assert len(sample_dataset.coords["r_edges"]) == 6  # n_r=5 → 6 edges
+        assert len(sample_dataset.coords["lat_edges"]) == 10  # n_lat=9 → 10 edges
+        assert len(sample_dataset.coords["lt_edges"]) == 7  # n_lt=6 → 7 edges
 
 
 # ============================================================================
@@ -281,3 +293,308 @@ class TestEdgeCases:
         """dt_minutes=60 should accumulate 60 min per point."""
         grid = accumulate_dwell_time(x=[10.0], y=[0.0], z=[0.0], dt_minutes=60.0)
         assert grid.sum() == pytest.approx(60.0)
+
+
+# ============================================================================
+# TracingConfig
+# ============================================================================
+
+
+class TestTracingConfig:
+    def test_defaults(self):
+        cfg = TracingConfig()
+        assert cfg.trace_every_n == 60
+        assert cfg.step == 0.1
+        assert cfg.max_radius == 100.0
+        assert cfg.min_radius == 1.0
+        assert cfg.surface_tolerance == 1.5
+        assert cfg.max_steps == 100_000
+        assert cfg.log_interval == 1000
+
+    def test_custom(self):
+        cfg = TracingConfig(trace_every_n=120, step=0.05, max_radius=80.0)
+        assert cfg.trace_every_n == 120
+        assert cfg.step == 0.05
+        assert cfg.max_radius == 80.0
+
+    def test_frozen(self):
+        cfg = TracingConfig()
+        with pytest.raises(AttributeError):
+            cfg.step = 0.5  # type: ignore[misc]
+
+
+# ============================================================================
+# ZarrEncoding
+# ============================================================================
+
+
+class TestZarrEncoding:
+    def test_defaults(self):
+        enc = ZarrEncoding()
+        assert enc.compressor == "zstd"
+        assert enc.compression_level == 3
+        assert enc.chunks is None
+        assert enc.dtype == "float32"
+
+    def test_roundtrip_compressed(self):
+        """Zarr save/load with zstd compression and float32."""
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.random.default_rng(42).uniform(0, 10, cfg.shape)
+        ds = to_xarray({"total": grid}, cfg, attrs={"source": "test"})
+
+        enc = ZarrEncoding(compressor="zstd", compression_level=3, dtype="float32")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            save_zarr(ds, path, encoding=enc)
+            loaded = load_zarr(path)
+            # float32 round-trip has reduced precision
+            np.testing.assert_allclose(
+                ds["total"].values, loaded["total"].values, rtol=1e-6,
+            )
+
+    def test_roundtrip_blosc(self):
+        """Zarr save/load with blosc compression."""
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.ones(cfg.shape) * 42.0
+        ds = to_xarray({"total": grid}, cfg)
+        enc = ZarrEncoding(compressor="blosc", dtype="float64")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            save_zarr(ds, path, encoding=enc)
+            loaded = load_zarr(path)
+            np.testing.assert_allclose(
+                ds["total"].values, loaded["total"].values,
+            )
+
+    def test_roundtrip_no_compression(self):
+        """Zarr save/load with compression disabled."""
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.ones(cfg.shape) * 7.0
+        ds = to_xarray({"total": grid}, cfg)
+        enc = ZarrEncoding(compressor="none", dtype="float64")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            save_zarr(ds, path, encoding=enc)
+            loaded = load_zarr(path)
+            np.testing.assert_allclose(
+                ds["total"].values, loaded["total"].values,
+            )
+
+    def test_frozen(self):
+        enc = ZarrEncoding()
+        with pytest.raises(AttributeError):
+            enc.compressor = "blosc"  # type: ignore[misc]
+
+
+# ============================================================================
+# Stats mode
+# ============================================================================
+
+
+class TestStatsMode:
+    def test_stats_returns_tuple(self):
+        grid, info = accumulate_dwell_time(
+            x=[10.0], y=[0.0], z=[0.0], stats=True,
+        )
+        assert isinstance(grid, np.ndarray)
+        assert isinstance(info, dict)
+        assert info["n_total"] == 1
+        assert info["n_in_range"] == 1
+        assert info["n_out_of_range"] == 0
+
+    def test_stats_counts_out_of_range(self):
+        cfg = DwellGridConfig(n_r=10, n_lat=18, n_lt=12, r_range=(0, 30))
+        grid, info = accumulate_dwell_time(
+            x=[10.0, 100.0], y=[0.0, 0.0], z=[0.0, 0.0],
+            config=cfg, stats=True,
+        )
+        assert info["n_total"] == 2
+        assert info["n_in_range"] == 1
+        assert info["n_out_of_range"] == 1
+        assert info["r_out_high"] == 1
+        assert info["r_max_observed"] == pytest.approx(100.0)
+
+    def test_stats_false_returns_array(self):
+        result = accumulate_dwell_time(x=[10.0], y=[0.0], z=[0.0], stats=False)
+        assert isinstance(result, np.ndarray)
+
+    def test_stats_empty(self):
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6)
+        grid, info = accumulate_dwell_time([], [], [], config=cfg, stats=True)
+        assert info["n_total"] == 0
+        assert info["pct_in_range"] == 0.0
+
+
+# ============================================================================
+# Extended metadata in xarray
+# ============================================================================
+
+
+class TestExtendedMetadata:
+    def test_tracing_config_in_attrs(self):
+        from qp.dwell.tracing import TracingConfig
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.ones(cfg.shape)
+        tc = TracingConfig(step=0.05, max_radius=80.0)
+        ds = to_xarray({"total": grid}, cfg, tracing_config=tc)
+        assert ds.attrs["trace_step_RS"] == 0.05
+        assert ds.attrs["trace_max_radius_RS"] == 80.0
+
+    def test_field_config_in_attrs(self):
+        from qp.fieldline.kmag_model import SaturnFieldConfig
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.ones(cfg.shape)
+        fc = SaturnFieldConfig(dp=0.02, by_imf=-0.3, bz_imf=0.2)
+        ds = to_xarray({"total": grid}, cfg, field_config=fc)
+        assert ds.attrs["dp_nPa"] == 0.02
+        assert ds.attrs["by_imf_nT"] == -0.3
+        assert ds.attrs["bz_imf_nT"] == 0.2
+
+    def test_no_extra_attrs_when_configs_none(self):
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid = np.ones(cfg.shape)
+        ds = to_xarray({"total": grid}, cfg)
+        assert "trace_step_RS" not in ds.attrs
+        assert "dp_nPa" not in ds.attrs
+
+
+# ============================================================================
+# Region naming and unknown code handling
+# ============================================================================
+
+
+class TestRegionCodes:
+    @pytest.fixture
+    def small_config(self):
+        return DwellGridConfig(
+            n_r=10, n_lat=18, n_lt=12,
+            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+        )
+
+    def test_unknown_code_in_total(self, small_config):
+        """Unexpected region codes (e.g., 5) should still be in total."""
+        x = np.array([10.0, 15.0])
+        y = np.array([0.0, 5.0])
+        z = np.array([0.0, 1.0])
+        codes = np.array([0, 5])  # 0=MS, 5=unrecognized
+
+        grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
+        # Total should include both points
+        assert grids["total"].sum() == pytest.approx(2.0)
+        # Magnetosphere should include only code 0
+        assert grids["magnetosphere"].sum() == pytest.approx(1.0)
+        # No per-region grid for code 5
+        region_sum = sum(grids[k].sum() for k in ["magnetosphere", "magnetosheath", "solar_wind", "unknown"])
+        assert region_sum == pytest.approx(1.0)  # only the code=0 point
+
+    def test_region_names_match_crossings(self):
+        """REGION_CODES in grid.py should use the same code values as crossings.py."""
+        from qp.dwell.grid import REGION_CODES
+        from qp.io.crossings import MS, SH, SW, UNKNOWN
+        assert MS in REGION_CODES
+        assert SH in REGION_CODES
+        assert SW in REGION_CODES
+        assert UNKNOWN in REGION_CODES
+
+    def test_region_names_are_descriptive(self):
+        """Region names should be human-readable, not abbreviations."""
+        from qp.dwell.grid import REGION_CODES
+        abbreviations = {"ms", "sh", "sw", "unk"}
+        for name in REGION_CODES.values():
+            assert name not in abbreviations, f"Expected descriptive name, got '{name}'"
+
+
+# ============================================================================
+# Dipole invariant latitude
+# ============================================================================
+
+
+class TestDipoleInvariantLatitude:
+    def test_equatorial_point(self):
+        """Equatorial point at r=10 → L=10, inv_lat ≈ 71.57°."""
+        from qp.coords.ksm import dipole_invariant_latitude
+        inv = dipole_invariant_latitude(10.0, 0.0, 0.037)  # at dipole equator
+        expected = np.degrees(np.arccos(1 / np.sqrt(10)))
+        assert inv == pytest.approx(expected, abs=0.5)
+
+    def test_inside_planet(self):
+        """Point inside planet (L < 1) should return NaN."""
+        from qp.coords.ksm import dipole_invariant_latitude
+        inv = dipole_invariant_latitude(0.5, 0.0, 0.037)
+        assert np.isnan(inv)
+
+    def test_sign_matches_hemisphere(self):
+        """Northern point → positive inv lat, southern → negative."""
+        from qp.coords.ksm import dipole_invariant_latitude
+        north = dipole_invariant_latitude(10.0, 0.0, 5.0)
+        south = dipole_invariant_latitude(10.0, 0.0, -5.0)
+        assert north > 0
+        assert south < 0
+
+    def test_vectorized(self):
+        """Should handle arrays."""
+        from qp.coords.ksm import dipole_invariant_latitude
+        x = np.array([10.0, 20.0, 0.5])
+        y = np.zeros(3)
+        z = np.full(3, 0.037)
+        inv = dipole_invariant_latitude(x, y, z)
+        assert len(inv) == 3
+        assert np.isfinite(inv[0])
+        assert np.isfinite(inv[1])
+        assert np.isnan(inv[2])  # inside planet
+
+    def test_higher_r_gives_higher_inv_lat(self):
+        """At equator, larger r → larger L → larger inv_lat."""
+        from qp.coords.ksm import dipole_invariant_latitude
+        inv_5 = dipole_invariant_latitude(5.0, 0.0, 0.037)
+        inv_20 = dipole_invariant_latitude(20.0, 0.0, 0.037)
+        assert inv_20 > inv_5
+
+
+# ============================================================================
+# Invariant latitude grid accumulation
+# ============================================================================
+
+
+class TestAccumulateInvLatGrid:
+    @pytest.fixture
+    def small_config(self):
+        return DwellGridConfig(
+            n_r=10, n_lat=18, n_lt=12,
+            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+        )
+
+    def test_returns_total(self, small_config):
+        from qp.dwell.grid import accumulate_inv_lat_grid
+        result = accumulate_inv_lat_grid(
+            [10.0], [0.0], [0.0], dt_minutes=1.0, config=small_config,
+        )
+        assert "total" in result
+        assert result["total"].shape == (18, 12)
+
+    def test_time_conservation(self, small_config):
+        """Total accumulated time should be close to n_points × dt for valid points."""
+        from qp.dwell.grid import accumulate_inv_lat_grid
+        # Points at r=10, equator → all have L=10 > 1, all valid
+        n = 100
+        rng = np.random.default_rng(42)
+        phi = rng.uniform(0, 2 * np.pi, n)
+        x = 10.0 * np.cos(phi)
+        y = 10.0 * np.sin(phi)
+        z = np.full(n, 0.037)
+        result = accumulate_inv_lat_grid(x, y, z, dt_minutes=1.0, config=small_config)
+        assert result["total"].sum() == pytest.approx(n * 1.0)
+
+    def test_with_region_codes(self, small_config):
+        from qp.dwell.grid import accumulate_inv_lat_grid
+        result = accumulate_inv_lat_grid(
+            [10.0, 15.0], [0.0, 0.0], [0.0, 0.0],
+            region_codes=[0, 1], config=small_config,
+        )
+        assert "magnetosphere" in result
+        assert "magnetosheath" in result
+        assert result["magnetosphere"].sum() == pytest.approx(1.0)
+        assert result["magnetosheath"].sum() == pytest.approx(1.0)

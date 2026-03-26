@@ -16,6 +16,7 @@ dependencies = [
     "numba",
     "xarray",
     "zarr",
+    "pyvista",
 ]
 
 [project.optional-dependencies]

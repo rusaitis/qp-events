@@ -143,6 +143,36 @@ def build_crossing_timeseries(
     return np.vstack((times_arr, locs, labels))
 
 
+def crossing_lookup_arrays(
+    crossings: list[BoundaryCrossing] | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return sorted crossing times and region codes for vectorized lookup.
+
+    Parameters
+    ----------
+    crossings : list of BoundaryCrossing, optional
+        Parsed crossing list. If None, parses the default file.
+
+    Returns
+    -------
+    times_unix : ndarray of float64
+        POSIX timestamps of each boundary crossing, sorted.
+    region_codes : ndarray of int
+        Region code AFTER each crossing (0=MS, 1=SH, 2=SW, 9=unknown).
+    """
+    if crossings is None:
+        crossings = parse_crossing_list()
+
+    times = np.array([c.time.timestamp() for c in crossings], dtype=np.float64)
+    codes = np.array(
+        [_crossing_to_location(c.crossing_type, c.direction) for c in crossings],
+        dtype=int,
+    )
+    # Ensure sorted by time
+    order = np.argsort(times)
+    return times[order], codes[order]
+
+
 def export_crossings(
     output_path: Path | None = None,
     **kwargs,
