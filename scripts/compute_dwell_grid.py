@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -38,31 +39,43 @@ import numpy as np
 _project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_project_root / "src"))
 
-from qp.dwell.grid import DwellGridConfig, accumulate_inv_lat_grid, accumulate_with_regions
+from qp.coords.ksm import local_time as compute_lt
+from qp.dwell.grid import (
+    DwellGridConfig,
+    accumulate_inv_lat_grid,
+    accumulate_traced_inv_lat_grid,
+    accumulate_weak_field_grid,
+    accumulate_with_regions,
+)
 from qp.dwell.io import ZarrEncoding, save_zarr, to_xarray
-from qp.dwell.tracing import TracingConfig, compute_invariant_latitudes
+from qp.dwell.tracing import TracingConfig, compute_invariant_latitudes_parallel
 from qp.fieldline.kmag_model import SaturnFieldConfig
 from qp.io.crossings import crossing_lookup_arrays, parse_crossing_list
 from qp.io.pds import DATETIME_FMT, mag_filepath, read_timeseries_file
 
 log = logging.getLogger(__name__)
 
+# J2000 epoch as POSIX timestamp (2000-01-01T12:00:00 UTC).
+# KMAG expects time in J2000 seconds, not POSIX.
+_J2000_POSIX = 946728000.0
 
-def load_year_positions(year: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, list]:
+
+def load_year_positions(year: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list]:
     """Read one year of PDS KSM 1-min MAG data and extract positions.
 
-    Returns (x, y, z, datetimes) arrays. x/y/z in R_S (KSM).
+    Returns (x, y, z, btotal, datetimes) arrays. x/y/z in R_S (KSM),
+    btotal in nT.
     """
     path = mag_filepath(str(year), coords="KSM")
     if not path.exists():
         log.warning("No PDS file for year %d: %s", year, path)
-        return np.array([]), np.array([]), np.array([]), []
+        return np.array([]), np.array([]), np.array([]), np.array([]), []
 
     log.info("Reading %s ...", path.name)
     rows = read_timeseries_file(path)
 
     if not rows:
-        return np.array([]), np.array([]), np.array([]), []
+        return np.array([]), np.array([]), np.array([]), np.array([]), []
 
     data = np.array(rows)
     # KSM columns: 0=Time, 1=Bx, 2=By, 3=Bz, 4=Btot, 5=x, 6=y, 7=z
@@ -70,9 +83,10 @@ def load_year_positions(year: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, 
     x = data[:, 5].astype(float)
     y = data[:, 6].astype(float)
     z = data[:, 7].astype(float)
+    btotal = data[:, 4].astype(float)
 
     log.info("  → %d samples, %.1f days", len(x), len(x) / 1440)
-    return x, y, z, times
+    return x, y, z, btotal, times
 
 
 def lookup_region_codes(
@@ -134,14 +148,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Tracing ---
     trace_group = parser.add_argument_group("KMAG tracing")
-    trace_group.add_argument("--trace-every", type=int, default=60,
-                             help="Trace every N minutes (60 = hourly)")
-    trace_group.add_argument("--trace-step", type=float, default=0.1,
+    trace_group.add_argument("--trace-every", type=int, default=10,
+                             help="Trace every N minutes (10 = every 10 min)")
+    trace_group.add_argument("--trace-step", type=float, default=0.15,
                              help="RK4 step size (R_S)")
-    trace_group.add_argument("--trace-max-radius", type=float, default=100.0,
+    trace_group.add_argument("--trace-max-radius", type=float, default=60.0,
                              help="Outer tracing boundary (R_S)")
     trace_group.add_argument("--trace-min-radius", type=float, default=1.0,
                              help="Inner boundary / planet surface (R_S)")
+    trace_group.add_argument("--trace-max-steps", type=int, default=20_000,
+                             help="Max RK4 steps per trace arm (caps pathological traces)")
+    trace_group.add_argument("--workers", type=int,
+                             default=max(1, (os.cpu_count() or 2) - 1),
+                             help="Multiprocessing workers (1 = serial)")
+    trace_group.add_argument("--no-region-filter", action="store_true",
+                             help="Trace all samples (default: magnetosphere only)")
     trace_group.add_argument("--no-trace", action="store_true",
                              help="Skip KMAG tracing entirely")
 
@@ -196,6 +217,9 @@ def main():
         step=args.trace_step,
         max_radius=args.trace_max_radius,
         min_radius=args.trace_min_radius,
+        max_steps=args.trace_max_steps,
+        region_filter=None if args.no_region_filter else (0,),
+        n_workers=args.workers,
     )
     field_config = SaturnFieldConfig(
         dp=args.dp, by_imf=args.by_imf, bz_imf=args.bz_imf,
@@ -223,11 +247,12 @@ def main():
     inv_lat_shape = (grid_config.n_lat, grid_config.n_lt)
     inv_lat_accum = {name: np.zeros(inv_lat_shape) for name in ["total", *REGION_CODES.values()]}
 
-    all_x, all_y, all_z, all_times_unix = [], [], [], []
+    all_x, all_y, all_z, all_times_unix, all_codes = [], [], [], [], []
+    weak_field_accum = {name: np.zeros(inv_lat_shape) for name in ["total", *REGION_CODES.values()]}
     total_samples = 0
 
     for year in range(year_from, year_to + 1):
-        x, y, z, times = load_year_positions(year)
+        x, y, z, btotal, times = load_year_positions(year)
         if len(x) == 0:
             continue
 
@@ -245,6 +270,14 @@ def main():
         for name in inv_lat_accum:
             inv_lat_accum[name] += inv_grids.get(name, np.zeros(inv_lat_shape))
 
+        # Accumulate weak-field (plasma sheet proxy) dwell time
+        wf_grids = accumulate_weak_field_grid(
+            x, y, z, btotal, dt_minutes=1.0, b_threshold=2.0,
+            region_codes=codes, config=grid_config,
+        )
+        for name in weak_field_accum:
+            weak_field_accum[name] += wf_grids.get(name, np.zeros(inv_lat_shape))
+
         total_samples += len(x)
 
         # Collect for optional tracing
@@ -253,6 +286,7 @@ def main():
             all_y.append(y)
             all_z.append(z)
             all_times_unix.append(sample_unix)
+            all_codes.append(codes)
 
         log.info("Year %d: %d samples accumulated (total: %d)", year, len(x), total_samples)
 
@@ -275,8 +309,10 @@ def main():
         print(f"  Magnetosheath:   {sh_hours:,.1f} h ({sh_hours/total_hours*100:.1f}%)")
         print(f"  Solar wind:      {sw_hours:,.1f} h ({sw_hours/total_hours*100:.1f}%)")
     inv_hours = float(inv_lat_accum["total"].sum()) / 60
+    wf_hours = float(weak_field_accum["total"].sum()) / 60
     print(f"Grid:              {grid_config.shape} (r×lat×LT)")
     print(f"Inv lat grid:      {inv_lat_shape} (inv_lat×LT), {inv_hours:,.0f} h mapped")
+    print(f"Weak field (<2nT): {wf_hours:,.0f} h (plasma sheet proxy)")
     print(f"Storage:           {zarr_encoding.compressor}, {zarr_encoding.dtype}")
     print(f"{'='*60}\n")
 
@@ -287,35 +323,80 @@ def main():
         "total_hours": total_hours,
         "dt_minutes": 1.0,
         "source": "PDS MAG 1-min KSM",
+        "boundary_crossings_source": "Jackman et al. 2019",
+        "time_epoch": "J2000 (POSIX - 946728000.0)",
+        "dipole_offset_RS": 0.037,
+        "b_threshold_nT": 2.0,
+        "conjugate_convention": (
+            "KMAG inv lat signed by spacecraft hemisphere: "
+            "z >= 0 uses northern footpoint, z < 0 uses southern"
+        ),
         "computation_started": run_start,
     }
 
     # KMAG tracing (optional)
+    kmag_inv_lat_named: dict[str, np.ndarray] = {}
     if not args.no_trace and all_x:
         log.info("Starting KMAG field line tracing...")
         x_all = np.concatenate(all_x)
         y_all = np.concatenate(all_y)
         z_all = np.concatenate(all_z)
         t_all = np.concatenate(all_times_unix)
+        codes_all = np.concatenate(all_codes)
 
-        inv_north, inv_south, is_closed = compute_invariant_latitudes(
-            x_all, y_all, z_all, t_all,
+        # Convert POSIX timestamps to J2000 seconds for KMAG model
+        t_j2000 = t_all - _J2000_POSIX
+
+        result = compute_invariant_latitudes_parallel(
+            x_all, y_all, z_all, t_j2000,
             config=tracing_config,
             field_config=field_config,
+            region_codes=codes_all,
         )
-        attrs["n_traces"] = len(inv_north)
-        attrs["n_closed"] = int(np.sum(is_closed))
+        attrs["n_traces"] = result.n_traces
+        attrs["n_closed"] = result.n_closed
 
-        # TODO: accumulate inv_lat grids from tracing results
+        # Subsample local_time, z, and region codes to match tracing indices
+        indices = np.arange(0, len(x_all), tracing_config.trace_every_n)
+        lt_sub = compute_lt(x_all, y_all)[indices]
+        z_sub = z_all[indices]
+        codes_sub = codes_all[indices]
+        dt_trace = float(tracing_config.trace_every_n)
+
+        # Accumulate KMAG inv lat grids (all field lines)
+        kmag_grids = accumulate_traced_inv_lat_grid(
+            result.inv_lat_north, result.inv_lat_south, result.is_closed,
+            lt_sub, z_sub, dt_minutes=dt_trace,
+            region_codes=codes_sub, config=grid_config,
+        )
+        for k, v in kmag_grids.items():
+            kmag_inv_lat_named[f"kmag_inv_lat_{k}"] = v
+
+        # Accumulate closed-only grids
+        kmag_closed = accumulate_traced_inv_lat_grid(
+            result.inv_lat_north, result.inv_lat_south, result.is_closed,
+            lt_sub, z_sub, dt_minutes=dt_trace,
+            region_codes=codes_sub, closed_only=True, config=grid_config,
+        )
+        for k, v in kmag_closed.items():
+            kmag_inv_lat_named[f"kmag_inv_lat_closed_{k}"] = v
+
+        kmag_hours = float(kmag_grids["total"].sum()) / 60
+        closed_hours = float(kmag_closed["total"].sum()) / 60
+        print(f"KMAG inv lat:      {inv_lat_shape}, {kmag_hours:,.0f} h mapped, {closed_hours:,.0f} h closed")
 
     # Prefix inv lat grid names for clarity in the Dataset
     inv_lat_named = {f"dipole_inv_lat_{k}": v for k, v in inv_lat_accum.items()}
+    weak_field_named = {f"weak_field_{k}": v for k, v in weak_field_accum.items()}
+    # Merge weak-field into dipole inv_lat grids (same dimensions)
+    inv_lat_named.update(weak_field_named)
 
     ds = to_xarray(
         grids_accum, grid_config, attrs=attrs,
         tracing_config=tracing_config if not args.no_trace else None,
         field_config=field_config if not args.no_trace else None,
         inv_lat_grids=inv_lat_named,
+        kmag_inv_lat_grids=kmag_inv_lat_named or None,
     )
     print(ds)
     print()

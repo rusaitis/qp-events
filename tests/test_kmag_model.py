@@ -594,3 +594,96 @@ class TestPerformance:
         assert evals_per_sec > 10_000, (
             f"Too slow: {ms_per_eval:.3f} ms/eval ({evals_per_sec:.0f} evals/sec)"
         )
+
+
+# ============================================================================
+# make_kmag_field_func — equivalence to field_cartesian
+# ============================================================================
+
+
+class TestMakeKmagFieldFunc:
+    """The time-bound field closure must produce the same values as
+    SaturnField.field_cartesian, while being significantly faster."""
+
+    def test_equivalence_grid(self):
+        """Field values agree to ~1e-10 over a (position, time) grid."""
+        from qp.fieldline.kmag_model import make_kmag_field_func
+
+        field = SaturnField()
+        rng = np.random.default_rng(42)
+        n_pos = 50
+        positions = rng.uniform(-25, 25, (n_pos, 3))
+        # Skip points too close to the planet (avoid r ~ 0 numerical issues)
+        positions = positions[np.linalg.norm(positions, axis=1) > 2.0]
+        times = [0.0, 5e7, 1.5e8, 3.0e8, 5.5e8]
+
+        max_abs = 0.0
+        max_rel = 0.0
+        n_checks = 0
+        for t in times:
+            f = make_kmag_field_func(field, t, coord="KSM")
+            for pos in positions:
+                b_new = np.asarray(f(pos))
+                b_old = np.asarray(
+                    field.field_cartesian(
+                        float(pos[0]), float(pos[1]), float(pos[2]), t, coord="KSM"
+                    )
+                )
+                abs_diff = np.max(np.abs(b_new - b_old))
+                ref = max(np.max(np.abs(b_old)), 1e-30)
+                rel_diff = abs_diff / ref
+                max_abs = max(max_abs, abs_diff)
+                max_rel = max(max_rel, rel_diff)
+                n_checks += 1
+
+        assert max_abs < 1e-9, (
+            f"Max abs diff {max_abs:.2e} over {n_checks} evaluations exceeds 1e-9"
+        )
+        assert max_rel < 1e-10, (
+            f"Max rel diff {max_rel:.2e} over {n_checks} evaluations exceeds 1e-10"
+        )
+
+    def test_equivalence_known_point(self):
+        """Specific test point: agree to machine precision."""
+        from qp.fieldline.kmag_model import make_kmag_field_func
+
+        field = SaturnField()
+        t = 284040000.0  # ~2009-01-01 in J2000 sec
+        pos = np.array([10.0, 5.0, 2.0])
+
+        f = make_kmag_field_func(field, t, coord="KSM")
+        b_new = f(pos)
+        b_old = field.field_cartesian(10.0, 5.0, 2.0, t, coord="KSM")
+
+        assert_allclose(np.asarray(b_new), np.asarray(b_old), atol=1e-10, rtol=1e-12)
+
+    def test_returns_ndarray(self):
+        """Closure must return an ndarray of shape (3,)."""
+        from qp.fieldline.kmag_model import make_kmag_field_func
+
+        field = SaturnField()
+        f = make_kmag_field_func(field, 0.0, coord="KSM")
+        result = f(np.array([10.0, 0.0, 0.0]))
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (3,)
+
+    def test_non_ksm_falls_back(self):
+        """Non-KSM coord systems should fall back to saturn_field_wrapper."""
+        from qp.fieldline.kmag_model import make_kmag_field_func
+
+        field = SaturnField()
+        # Should not raise — falls back to wrapper
+        f = make_kmag_field_func(field, 0.0, coord="S3C")
+        result = f(np.array([10.0, 0.0, 0.0]))
+        assert result.shape == (3,)
+
+    def test_multiple_positions_same_time(self):
+        """Calling the closure many times reuses the precomputed matrices."""
+        from qp.fieldline.kmag_model import make_kmag_field_func
+
+        field = SaturnField()
+        f = make_kmag_field_func(field, 1e8, coord="KSM")
+        # Should not raise across many calls
+        for r in np.linspace(3, 25, 20):
+            b = f(np.array([r, 0.0, 0.0]))
+            assert np.all(np.isfinite(b))

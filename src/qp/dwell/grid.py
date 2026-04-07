@@ -115,9 +115,15 @@ def _compute_bins(
 
 
 def _bin_index(value: np.ndarray, vmin: float, vmax: float, n: int) -> np.ndarray:
-    """Map values to bin indices in [0, n), clipped."""
+    """Map values to bin indices in [0, n), clipped.
+
+    NaN inputs produce platform-dependent garbage integer values, but callers
+    always mask them out via ``np.isfinite(value)`` before using the indices,
+    so the cast warning is suppressed here.
+    """
     frac = (value - vmin) / (vmax - vmin)
-    idx = np.floor(frac * n).astype(int)
+    with np.errstate(invalid="ignore"):
+        idx = np.floor(frac * n).astype(int)
     return np.clip(idx, 0, n - 1)
 
 
@@ -325,6 +331,175 @@ def accumulate_inv_lat_grid(
             return np.zeros(shape_2d, dtype=float)
         flat = np.ravel_multi_index((il, ilt), shape_2d)
         return np.bincount(flat, minlength=math.prod(shape_2d)).reshape(shape_2d).astype(float) * dt_minutes
+
+    result = {"total": _accum_2d(valid)}
+
+    if region_codes is not None:
+        codes = np.asarray(region_codes, dtype=int)
+        for code, name in REGION_CODES.items():
+            result[name] = _accum_2d(valid & (codes == code))
+
+    return result
+
+
+def accumulate_traced_inv_lat_grid(
+    inv_lat_north: ArrayLike,
+    inv_lat_south: ArrayLike,
+    is_closed: ArrayLike,
+    local_time: ArrayLike,
+    z: ArrayLike,
+    dt_minutes: float = 60.0,
+    region_codes: ArrayLike | None = None,
+    closed_only: bool = False,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    r"""Accumulate dwell time in a 2D (inv_lat, LT) grid from traced KMAG field lines.
+
+    Uses pre-computed invariant latitudes from ``compute_invariant_latitudes()``
+    rather than an analytical dipole formula. The conjugate latitude is chosen
+    from the footpoint in the spacecraft's hemisphere (signed by hemisphere),
+    matching the convention of ``dipole_invariant_latitude()``.
+
+    Parameters
+    ----------
+    inv_lat_north, inv_lat_south : array_like
+        Northern and southern footpoint latitudes in degrees, from
+        ``compute_invariant_latitudes()``. NaN for open field lines.
+    is_closed : array_like of bool
+        True where the field line is closed.
+    local_time : array_like
+        Local time in hours at each traced position.
+    z : array_like
+        KSM $z$-coordinate at each traced position ($R_S$). Used to
+        determine spacecraft hemisphere for conjugate latitude sign.
+    dt_minutes : float
+        Dwell time per sample in minutes. For subsampled tracing this
+        equals ``trace_every_n`` (e.g. 60 min for hourly traces).
+    region_codes : array_like of int, optional
+        Region codes at each traced position. If provided, per-region
+        grids are returned.
+    closed_only : bool
+        If True, only accumulate points on closed field lines.
+    config : DwellGridConfig, optional
+        Uses ``n_lat`` and ``n_lt`` for grid shape.
+
+    Returns
+    -------
+    dict
+        Keys: ``'total'`` (and per-region names if ``region_codes`` given).
+        Values: 2D arrays of shape ``(n_lat, n_lt)``.
+    """
+    if config is None:
+        config = DwellGridConfig()
+
+    inv_n = np.asarray(inv_lat_north, dtype=float)
+    inv_s = np.asarray(inv_lat_south, dtype=float)
+    closed = np.asarray(is_closed, dtype=bool)
+    lt = np.asarray(local_time, dtype=float)
+    z_arr = np.asarray(z, dtype=float)
+
+    # Conjugate latitude: footpoint in spacecraft's hemisphere, signed
+    conjugate_lat = np.where(z_arr >= 0, inv_n, inv_s)
+
+    shape_2d = (config.n_lat, config.n_lt)
+    i_lat = _bin_index(conjugate_lat, *config.lat_range, config.n_lat)
+    i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
+
+    valid = (
+        np.isfinite(conjugate_lat)
+        & (conjugate_lat >= config.lat_range[0]) & (conjugate_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+    )
+    if closed_only:
+        valid &= closed
+
+    def _accum_2d(mask: np.ndarray) -> np.ndarray:
+        il, ilt = i_lat[mask], i_lt[mask]
+        if len(il) == 0:
+            return np.zeros(shape_2d, dtype=float)
+        flat = np.ravel_multi_index((il, ilt), shape_2d)
+        n_cells = math.prod(shape_2d)
+        counts = np.bincount(flat, minlength=n_cells)
+        return counts.reshape(shape_2d).astype(float) * dt_minutes
+
+    result = {"total": _accum_2d(valid)}
+
+    if region_codes is not None:
+        codes = np.asarray(region_codes, dtype=int)
+        for code, name in REGION_CODES.items():
+            result[name] = _accum_2d(valid & (codes == code))
+
+    return result
+
+
+def accumulate_weak_field_grid(
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    btotal: ArrayLike,
+    dt_minutes: float = 1.0,
+    b_threshold: float = 2.0,
+    region_codes: ArrayLike | None = None,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    r"""Accumulate dwell time in 2D (dipole_inv_lat, LT) grid for weak-field regions.
+
+    Filters samples where $|B| < $ ``b_threshold`` before accumulating,
+    providing a proxy for plasma sheet dwell time (SI Fig 2).
+
+    Uses the analytical dipole invariant latitude (no tracing needed).
+
+    Parameters
+    ----------
+    x, y, z : array_like
+        Spacecraft position in KSM coordinates ($R_S$).
+    btotal : array_like
+        Total magnetic field magnitude in nT.
+    dt_minutes : float
+        Time step per sample in minutes.
+    b_threshold : float
+        Maximum $|B|$ in nT to include (default 2.0).
+    region_codes : array_like of int, optional
+        Region codes. If provided, per-region grids are returned.
+    config : DwellGridConfig, optional
+        Uses ``n_lat`` and ``n_lt`` for grid shape.
+
+    Returns
+    -------
+    dict
+        Keys: ``'total'`` (and per-region names if ``region_codes`` given).
+        Values: 2D arrays of shape ``(n_lat, n_lt)``.
+    """
+    if config is None:
+        config = DwellGridConfig()
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+    bt = np.asarray(btotal, dtype=float)
+
+    inv_lat = dipole_invariant_latitude(x, y, z)
+    lt = local_time(x, y)
+
+    shape_2d = (config.n_lat, config.n_lt)
+    i_lat = _bin_index(inv_lat, *config.lat_range, config.n_lat)
+    i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
+
+    valid = (
+        np.isfinite(inv_lat)
+        & (inv_lat >= config.lat_range[0]) & (inv_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        & (bt < b_threshold)
+    )
+
+    def _accum_2d(mask: np.ndarray) -> np.ndarray:
+        il, ilt = i_lat[mask], i_lt[mask]
+        if len(il) == 0:
+            return np.zeros(shape_2d, dtype=float)
+        flat = np.ravel_multi_index((il, ilt), shape_2d)
+        n_cells = math.prod(shape_2d)
+        counts = np.bincount(flat, minlength=n_cells)
+        return counts.reshape(shape_2d).astype(float) * dt_minutes
 
     result = {"total": _accum_2d(valid)}
 

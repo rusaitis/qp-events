@@ -70,6 +70,7 @@ def to_xarray(
     tracing_config=None,
     field_config=None,
     inv_lat_grids: dict[str, np.ndarray] | None = None,
+    kmag_inv_lat_grids: dict[str, np.ndarray] | None = None,
 ) -> xr.Dataset:
     r"""Convert dwell-time grids to an xarray Dataset.
 
@@ -90,6 +91,9 @@ def to_xarray(
         2D grids of shape ``(n_lat, n_lt)`` keyed by name (e.g.
         ``'dipole_inv_lat_total'``). Uses ``(dipole_inv_lat, local_time)``
         dimensions.
+    kmag_inv_lat_grids : dict, optional
+        2D grids of shape ``(n_lat, n_lt)`` from KMAG field line tracing.
+        Uses ``(kmag_inv_lat, local_time)`` dimensions.
 
     Returns
     -------
@@ -139,7 +143,26 @@ def to_xarray(
             data_vars[name] = (
                 inv_dims,
                 arr,
-                {"units": "min", "long_name": f"Dwell time by dipole inv lat ({name})"},
+                {"units": "min", "long_name": f"Dwell time ({name})"},
+            )
+
+    # 2D KMAG traced invariant latitude grids (kmag_inv_lat × local_time)
+    if kmag_inv_lat_grids:
+        kmag_dim = "kmag_inv_lat"
+        coords[kmag_dim] = (
+            kmag_dim,
+            config.lat_centers,
+            {
+                "units": "degrees",
+                "long_name": "KMAG traced invariant latitude (bin center)",
+            },
+        )
+        kmag_dims = (kmag_dim, "local_time")
+        for name, arr in kmag_inv_lat_grids.items():
+            data_vars[name] = (
+                kmag_dims,
+                arr,
+                {"units": "min", "long_name": f"Dwell time ({name})"},
             )
 
     default_attrs = {

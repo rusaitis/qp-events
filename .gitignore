@@ -7,6 +7,9 @@ data*/
 # Example files
 examples/
 
+paper-resubmission/
+paper/resubmission/
+
 # Local build and notes
 PLAN.md
 NOTES.md

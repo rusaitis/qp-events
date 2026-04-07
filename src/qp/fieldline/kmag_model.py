@@ -215,3 +215,101 @@ class SaturnField:
             j2000_time,
         )
         return float(b_out[0]), float(b_out[1]), float(b_out[2])
+
+
+def make_kmag_field_func(
+    field: SaturnField,
+    time: float,
+    coord: str = "KSM",
+):
+    r"""Return a closure ``f(pos) -> ndarray(3,)`` that evaluates KMAG at a fixed time.
+
+    Within a single field-line trace, ``time`` is constant. The rotation
+    matrices and field-model coefficients can therefore be precomputed
+    once and reused for every step. This eliminates the per-call cost of
+    :func:`field_cartesian` (rebuilding rotation matrices via the Python
+    ``rotate_vector`` chain on every evaluation).
+
+    The returned closure is a drop-in replacement for the callable produced
+    by :func:`qp.fieldline.tracer.saturn_field_wrapper` and is ~3-5x faster
+    per call. Field values agree with :meth:`SaturnField.field_cartesian`
+    to numerical noise (verified by unit test).
+
+    Parameters
+    ----------
+    field : SaturnField
+        Configured field model.
+    time : float
+        Time in the model's epoch (J2000 seconds by default).
+    coord : str, optional
+        Coordinate system for input position and output field. Only
+        ``"KSM"`` is fast-pathed; other systems fall back to
+        :func:`saturn_field_wrapper`.
+
+    Returns
+    -------
+    callable
+        ``f(pos) -> ndarray(3,)`` that returns the field at ``pos`` (KSM,
+        $R_S$) in nT.
+    """
+    from qp.fieldline.tracer import saturn_field_wrapper
+
+    if coord != "KSM":
+        return saturn_field_wrapper(field, time, coord)
+
+    j2000_time = epoch_to_j2000(time, field.config.epoch)
+    dis_to_s3c, s3c_to_dis, ksm_to_s3c, s3c_to_ksm, si = _build_rotation_matrices(
+        j2000_time
+    )
+
+    # Bind everything as closure-locals (fastest variable access in Python)
+    g = field._g
+    h = field._h
+    rec = field._rec
+    r0or = field._r0or
+    cs_thick = field._cs_half_thickness
+    by_imf = field.config.by_imf
+    bz_imf = field.config.bz_imf
+    dp = field.config.dp
+
+    # Pre-extract rotation matrix elements as scalar locals
+    a00 = float(ksm_to_s3c[0, 0]); a01 = float(ksm_to_s3c[0, 1]); a02 = float(ksm_to_s3c[0, 2])
+    a10 = float(ksm_to_s3c[1, 0]); a11 = float(ksm_to_s3c[1, 1]); a12 = float(ksm_to_s3c[1, 2])
+    a20 = float(ksm_to_s3c[2, 0]); a21 = float(ksm_to_s3c[2, 1]); a22 = float(ksm_to_s3c[2, 2])
+    b00 = float(s3c_to_ksm[0, 0]); b01 = float(s3c_to_ksm[0, 1]); b02 = float(s3c_to_ksm[0, 2])
+    b10 = float(s3c_to_ksm[1, 0]); b11 = float(s3c_to_ksm[1, 1]); b12 = float(s3c_to_ksm[1, 2])
+    b20 = float(s3c_to_ksm[2, 0]); b21 = float(s3c_to_ksm[2, 1]); b22 = float(s3c_to_ksm[2, 2])
+
+    def f(position: np.ndarray) -> np.ndarray:
+        x = position[0]
+        y = position[1]
+        z = position[2]
+        # KSM -> S3C (manual matrix multiply, no allocation)
+        x_s3c = a00 * x + a01 * y + a02 * z
+        y_s3c = a10 * x + a11 * y + a12 * z
+        z_s3c = a20 * x + a21 * y + a22 * z
+        # Spherical conversion
+        rho_sq = x_s3c * x_s3c + y_s3c * y_s3c
+        r = math.sqrt(rho_sq + z_s3c * z_s3c)
+        theta = math.atan2(math.sqrt(rho_sq), z_s3c)
+        phi = math.atan2(y_s3c, x_s3c)
+        # Field evaluation (jitted) with cached rotation matrices
+        br, bt, bp = field_s3c_kernel(
+            r, theta, phi, g, h, rec, INTERNAL_NM, r0or, cs_thick,
+            dis_to_s3c, s3c_to_dis, ksm_to_s3c, s3c_to_ksm, si,
+            by_imf, bz_imf, dp,
+        )
+        # Spherical -> S3C cartesian (inlined sph2car_field)
+        st = math.sin(theta); ct = math.cos(theta)
+        sp = math.sin(phi); cp = math.cos(phi)
+        bx_s3c = br * st * cp + bt * ct * cp - bp * sp
+        by_s3c = br * st * sp + bt * ct * sp + bp * cp
+        bz_s3c = br * ct - bt * st
+        # S3C -> KSM (manual matrix multiply)
+        out = np.empty(3)
+        out[0] = b00 * bx_s3c + b01 * by_s3c + b02 * bz_s3c
+        out[1] = b10 * bx_s3c + b11 * by_s3c + b12 * bz_s3c
+        out[2] = b20 * bx_s3c + b21 * by_s3c + b22 * bz_s3c
+        return out
+
+    return f

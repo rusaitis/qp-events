@@ -8,9 +8,15 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from qp.dwell.grid import DwellGridConfig, accumulate_dwell_time, accumulate_with_regions
+from qp.dwell.grid import (
+    DwellGridConfig,
+    accumulate_dwell_time,
+    accumulate_traced_inv_lat_grid,
+    accumulate_weak_field_grid,
+    accumulate_with_regions,
+)
 from qp.dwell.io import ZarrEncoding, load_zarr, save_zarr, to_xarray
-from qp.dwell.tracing import TracingConfig
+from qp.dwell.tracing import TracingConfig, TracingResult
 
 
 # ============================================================================
@@ -303,13 +309,16 @@ class TestEdgeCases:
 class TestTracingConfig:
     def test_defaults(self):
         cfg = TracingConfig()
-        assert cfg.trace_every_n == 60
-        assert cfg.step == 0.1
-        assert cfg.max_radius == 100.0
+        assert cfg.trace_every_n == 10
+        assert cfg.step == 0.15
+        assert cfg.max_radius == 60.0
         assert cfg.min_radius == 1.0
         assert cfg.surface_tolerance == 1.5
-        assert cfg.max_steps == 100_000
+        assert cfg.max_steps == 20_000
         assert cfg.log_interval == 1000
+        assert cfg.region_filter == (0,)
+        assert cfg.n_workers == 1
+        assert cfg.chunk_size is None
 
     def test_custom(self):
         cfg = TracingConfig(trace_every_n=120, step=0.05, max_radius=80.0)
@@ -598,3 +607,440 @@ class TestAccumulateInvLatGrid:
         assert "magnetosheath" in result
         assert result["magnetosphere"].sum() == pytest.approx(1.0)
         assert result["magnetosheath"].sum() == pytest.approx(1.0)
+
+
+# ============================================================================
+# TracingResult
+# ============================================================================
+
+
+class TestTracingResult:
+    def test_frozen(self):
+        result = TracingResult(
+            inv_lat_north=np.array([60.0]),
+            inv_lat_south=np.array([-60.0]),
+            is_closed=np.array([True]),
+            l_equatorial=np.array([15.0]),
+            n_traces=1,
+            n_closed=1,
+        )
+        with pytest.raises(AttributeError):
+            result.n_traces = 5  # type: ignore[misc]
+
+    def test_fields(self):
+        result = TracingResult(
+            inv_lat_north=np.array([60.0, np.nan]),
+            inv_lat_south=np.array([-60.0, np.nan]),
+            is_closed=np.array([True, False]),
+            l_equatorial=np.array([15.0, np.nan]),
+            n_traces=2,
+            n_closed=1,
+        )
+        assert result.n_traces == 2
+        assert result.n_closed == 1
+        assert np.isnan(result.l_equatorial[1])
+
+
+# ============================================================================
+# accumulate_traced_inv_lat_grid
+# ============================================================================
+
+
+class TestAccumulateTracedInvLatGrid:
+    @pytest.fixture
+    def small_config(self):
+        return DwellGridConfig(
+            n_r=10, n_lat=18, n_lt=12,
+            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+        )
+
+    def test_basic_accumulation(self, small_config):
+        """Total dwell = n_traces × dt_minutes for all-valid, all-closed traces."""
+        n = 10
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.full(n, 65.0),
+            inv_lat_south=np.full(n, -65.0),
+            is_closed=np.ones(n, dtype=bool),
+            local_time=np.full(n, 12.0),
+            z=np.full(n, 5.0),  # north hemisphere
+            dt_minutes=60.0,
+            config=small_config,
+        )
+        assert "total" in result
+        assert result["total"].shape == (18, 12)
+        assert result["total"].sum() == pytest.approx(n * 60.0)
+
+    def test_conjugate_convention_north(self, small_config):
+        """Spacecraft in north (z > 0) → uses inv_lat_north (positive)."""
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.array([65.0]),
+            inv_lat_south=np.array([-65.0]),
+            is_closed=np.array([True]),
+            local_time=np.array([12.0]),
+            z=np.array([5.0]),  # north hemisphere
+            dt_minutes=60.0,
+            config=small_config,
+        )
+        grid = result["total"]
+        idx = np.argwhere(grid > 0)
+        assert len(idx) == 1
+        i_lat = idx[0, 0]
+        # 65° in [-90, 90] with 18 bins → should be in upper half (bin > 9)
+        assert i_lat > 9
+
+    def test_conjugate_convention_south(self, small_config):
+        """Spacecraft in south (z < 0) → uses inv_lat_south (negative)."""
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.array([65.0]),
+            inv_lat_south=np.array([-65.0]),
+            is_closed=np.array([True]),
+            local_time=np.array([12.0]),
+            z=np.array([-5.0]),  # south hemisphere
+            dt_minutes=60.0,
+            config=small_config,
+        )
+        grid = result["total"]
+        idx = np.argwhere(grid > 0)
+        assert len(idx) == 1
+        i_lat = idx[0, 0]
+        # -65° → should be in lower half (bin < 9)
+        assert i_lat < 9
+
+    def test_closed_only(self, small_config):
+        """closed_only=True excludes open field lines."""
+        n = 5
+        inv_n = np.array([65.0, 65.0, np.nan, np.nan, 65.0])
+        inv_s = np.array([-65.0, -65.0, np.nan, np.nan, -65.0])
+        closed = np.array([True, True, False, False, True])
+
+        all_result = accumulate_traced_inv_lat_grid(
+            inv_n, inv_s, closed,
+            local_time=np.full(n, 12.0), z=np.full(n, 5.0),
+            dt_minutes=60.0, config=small_config,
+        )
+        closed_result = accumulate_traced_inv_lat_grid(
+            inv_n, inv_s, closed,
+            local_time=np.full(n, 12.0), z=np.full(n, 5.0),
+            dt_minutes=60.0, closed_only=True, config=small_config,
+        )
+        # Open lines have NaN inv_lat, excluded from both. Same result.
+        np.testing.assert_allclose(all_result["total"], closed_result["total"])
+        # 3 closed traces × 60 min
+        assert closed_result["total"].sum() == pytest.approx(3 * 60.0)
+
+    def test_nan_excluded(self, small_config):
+        """Open field lines (NaN inv_lat) contribute zero dwell."""
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.array([np.nan]),
+            inv_lat_south=np.array([np.nan]),
+            is_closed=np.array([False]),
+            local_time=np.array([12.0]),
+            z=np.array([5.0]),
+            dt_minutes=60.0,
+            config=small_config,
+        )
+        assert result["total"].sum() == pytest.approx(0.0)
+
+    def test_region_separation(self, small_config):
+        """Per-region grids should sum to total for known codes."""
+        n = 4
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.full(n, 65.0),
+            inv_lat_south=np.full(n, -65.0),
+            is_closed=np.ones(n, dtype=bool),
+            local_time=np.full(n, 12.0),
+            z=np.full(n, 5.0),
+            dt_minutes=60.0,
+            region_codes=np.array([0, 1, 2, 9]),
+            config=small_config,
+        )
+        assert "magnetosphere" in result
+        parts = result["magnetosphere"] + result["magnetosheath"] + result["solar_wind"] + result["unknown"]
+        np.testing.assert_allclose(result["total"], parts)
+
+    def test_dt_minutes_scales(self, small_config):
+        """dt_minutes=120 → each point contributes 120 min."""
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.array([65.0]),
+            inv_lat_south=np.array([-65.0]),
+            is_closed=np.array([True]),
+            local_time=np.array([12.0]),
+            z=np.array([5.0]),
+            dt_minutes=120.0,
+            config=small_config,
+        )
+        assert result["total"].sum() == pytest.approx(120.0)
+
+    def test_empty_input(self, small_config):
+        result = accumulate_traced_inv_lat_grid(
+            inv_lat_north=np.array([]),
+            inv_lat_south=np.array([]),
+            is_closed=np.array([], dtype=bool),
+            local_time=np.array([]),
+            z=np.array([]),
+            dt_minutes=60.0,
+            config=small_config,
+        )
+        assert result["total"].sum() == 0.0
+        assert result["total"].shape == (18, 12)
+
+
+# ============================================================================
+# accumulate_weak_field_grid
+# ============================================================================
+
+
+class TestAccumulateWeakFieldGrid:
+    @pytest.fixture
+    def small_config(self):
+        return DwellGridConfig(
+            n_r=10, n_lat=18, n_lt=12,
+            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+        )
+
+    def test_weak_field_filter(self, small_config):
+        """Only points with btotal < 2.0 should appear."""
+        x = np.array([10.0, 10.0, 10.0])
+        y = np.zeros(3)
+        z = np.full(3, 0.037)
+        btotal = np.array([1.0, 3.0, 0.5])
+
+        result = accumulate_weak_field_grid(
+            x, y, z, btotal, dt_minutes=1.0, b_threshold=2.0, config=small_config,
+        )
+        # 2 of 3 points pass the threshold
+        assert result["total"].sum() == pytest.approx(2.0)
+
+    def test_all_pass_with_high_threshold(self, small_config):
+        """With b_threshold=1000, all points pass."""
+        from qp.dwell.grid import accumulate_inv_lat_grid
+        x = np.array([10.0, 15.0])
+        y = np.zeros(2)
+        z = np.full(2, 0.037)
+        btotal = np.array([5.0, 10.0])
+
+        wf = accumulate_weak_field_grid(
+            x, y, z, btotal, dt_minutes=1.0, b_threshold=1000.0, config=small_config,
+        )
+        ref = accumulate_inv_lat_grid(
+            x, y, z, dt_minutes=1.0, config=small_config,
+        )
+        np.testing.assert_allclose(wf["total"], ref["total"])
+
+    def test_with_region_codes(self, small_config):
+        x = np.array([10.0, 10.0])
+        y = np.zeros(2)
+        z = np.full(2, 0.037)
+        btotal = np.array([1.0, 1.0])
+        codes = np.array([0, 1])
+
+        result = accumulate_weak_field_grid(
+            x, y, z, btotal, region_codes=codes, config=small_config,
+        )
+        assert "magnetosphere" in result
+        assert result["magnetosphere"].sum() == pytest.approx(1.0)
+        assert result["magnetosheath"].sum() == pytest.approx(1.0)
+
+    def test_empty_input(self, small_config):
+        result = accumulate_weak_field_grid(
+            [], [], [], [], config=small_config,
+        )
+        assert result["total"].sum() == 0.0
+        assert result["total"].shape == (18, 12)
+
+
+# ============================================================================
+# KMAG grids in xarray I/O
+# ============================================================================
+
+
+class TestKmagInvLatIO:
+    def test_kmag_grids_in_dataset(self):
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid_3d = np.ones(cfg.shape)
+        inv_2d = np.ones((9, 6)) * 2.0
+        kmag_2d = np.ones((9, 6)) * 3.0
+
+        ds = to_xarray(
+            {"total": grid_3d}, cfg,
+            inv_lat_grids={"dipole_inv_lat_total": inv_2d},
+            kmag_inv_lat_grids={"kmag_inv_lat_total": kmag_2d},
+        )
+
+        assert "dipole_inv_lat" in ds.dims
+        assert "kmag_inv_lat" in ds.dims
+        assert "dipole_inv_lat_total" in ds.data_vars
+        assert "kmag_inv_lat_total" in ds.data_vars
+        np.testing.assert_allclose(ds["kmag_inv_lat_total"].values, 3.0)
+
+    def test_kmag_zarr_roundtrip(self):
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid_3d = np.ones(cfg.shape)
+        kmag_2d = np.ones((9, 6)) * 5.0
+
+        ds = to_xarray(
+            {"total": grid_3d}, cfg,
+            kmag_inv_lat_grids={"kmag_inv_lat_total": kmag_2d},
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test.zarr"
+            save_zarr(ds, path)
+            loaded = load_zarr(path)
+            np.testing.assert_allclose(
+                loaded["kmag_inv_lat_total"].values, 5.0,
+            )
+            assert "kmag_inv_lat" in loaded.dims
+
+    def test_no_kmag_grids_when_none(self):
+        cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
+        grid_3d = np.ones(cfg.shape)
+        ds = to_xarray({"total": grid_3d}, cfg, kmag_inv_lat_grids=None)
+        assert "kmag_inv_lat" not in ds.dims
+
+
+# ============================================================================
+# Region filter and parallel tracing
+# ============================================================================
+
+
+class TestComputeInvariantLatitudesParallel:
+    """Tests for region filtering and the multiprocessing tracer."""
+
+    @pytest.fixture
+    def synthetic_inputs(self):
+        """20 samples spread across regions with varied positions."""
+        rng = np.random.default_rng(42)
+        n = 20
+        x = rng.uniform(5, 25, n)
+        y = rng.uniform(-10, 10, n)
+        z = rng.uniform(-10, 10, n)
+        t = np.zeros(n)  # J2000=0 for all
+        codes = np.tile([0, 0, 0, 1, 2], 4)  # 60% MS, 20% MSh, 20% SW
+        return x, y, z, t, codes
+
+    def test_region_filter_skips_non_ms(self, synthetic_inputs):
+        """Region filter to MS leaves non-MS slots as NaN/False."""
+        from qp.dwell.tracing import (
+            TracingConfig, compute_invariant_latitudes,
+        )
+        x, y, z, t, codes = synthetic_inputs
+        cfg = TracingConfig(
+            trace_every_n=1, max_steps=5000, log_interval=100,
+            region_filter=(0,),
+        )
+        result = compute_invariant_latitudes(
+            x, y, z, t, config=cfg, region_codes=codes,
+        )
+        # Slots where region != 0 must all be NaN / False
+        non_ms = codes != 0
+        assert np.all(np.isnan(result.inv_lat_north[non_ms]))
+        assert np.all(np.isnan(result.inv_lat_south[non_ms]))
+        assert np.all(~result.is_closed[non_ms])
+
+    def test_region_filter_none_traces_all(self, synthetic_inputs):
+        """region_filter=None ignores region_codes and traces everything."""
+        from qp.dwell.tracing import (
+            TracingConfig, compute_invariant_latitudes,
+        )
+        x, y, z, t, codes = synthetic_inputs
+        cfg_none = TracingConfig(
+            trace_every_n=1, max_steps=5000, log_interval=100,
+            region_filter=None,
+        )
+        r_codes = compute_invariant_latitudes(
+            x, y, z, t, config=cfg_none, region_codes=codes,
+        )
+        r_no_codes = compute_invariant_latitudes(
+            x, y, z, t, config=cfg_none,
+        )
+        np.testing.assert_array_equal(r_codes.is_closed, r_no_codes.is_closed)
+        np.testing.assert_allclose(
+            r_codes.inv_lat_north, r_no_codes.inv_lat_north, equal_nan=True,
+        )
+
+    def test_parallel_matches_serial_no_filter(self, synthetic_inputs):
+        """Parallel must produce element-wise identical results to serial."""
+        from qp.dwell.tracing import (
+            TracingConfig,
+            compute_invariant_latitudes,
+            compute_invariant_latitudes_parallel,
+        )
+        x, y, z, t, _ = synthetic_inputs
+        cfg = TracingConfig(
+            trace_every_n=1, max_steps=5000, log_interval=100,
+            region_filter=None,
+        )
+        r_serial = compute_invariant_latitudes(x, y, z, t, config=cfg)
+        r_parallel = compute_invariant_latitudes_parallel(
+            x, y, z, t, config=cfg, n_workers=2,
+        )
+        np.testing.assert_array_equal(r_serial.is_closed, r_parallel.is_closed)
+        np.testing.assert_allclose(
+            r_serial.inv_lat_north, r_parallel.inv_lat_north, equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            r_serial.inv_lat_south, r_parallel.inv_lat_south, equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            r_serial.l_equatorial, r_parallel.l_equatorial, equal_nan=True,
+        )
+        assert r_serial.n_traces == r_parallel.n_traces
+        assert r_serial.n_closed == r_parallel.n_closed
+
+    def test_parallel_matches_serial_with_filter(self, synthetic_inputs):
+        """Parallel + region filter must match serial + region filter."""
+        from qp.dwell.tracing import (
+            TracingConfig,
+            compute_invariant_latitudes,
+            compute_invariant_latitudes_parallel,
+        )
+        x, y, z, t, codes = synthetic_inputs
+        cfg = TracingConfig(
+            trace_every_n=1, max_steps=5000, log_interval=100,
+            region_filter=(0,),
+        )
+        r_s = compute_invariant_latitudes(
+            x, y, z, t, config=cfg, region_codes=codes,
+        )
+        r_p = compute_invariant_latitudes_parallel(
+            x, y, z, t, config=cfg, region_codes=codes, n_workers=2,
+        )
+        np.testing.assert_array_equal(r_s.is_closed, r_p.is_closed)
+        np.testing.assert_allclose(
+            r_s.inv_lat_north, r_p.inv_lat_north, equal_nan=True,
+        )
+        np.testing.assert_allclose(
+            r_s.l_equatorial, r_p.l_equatorial, equal_nan=True,
+        )
+
+    def test_parallel_n_workers_1_falls_back_to_serial(self, synthetic_inputs):
+        """n_workers=1 should use the serial path (no multiprocessing)."""
+        from qp.dwell.tracing import (
+            TracingConfig,
+            compute_invariant_latitudes,
+            compute_invariant_latitudes_parallel,
+        )
+        x, y, z, t, _ = synthetic_inputs
+        cfg = TracingConfig(
+            trace_every_n=1, max_steps=5000, log_interval=100,
+            region_filter=None,
+        )
+        r_s = compute_invariant_latitudes(x, y, z, t, config=cfg)
+        r_p = compute_invariant_latitudes_parallel(
+            x, y, z, t, config=cfg, n_workers=1,
+        )
+        np.testing.assert_array_equal(r_s.is_closed, r_p.is_closed)
+        np.testing.assert_allclose(
+            r_s.inv_lat_north, r_p.inv_lat_north, equal_nan=True,
+        )
+
+    def test_round_robin_chunks_partition_active_slots(self):
+        """Round-robin chunking covers all active slots exactly once."""
+        active_slots = np.arange(100)
+        n_chunks = 8
+        chunks = [active_slots[i::n_chunks] for i in range(n_chunks)]
+        union = np.concatenate(chunks)
+        assert sorted(union.tolist()) == active_slots.tolist()
+        # No duplicates
+        assert len(set(union.tolist())) == 100
