@@ -84,12 +84,25 @@ class BinningStats:
 def bin_events_peak_position(
     events: Iterable[WaveEvent],
     config: DwellGridConfig | None = None,
+    *,
+    quality_weighted: bool = False,
+    quality_col: str = "quality",
 ) -> tuple[dict[str, np.ndarray], BinningStats]:
     r"""Single-bin event-time binning.
 
     Each event's full duration is dumped into the cell containing its
     stored ``(r_distance, mag_lat, local_time)`` peak position. The
     units are **minutes**, matching the dwell zarr.
+
+    Parameters
+    ----------
+    quality_weighted : bool, default False
+        When True, each event contributes ``quality × duration_minutes``
+        instead of ``duration_minutes``. The resulting grids represent
+        :math:`\sum q_i \cdot \Delta t_i` per cell and must be
+        normalized by the same dwell grid as the unweighted case.
+    quality_col : str
+        Attribute name for the quality score on each event.
 
     Returns
     -------
@@ -129,6 +142,11 @@ def bin_events_peak_position(
         i_lat = _bin_index(lat, *config.lat_range, config.n_lat)
         i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
         minutes = float(ev.duration_minutes)
+        if quality_weighted:
+            q = getattr(ev, quality_col, None)
+            weight = float(q) if q is not None and math.isfinite(q) else 0.0
+            weight = max(0.0, min(1.0, weight))
+            minutes = minutes * weight
         if ev.band in grids:
             grids[ev.band][i_r, i_lat, i_lt] += minutes
         grids["total"][i_r, i_lat, i_lt] += minutes

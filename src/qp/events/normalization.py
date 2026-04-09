@@ -108,3 +108,44 @@ def collapse_to_latitude(
     if grid_2d_r_lat.ndim != 2:
         raise ValueError(f"expected 2D, got {grid_2d_r_lat.ndim}D")
     return grid_2d_r_lat.sum(axis=0)
+
+
+def weighted_occurrence_rate(
+    weighted_event_grid: ArrayLike,
+    dwell_grid: ArrayLike,
+    *,
+    min_dwell_minutes: float = 60.0,
+    clip_max: float | None = 1.0,
+) -> NDArray[np.floating]:
+    r"""Quality-weighted occurrence rate.
+
+    The numerator is :math:`\sum_i q_i \cdot \Delta t_i` (sum of quality
+    × event duration per cell, in minutes) — produced by the quality-weighted
+    binning path. The denominator is the same consistency dwell grid as for
+    the unweighted case.
+
+    Because quality :math:`q \in [0, 1]`, the weighted numerator is always
+    :math:`\leq` the unweighted numerator, so the ratio is bounded by the
+    unweighted occurrence rate.
+
+    Parameters
+    ----------
+    weighted_event_grid : array_like
+        :math:`\sum q_i \cdot \Delta t_i` per cell, in minutes.
+    dwell_grid : array_like
+        Dwell time per cell, in minutes.
+    min_dwell_minutes : float
+        Floor for dwell; below this value cells are set to NaN.
+    clip_max : float or None
+        Upper clip on the ratio.
+
+    Returns
+    -------
+    rate : ndarray of float
+        Same shape as inputs. NaN where dwell is below the floor.
+    """
+    return occurrence_rate(
+        weighted_event_grid, dwell_grid,
+        min_dwell_minutes=min_dwell_minutes,
+        clip_max=clip_max,
+    )
