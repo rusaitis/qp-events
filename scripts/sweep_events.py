@@ -73,6 +73,7 @@ from qp.events.detector import detect_with_gate  # noqa: E402
 from qp.events.threshold import GateConfig  # noqa: E402
 from qp.signal.cross_correlation import (  # noqa: E402
     classify_polarization,
+    ellipticity_inclination,
     phase_shift,
 )
 
@@ -82,12 +83,24 @@ from qp.signal.cross_correlation import (  # noqa: E402
 # ----------------------------------------------------------------------
 
 #: Production gate (calibrated by scripts/calibrate_threshold.py).
+#: Loose by default — multi-component coincidence is opt-in via --strict.
 PRODUCTION_GATE: GateConfig = GateConfig(
     n_sigma=5.0,
     min_pixels=300,
     min_duration_hours=2.5,
     min_oscillations=3.0,
     enable_fft_screen=False,
+    require_both_perp=False,
+)
+
+#: Strict gate for Phase 6.3 multi-component coincidence catalogs.
+STRICT_GATE: GateConfig = GateConfig(
+    n_sigma=5.0,
+    min_pixels=300,
+    min_duration_hours=2.5,
+    min_oscillations=3.0,
+    enable_fft_screen=False,
+    require_both_perp=True,
 )
 
 
@@ -358,6 +371,14 @@ def process_segment(
             phase_deg = None
             polarization = None
 
+        # Phase 6.5 — Stokes-derived ellipticity
+        try:
+            ellipticity, inclination_deg, pol_frac = (
+                ellipticity_inclination(b_perp1[sl], b_perp2[sl])
+            )
+        except Exception:
+            ellipticity, inclination_deg, pol_frac = None, None, None
+
         # PPO phase
         ppo = _ppo_at_peak_from_info(info, pkt.peak_time, times[0],
                                        n_samples)
@@ -399,6 +420,9 @@ def process_segment(
             event_id=f"seg{seg_idx:05d}-{pkt.band}-{pkt_idx:02d}",
             segment_id=seg_idx,
             n_oscillations=int(n_osc) if n_osc is not None else None,
+            ellipticity=ellipticity,
+            inclination_deg=inclination_deg,
+            polarization_fraction=pol_frac,
         )
         events.append(event)
 
@@ -568,7 +592,11 @@ def main() -> None:
                                  "event_catalog_summary.txt")
     parser.add_argument("--serial", action="store_true",
                          help="run in single-process mode for debugging")
+    parser.add_argument("--strict", action="store_true",
+                         help="use the multi-component coincidence gate "
+                              "(Phase 6.3) — fewer but cleaner events")
     args = parser.parse_args()
+    gate = STRICT_GATE if args.strict else PRODUCTION_GATE
 
     n_workers = args.n_workers or max(1, (os.cpu_count() or 4) - 2)
     print(f"Loading segments...")
@@ -587,7 +615,7 @@ def main() -> None:
         if p is not None:
             payloads.append(p)
     print(f"  payloads ready : {len(payloads)}")
-    tasks = [(p, PRODUCTION_GATE) for p in payloads]
+    tasks = [(p, gate) for p in payloads]
 
     t0 = time.time()
     all_events: list[WaveEvent] = []

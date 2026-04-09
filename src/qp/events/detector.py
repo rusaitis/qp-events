@@ -490,12 +490,25 @@ def detect_with_gate(
     else:
         triggered_bands = list(bands)
 
-    # Stage 2: CWT once on b_perp1 (the lead transverse component)
-    freq, _, cwt_matrix = morlet_cwt(b_perp1, dt=dt, n_freqs=cwt_n_freqs)
-    cwt_power = np.abs(cwt_matrix)
-
-    # Stage 3: σ mask
-    mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
+    # Stage 2: CWT on both transverse components and combine via the
+    # coincidence rule from Phase 6.3 (`require_both_perp`).
+    #
+    # We CWT both perp components and require σ-mask agreement in the
+    # same (period, time) cell. This eliminates compressional or
+    # single-axis contamination — a real Alfvén wave packet will fire
+    # both transverse components together.
+    freq, _, cwt_matrix1 = morlet_cwt(b_perp1, dt=dt, n_freqs=cwt_n_freqs)
+    cwt_power1 = np.abs(cwt_matrix1)
+    if gate.require_both_perp:
+        _, _, cwt_matrix2 = morlet_cwt(b_perp2, dt=dt, n_freqs=cwt_n_freqs)
+        cwt_power2 = np.abs(cwt_matrix2)
+        mask1 = wavelet_sigma_mask(cwt_power1, freq, n_sigma=gate.n_sigma)
+        mask2 = wavelet_sigma_mask(cwt_power2, freq, n_sigma=gate.n_sigma)
+        mask = mask1 & mask2
+        cwt_power = (cwt_power1 + cwt_power2) / 2.0
+    else:
+        cwt_power = cwt_power1
+        mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
 
     # Stage 4: ridge extraction on triggered bands only
     packets = detect_wave_packets_multi(

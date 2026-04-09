@@ -106,3 +106,80 @@ def classify_polarization(phase_deg: float, tolerance: float = 30.0) -> str:
         if abs(phase - a) < tolerance:
             return "linear"
     return "mixed"
+
+
+# ----------------------------------------------------------------------
+# Phase 6.5 — Stokes / ellipticity / inclination from two perpendicular
+# components.
+#
+# The "circular vs linear" categorical label is too lossy: a 75°
+# phase shift is "mixed" but is much closer to circular than linear.
+# This module gives the continuous Stokes-parameter description so
+# Fig 10 can plot a histogram of ellipticities instead of a 3-way
+# bar chart.
+# ----------------------------------------------------------------------
+
+
+def stokes_parameters(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+) -> tuple[float, float, float, float]:
+    r"""Stokes parameters of a two-component time series.
+
+    Computes the standard Stokes parameters for a quasi-monochromatic
+    transverse wave from the analytic signal of two orthogonal
+    components:
+
+    .. math::
+
+        I &= \langle |b_\perp1|^2\rangle + \langle |b_\perp2|^2\rangle \\
+        Q &= \langle |b_\perp1|^2\rangle - \langle |b_\perp2|^2\rangle \\
+        U &= 2 \mathrm{Re}\langle b_\perp1^* b_\perp2 \rangle \\
+        V &= 2 \mathrm{Im}\langle b_\perp1^* b_\perp2 \rangle
+
+    Where the analytic signal is built via the Hilbert transform.
+
+    Returns
+    -------
+    I, Q, U, V : float
+    """
+    from scipy.signal import hilbert
+
+    a = hilbert(np.asarray(b_perp1, dtype=float))
+    b = hilbert(np.asarray(b_perp2, dtype=float))
+    I = float(np.mean(np.abs(a) ** 2 + np.abs(b) ** 2))
+    Q = float(np.mean(np.abs(a) ** 2 - np.abs(b) ** 2))
+    U = float(2 * np.real(np.mean(np.conj(a) * b)))
+    V = float(2 * np.imag(np.mean(np.conj(a) * b)))
+    return I, Q, U, V
+
+
+def ellipticity_inclination(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+) -> tuple[float, float, float]:
+    r"""Ellipticity and inclination of a transverse wave packet.
+
+    Returns
+    -------
+    ellipticity : float
+        Signed ratio of minor / major polarization-ellipse axes.
+        +1 = right-circular, -1 = left-circular, 0 = linear.
+    inclination_deg : float
+        Tilt angle of the major axis from the b_perp1 axis (degrees).
+    polarization_fraction : float
+        Fraction of total power that is polarized
+        ``sqrt(Q^2 + U^2 + V^2) / I``. 1.0 = fully polarized.
+
+    The standard formulas in terms of Stokes:
+        chi = 0.5 * arcsin(V / sqrt(Q² + U² + V²))   # ellipticity angle
+        psi = 0.5 * arctan2(U, Q)                     # inclination
+        ellipticity = tan(chi)
+    """
+    I, Q, U, V = stokes_parameters(b_perp1, b_perp2)
+    p = np.sqrt(Q ** 2 + U ** 2 + V ** 2)
+    if p <= 0 or I <= 0:
+        return 0.0, 0.0, 0.0
+    chi = 0.5 * np.arcsin(np.clip(V / p, -1.0, 1.0))
+    psi = 0.5 * np.arctan2(U, Q)
+    return float(np.tan(chi)), float(np.degrees(psi)), float(p / I)

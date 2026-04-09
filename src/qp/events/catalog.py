@@ -62,6 +62,10 @@ class WaveEvent:
     event_id: str | None = None  # globally unique id (segment#-band-idx)
     segment_id: int | None = None  # source segment index
     n_oscillations: int | None = None  # duration / period
+    # Phase 6.5 — full Stokes / ellipticity description
+    ellipticity: float | None = None  # signed minor/major axis ratio in [-1, 1]
+    inclination_deg: float | None = None  # tilt of major axis from b_perp1
+    polarization_fraction: float | None = None  # fraction of polarized power [0, 1]
 
     @property
     def duration_hours(self) -> float:

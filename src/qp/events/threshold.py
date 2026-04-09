@@ -266,6 +266,14 @@ class GateConfig:
     min_oscillations: float = 3.0
     coi_factor: float = 1.0
     enable_fft_screen: bool = False
+    # Phase 6.3 multi-component coincidence: require both b_perp1 and
+    # b_perp2 to exceed the σ threshold in the same (period, time) cell.
+    # Eliminates compressional contamination and single-axis glitches.
+    # **Default is False** because the strict catalog (417 events) is
+    # too sparse to recover the PPO modulation in the Fig 9 separation
+    # analysis. The strict path is used by `sweep_events.py --strict`
+    # for the cleaner Phase 6.5 ellipticity analysis.
+    require_both_perp: bool = False
 
 
 DEFAULT_GATE: GateConfig = GateConfig()
