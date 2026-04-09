@@ -33,6 +33,12 @@ from qp.events.catalog import WaveEvent, WavePacketPeak
 from qp.events.ridge import Ridge, extract_ridges
 from qp.signal.wavelet import morlet_cwt
 
+# Imported lazily inside functions to avoid an import cycle:
+#   qp.events.threshold imports qp.signal.pipeline.SpectralResult
+#   qp.signal.pipeline currently does not import qp.events, so we're
+#   safe to import threshold at module top, but we keep it local for
+#   the functions that use it for clarity.
+
 
 # ----------------------------------------------------------------------
 # Legacy single-band detector (back-compat)
@@ -398,6 +404,128 @@ def _ridge_to_packet(
         band=ridge.band,
         period_sec=float(ridge.peak_period_sec),
     )
+
+
+# ----------------------------------------------------------------------
+# Phase 2: full gate combining FFT screen + σ mask + ridge extraction
+# ----------------------------------------------------------------------
+
+
+def detect_with_gate(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    times: list[datetime.datetime] | NDArray[np.floating],
+    *,
+    dt: float = 60.0,
+    bands: Iterable[str | Band] = QP_BAND_NAMES,
+    spectral_result_perp1=None,
+    spectral_result_perp2=None,
+    gate=None,
+    cwt_n_freqs: int = 300,
+) -> list[WavePacketPeak]:
+    r"""Run the full Phase 2 detection gate on a single MFA segment.
+
+    Pipeline
+    --------
+    1. For each band, run :func:`screen_segment_by_power_ratio` on
+       both ``b_perp1`` and ``b_perp2`` Welch PSDs (caller may pass
+       precomputed :class:`SpectralResult` objects to skip the
+       analyze_segment step). Drop the band if neither component
+       triggers.
+    2. Compute the CWT of ``b_perp1`` (the dominant transverse
+       component in the published paper).
+    3. Build a :func:`wavelet_sigma_mask` from that CWT.
+    4. Hand the (CWT, mask) pair to :func:`detect_wave_packets_multi`,
+       restricted to the bands that survived step 1.
+
+    Returns the list of :class:`WavePacketPeak` accepted by every
+    stage. Polarization, coordinate, and PPO enrichment is the
+    sweep script's job (see ``scripts/sweep_events.py``).
+    """
+    # Lazy imports to keep module-level deps minimal
+    from qp.events.threshold import (
+        DEFAULT_GATE,
+        screen_spectral_result,
+        wavelet_sigma_mask,
+    )
+    from qp.signal.pipeline import analyze_segment
+
+    if gate is None:
+        gate = DEFAULT_GATE
+
+    b_perp1 = np.asarray(b_perp1, dtype=float)
+    b_perp2 = np.asarray(b_perp2, dtype=float)
+
+    # Stage 1: Welch PSDs (compute lazily if not provided).
+    if spectral_result_perp1 is None:
+        spectral_result_perp1 = analyze_segment(
+            b_perp1, dt=dt,
+            detrend_window_sec=60.0,  # tiny — segments are pre-detrended
+            welch_nperseg=12 * 60,
+            welch_noverlap=6 * 60,
+        )
+    if spectral_result_perp2 is None:
+        spectral_result_perp2 = analyze_segment(
+            b_perp2, dt=dt,
+            detrend_window_sec=60.0,
+            welch_nperseg=12 * 60,
+            welch_noverlap=6 * 60,
+        )
+
+    if gate.enable_fft_screen:
+        triggered_bands: list[str | Band] = []
+        for b in bands:
+            s1 = screen_spectral_result(
+                spectral_result_perp1, b,
+                ratio_threshold=gate.fft_ratio_threshold,
+            )
+            s2 = screen_spectral_result(
+                spectral_result_perp2, b,
+                ratio_threshold=gate.fft_ratio_threshold,
+            )
+            if s1.triggered or s2.triggered:
+                triggered_bands.append(b)
+        if not triggered_bands:
+            return []
+    else:
+        triggered_bands = list(bands)
+
+    # Stage 2: CWT once on b_perp1 (the lead transverse component)
+    freq, _, cwt_matrix = morlet_cwt(b_perp1, dt=dt, n_freqs=cwt_n_freqs)
+    cwt_power = np.abs(cwt_matrix)
+
+    # Stage 3: σ mask
+    mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
+
+    # Stage 4: ridge extraction on triggered bands only
+    packets = detect_wave_packets_multi(
+        b_perp1,
+        times,
+        dt=dt,
+        bands=triggered_bands,
+        cwt_freq=freq,
+        cwt_power=cwt_power,
+        threshold_mask=mask,
+        min_duration_hours=gate.min_duration_hours,
+        min_pixels=gate.min_pixels,
+        coi_factor=gate.coi_factor,
+    )
+
+    # Stage 5: physical sanity — require at least N oscillations of
+    # the peak period inside the packet window. A "wave packet" with
+    # fewer than two oscillations is just a glitch.
+    if gate.min_oscillations > 0:
+        kept: list[WavePacketPeak] = []
+        for p in packets:
+            if p.period_sec is None or p.period_sec <= 0:
+                continue
+            duration_sec = (p.date_to - p.date_from).total_seconds()
+            n_osc = duration_sec / p.period_sec
+            if n_osc >= gate.min_oscillations:
+                kept.append(p)
+        packets = kept
+
+    return packets
 
 
 def _dt_to_unix(dt_obj: datetime.datetime) -> float:
