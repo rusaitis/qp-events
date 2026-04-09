@@ -183,3 +183,99 @@ def ellipticity_inclination(
     chi = 0.5 * np.arcsin(np.clip(V / p, -1.0, 1.0))
     psi = 0.5 * np.arctan2(U, Q)
     return float(np.tan(chi)), float(np.degrees(psi)), float(p / I)
+
+
+def stokes_parameters_tapered(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    alpha: float = 0.25,
+) -> tuple[float, float, float, float]:
+    r"""Stokes parameters with a Tukey (cosine) taper to suppress edge effects.
+
+    The Hilbert transform used in :func:`stokes_parameters` is sensitive
+    to edge discontinuities in short windows (<5 oscillations). The
+    Tukey taper smoothly rolls the signal to zero at both ends, removing
+    the edge artifact without distorting the central portion.
+
+    Parameters
+    ----------
+    b_perp1, b_perp2 : array_like
+    alpha : float
+        Fraction of the window inside the cosine taper (0 = rectangular,
+        1 = Hann). Default 0.25 tapers the outer 12.5% on each side.
+    """
+    from scipy.signal import hilbert, windows
+
+    b1 = np.asarray(b_perp1, dtype=float)
+    b2 = np.asarray(b_perp2, dtype=float)
+    n = len(b1)
+    taper = windows.tukey(n, alpha=alpha)
+    a = hilbert(b1 * taper)
+    b = hilbert(b2 * taper)
+    I = float(np.mean(np.abs(a) ** 2 + np.abs(b) ** 2))
+    Q = float(np.mean(np.abs(a) ** 2 - np.abs(b) ** 2))
+    U = float(2 * np.real(np.mean(np.conj(a) * b)))
+    V = float(2 * np.imag(np.mean(np.conj(a) * b)))
+    return I, Q, U, V
+
+
+def ellipticity_inclination_tapered(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    alpha: float = 0.25,
+) -> tuple[float, float, float]:
+    r"""Ellipticity with Tukey taper — fixes edge artifacts in short events."""
+    I, Q, U, V = stokes_parameters_tapered(b_perp1, b_perp2, alpha=alpha)
+    p = np.sqrt(Q ** 2 + U ** 2 + V ** 2)
+    if p <= 0 or I <= 0:
+        return 0.0, 0.0, 0.0
+    chi = 0.5 * np.arcsin(np.clip(V / p, -1.0, 1.0))
+    psi = 0.5 * np.arctan2(U, Q)
+    return float(np.tan(chi)), float(np.degrees(psi)), float(p / I)
+
+
+def per_oscillation_ellipticity(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    dt: float = 60.0,
+    period: float = 3600.0,
+) -> tuple[float, float]:
+    r"""Median per-oscillation ellipticity and its spread.
+
+    Splits the event window into individual cycles of the peak period,
+    computes Stokes-derived ellipticity for each cycle, and returns the
+    median and IQR. This avoids washing out polarization rotation across
+    a multi-hour event.
+
+    Returns
+    -------
+    median_ellipticity : float
+    iqr_ellipticity : float
+        Inter-quartile range (75th - 25th percentile).
+    """
+    b1 = np.asarray(b_perp1, dtype=float)
+    b2 = np.asarray(b_perp2, dtype=float)
+    samples_per_cycle = int(round(period / dt))
+    if samples_per_cycle < 4 or len(b1) < samples_per_cycle:
+        e, _, _ = ellipticity_inclination_tapered(b1, b2)
+        return e, 0.0
+
+    n_cycles = len(b1) // samples_per_cycle
+    ellipticities = []
+    for i in range(n_cycles):
+        lo = i * samples_per_cycle
+        hi = lo + samples_per_cycle
+        try:
+            e, _, _ = ellipticity_inclination_tapered(b1[lo:hi], b2[lo:hi])
+            if np.isfinite(e):
+                ellipticities.append(e)
+        except Exception:
+            pass
+
+    if not ellipticities:
+        e, _, _ = ellipticity_inclination_tapered(b1, b2)
+        return e, 0.0
+
+    arr = np.array(ellipticities)
+    q25, q50, q75 = np.percentile(arr, [25, 50, 75])
+    return float(q50), float(q75 - q25)

@@ -12,6 +12,8 @@ from scipy import signal as sig
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 
+from qp.events.bands import QP_BANDS
+
 
 def welch_psd(
     data: ArrayLike,
@@ -198,4 +200,59 @@ def estimate_background(
     f_bg = interp1d(x_new, bg_smooth, kind="cubic", fill_value="extrapolate")
     background = np.exp(f_bg(log_freq))
 
+    return background
+
+
+def estimate_background_powerlaw(
+    psd: ArrayLike,
+    freq: ArrayLike,
+    exclude_bands: bool = True,
+) -> np.ndarray:
+    r"""Power-law background: fit $\log P = -\alpha \log f + c$ outside QP bands.
+
+    Magnetospheric noise follows an approximate $f^{-\alpha}$ power law.
+    Unlike the Savitzky-Golay estimator, a straight line in log-log
+    space *cannot* self-fit a narrow spectral peak, so the power ratio
+    ``PSD / background`` preserves peaks faithfully.
+
+    Parameters
+    ----------
+    psd : array_like
+        Power spectral density (nT²/Hz).
+    freq : array_like
+        Frequency array (Hz).
+    exclude_bands : bool
+        If True, exclude QP band frequencies from the fit so the
+        background is estimated purely from noise.
+
+    Returns
+    -------
+    background : ndarray
+        Power-law background estimate, same shape as ``psd``.
+    """
+    psd = np.asarray(psd, dtype=float)
+    freq = np.asarray(freq, dtype=float)
+
+    # Mask: positive freq and PSD, plus optional QP-band exclusion
+    valid = (freq > 0) & (psd > 0)
+    if exclude_bands:
+        for band in QP_BANDS.values():
+            valid &= ~(
+                (freq >= band.freq_min_hz) & (freq < band.freq_max_hz)
+            )
+
+    if valid.sum() < 2:
+        # Degenerate — return flat background
+        return np.full_like(psd, np.median(psd))
+
+    log_f = np.log10(freq[valid])
+    log_p = np.log10(psd[valid])
+
+    # Robust linear fit in log-log space (least squares)
+    coeffs = np.polyfit(log_f, log_p, deg=1)  # [slope, intercept]
+    background = np.where(
+        freq > 0,
+        10.0 ** np.polyval(coeffs, np.log10(np.maximum(freq, 1e-30))),
+        psd,
+    )
     return background

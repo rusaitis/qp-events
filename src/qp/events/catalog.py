@@ -66,6 +66,15 @@ class WaveEvent:
     ellipticity: float | None = None  # signed minor/major axis ratio in [-1, 1]
     inclination_deg: float | None = None  # tilt of major axis from b_perp1
     polarization_fraction: float | None = None  # fraction of polarized power [0, 1]
+    # Phase 7 — multi-metric quality scoring
+    fft_screen_ratio: float | None = None  # power-law FFT ratio at peak freq
+    mf_snr: float | None = None  # matched-filter SNR
+    coherence: float | None = None  # wavelet coherence over ridge [0, 1]
+    coherence_phase_deg: float | None = None  # mean phase diff from coherence
+    wavelet_sigma: float | None = None  # peak σ above background in CWT
+    transverse_ratio: float | None = None  # (perp1² + perp2²) / par²
+    quality: float | None = None  # composite quality score [0, 1]
+    dipole_inv_lat: float | None = None  # dipole invariant latitude (degrees)
 
     @property
     def duration_hours(self) -> float:
