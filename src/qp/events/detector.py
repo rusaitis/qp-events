@@ -1,25 +1,42 @@
 """Wave event detection from CWT power.
 
-Detects QP wave packets by:
-1. Computing Morlet CWT of MFA field component
-2. Extracting power at target periods (e.g., 55-65 min for QP60)
-3. Computing event measure as the norm across period bins
-4. Finding peaks in the event measure using scipy.signal.find_peaks
+Two flavours:
 
-Extracted from cassinilib/PlotFFT.py:collectWaveEvents and
-calculateEventSeparation.
+1. **Legacy single-band detector** (``detect_wave_packets``,
+   ``compute_event_measure``, ``collect_wave_events``) — peak-finding
+   on a normalized CWT event measure inside a fixed period band. Kept
+   for back-compat with the existing tests and the QP60-only Fig 9
+   pipeline.
+
+2. **Multi-band detector** (``detect_wave_packets_multi``) — runs
+   :func:`qp.events.ridge.extract_ridges` over each canonical QP band
+   and turns each ridge into a :class:`WavePacketPeak`. Optionally
+   uses an externally supplied σ-mask from
+   :mod:`qp.events.threshold`. This is the path used by the
+   mission-wide sweep in Phase 3.
+
+The legacy API stays untouched so existing scripts and tests continue
+to work; new code should call ``detect_wave_packets_multi``.
 """
 
 from __future__ import annotations
 
 import datetime
+from typing import Iterable
 
 import numpy as np
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from scipy.signal import find_peaks
 
-from qp.signal.wavelet import morlet_cwt
+from qp.events.bands import QP_BAND_NAMES, Band
 from qp.events.catalog import WaveEvent, WavePacketPeak
+from qp.events.ridge import Ridge, extract_ridges
+from qp.signal.wavelet import morlet_cwt
+
+
+# ----------------------------------------------------------------------
+# Legacy single-band detector (back-compat)
+# ----------------------------------------------------------------------
 
 
 def detect_wave_packets(
@@ -35,7 +52,7 @@ def detect_wave_packets(
     dedup_window_hours: float = 3.0,
     previous_peak_time: datetime.datetime | None = None,
 ) -> list[WavePacketPeak]:
-    """Detect wave packets in a time series using CWT.
+    """Detect wave packets in a time series using CWT (legacy QP60 path).
 
     Parameters
     ----------
@@ -72,7 +89,7 @@ def detect_wave_packets(
     times = list(times)
 
     # Compute CWT
-    freq, time_sec, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=300)
+    freq, _, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=300)
 
     # Normalize CWT power
     cwt_power = np.abs(cwt_matrix)
@@ -103,7 +120,7 @@ def detect_wave_packets(
     )
 
     # Build WavePacketPeak objects
-    packets = []
+    packets: list[WavePacketPeak] = []
     dedup_sec = dedup_window_hours * 3600
 
     for peak, prom, l_ips, r_ips in zip(
@@ -186,40 +203,10 @@ def collect_wave_events(
     local_time: np.ndarray | None = None,
     sls5_phases: dict[str, np.ndarray] | None = None,
 ) -> list[WaveEvent]:
-    r"""Detect wave events with full metadata.
+    r"""Detect wave events with full metadata (legacy single-band).
 
-    Wraps ``detect_wave_packets()`` and enriches the results with
-    spacecraft coordinates and SLS5 phase information.
-
-    Extracted from ``cassinilib/PlotFFT.py:collectWaveEvents()``.
-
-    Parameters
-    ----------
-    field_data : array_like
-        A single MFA field component (e.g., $b_{\perp 1}$) in nT.
-    time_unix : array_like
-        POSIX timestamps for each sample.
-    dt : float
-        Sampling interval in seconds.
-    period_band : tuple[float, float]
-        Target period band in seconds. Default (3000, 4200) = QP60.
-    min_snr : float
-        Minimum prominence threshold (normalized CWT units).
-    min_duration_hours : float
-        Minimum wave packet duration to accept.
-    coords_krtp : ndarray, shape (N, 3), optional
-        Spacecraft position in KRTP: columns (r, theta, phi) in
-        (R_S, radians, radians).
-    local_time : ndarray, shape (N,), optional
-        Local time in hours.
-    sls5_phases : dict[str, ndarray], optional
-        SLS5 phase arrays keyed by name (e.g., ``{'SLS5N': ..., 'SLS5S': ...}``).
-        Each array has one value per 10-minute bin (shape N//10 or similar).
-
-    Returns
-    -------
-    list[WaveEvent]
-        Detected events with coordinates and SLS5 metadata.
+    See :func:`detect_wave_packets_multi` for the multi-band Phase 1+
+    replacement.
     """
     field_data = np.asarray(field_data, dtype=float)
     time_unix = np.asarray(time_unix, dtype=float)
@@ -277,6 +264,140 @@ def collect_wave_events(
         )
 
     return events
+
+
+# ----------------------------------------------------------------------
+# Multi-band detector (Phase 1+)
+# ----------------------------------------------------------------------
+
+
+def detect_wave_packets_multi(
+    data: ArrayLike,
+    times: list[datetime.datetime] | NDArray[np.floating],
+    dt: float = 60.0,
+    bands: Iterable[str | Band] = QP_BAND_NAMES,
+    *,
+    cwt_freq: ArrayLike | None = None,
+    cwt_power: ArrayLike | None = None,
+    threshold_mask: ArrayLike | None = None,
+    min_duration_hours: float = 2.0,
+    min_pixels: int = 50,
+    coi_factor: float = 1.0,
+    n_freqs: int = 300,
+) -> list[WavePacketPeak]:
+    r"""Multi-band wave-packet detection from a CWT scalogram.
+
+    Pipeline
+    --------
+    1. Compute the CWT once (or accept a precomputed scalogram so the
+       caller can reuse it across components).
+    2. For each requested QP band, call
+       :func:`qp.events.ridge.extract_ridges` to find connected blobs
+       above the supplied threshold mask.
+    3. Convert each ridge to a :class:`WavePacketPeak` with band label
+       and peak period populated.
+
+    Parameters
+    ----------
+    data : array_like
+        Time-series of one MFA component (typically ``b_perp1``).
+    times : list[datetime] or float ndarray
+        Sample timestamps. If a numpy array is passed it is assumed to
+        be POSIX seconds.
+    dt : float
+        Sampling interval in seconds (default 60 s).
+    bands : iterable of str or Band
+        Which QP bands to scan. Default scans all of QP30/QP60/QP120.
+    cwt_freq, cwt_power : array_like, optional
+        Precomputed CWT frequency axis and ``|cwt|`` power matrix. If
+        either is None, the CWT is computed internally with
+        ``omega0=10`` and ``n_freqs`` rows.
+    threshold_mask : array_like, optional
+        Boolean mask the same shape as ``cwt_power``. ``True`` means
+        the cell is above the σ-threshold. If None, a fall-back
+        ``cwt_power.max() / 4`` mask is used (suitable for tests, but
+        the production sweep should always pass an explicit mask from
+        :func:`qp.events.threshold.wavelet_sigma_mask`).
+    min_duration_hours : float
+        Reject ridges shorter than this in time.
+    min_pixels : int
+        Reject blobs with fewer than this many pixels (denoising).
+    coi_factor : float
+        Cone-of-influence factor passed to the ridge extractor.
+    n_freqs : int
+        Number of CWT rows when computing internally.
+
+    Returns
+    -------
+    list[WavePacketPeak]
+        Sorted by peak time. Each carries ``band`` and ``period_sec``.
+    """
+    data = np.asarray(data, dtype=float)
+    n_time = data.size
+
+    # Build a datetime list — accept POSIX float arrays for convenience
+    if isinstance(times, np.ndarray) and times.dtype.kind in ("f", "i"):
+        _epoch = datetime.datetime(1970, 1, 1)
+        times_list: list[datetime.datetime] = [
+            _epoch + datetime.timedelta(seconds=float(ts)) for ts in times
+        ]
+    else:
+        times_list = list(times)
+    if len(times_list) != n_time:
+        raise ValueError(
+            f"len(times)={len(times_list)} != len(data)={n_time}"
+        )
+
+    if cwt_freq is None or cwt_power is None:
+        freq, _, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=n_freqs)
+        cwt_power = np.abs(cwt_matrix)
+    else:
+        freq = np.asarray(cwt_freq, dtype=float)
+        cwt_power = np.asarray(cwt_power, dtype=float)
+        if cwt_power.shape != (freq.size, n_time):
+            raise ValueError(
+                f"cwt_power shape {cwt_power.shape} does not match "
+                f"(n_freq={freq.size}, n_time={n_time})"
+            )
+
+    min_duration_sec = min_duration_hours * 3600.0
+
+    packets: list[WavePacketPeak] = []
+    for b in bands:
+        ridges = extract_ridges(
+            cwt_power,
+            freq,
+            band=b,
+            threshold_mask=threshold_mask,
+            dt=dt,
+            min_duration_sec=min_duration_sec,
+            min_pixels=min_pixels,
+            coi_factor=coi_factor,
+        )
+        for ridge in ridges:
+            packets.append(_ridge_to_packet(ridge, times_list, n_time))
+
+    packets.sort(key=lambda p: p.peak_time)
+    return packets
+
+
+def _ridge_to_packet(
+    ridge: Ridge,
+    times: list[datetime.datetime],
+    n_time: int,
+) -> WavePacketPeak:
+    """Convert a :class:`Ridge` to a :class:`WavePacketPeak`."""
+    t_start = times[max(0, ridge.t_start_idx)]
+    t_end = times[min(n_time - 1, ridge.t_end_idx)]
+    t_peak = times[ridge.peak_time_idx]
+    return WavePacketPeak(
+        peak_time=t_peak,
+        prominence=float(ridge.peak_power),
+        date_from=t_start,
+        date_to=t_end,
+        band=ridge.band,
+        period_sec=float(ridge.peak_period_sec),
+    )
 
 
 def _dt_to_unix(dt_obj: datetime.datetime) -> float:
