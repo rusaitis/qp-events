@@ -321,7 +321,10 @@ def process_segment(
             if coords["phi"] is not None else None
         )
         if th_peak is not None:
-            mag_lat = 90.0 - np.degrees(th_peak)
+            # The MFA segments store th as **latitude in radians**
+            # (not colatitude — verified empirically against
+            # info["median_coords"]). KRTP convention here.
+            mag_lat = float(np.degrees(th_peak))
         else:
             mag_lat = None
 
