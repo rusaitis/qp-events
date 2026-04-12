@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy import ndimage
 
-from qp.events.bands import Band, get_band
+from qp.events.bands import Band, freq_to_period, get_band
 
 
 # Default cone-of-influence factor for the Morlet wavelet with omega0=10.
@@ -89,7 +89,7 @@ def _coi_mask(
     edge for the corresponding period are ``False``. Shape matches
     ``(n_freq, n_time)``.
     """
-    periods_sec = np.where(cwt_freq > 0, 1.0 / cwt_freq, np.inf)
+    periods_sec = freq_to_period(cwt_freq)
     edge_samples = (coi_factor * periods_sec / dt).astype(int)
     mask = np.ones((len(cwt_freq), n_time), dtype=bool)
     for i, edge in enumerate(edge_samples):
@@ -105,7 +105,7 @@ def _band_row_indices(
     band: Band,
 ) -> NDArray[np.intp]:
     r"""Return the indices of CWT rows whose period lies inside ``band``."""
-    periods_sec = np.where(cwt_freq > 0, 1.0 / cwt_freq, np.inf)
+    periods_sec = freq_to_period(cwt_freq)
     in_band = (
         (periods_sec >= band.period_min_sec)
         & (periods_sec < band.period_max_sec)

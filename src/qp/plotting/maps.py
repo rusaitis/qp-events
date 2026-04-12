@@ -309,46 +309,8 @@ def draw_power_indicator(
     color: str = "orange",
     ylabel: str = r"Median Power ($B_T$, 60m) [$nT^2/Hz$]",
 ) -> None:
-    r"""Draw a vertical power indicator bar (log scale).
-
-    Replaces ``cassinilib/PlotFFT.py:PowerVisual()``.
-
-    Parameters
-    ----------
-    ax : Axes
-    data : array_like, optional
-        Individual values (drawn as thin horizontal lines + median bold).
-    data_range : tuple, optional
-        (min, max) to shade as a rectangle.
-    ylim : tuple, optional
-        Y-axis limits.
-    """
-    _style_vertical_indicator(ax, "left")
-    ax.set_yscale("log")
-    ax.set_ylabel(ylabel, alpha=0.5, fontsize=14)
-    ax.set_xlim(0, 1)
-
-    if data_range is not None:
-        from matplotlib.patches import Rectangle
-
-        ax.add_patch(
-            Rectangle(
-                (0, data_range[0]),
-                1,
-                data_range[1] - data_range[0],
-                color="white",
-                alpha=0.2,
-            )
-        )
-
-    if data is not None:
-        data = np.asarray(data, dtype=float)
-        for val in data:
-            ax.axhline(y=val, lw=1, color=color, alpha=0.1)
-        ax.axhline(y=float(np.median(data)), lw=3, color=color, alpha=0.8)
-
-    if ylim is not None:
-        ax.set_ylim(ylim)
+    r"""Draw a vertical power indicator bar (log scale)."""
+    _draw_vertical_indicator(ax, data, data_range, ylim, color, ylabel)
 
 
 def draw_field_indicator(
@@ -359,20 +321,26 @@ def draw_field_indicator(
     color: str = "orange",
     ylabel: str = r"Median Magnetic Field ($B_T$) [$nT$]",
 ) -> None:
-    r"""Draw a vertical field magnitude indicator bar (log scale).
+    r"""Draw a vertical field magnitude indicator bar (log scale)."""
+    _draw_vertical_indicator(
+        ax, data, data_range, ylim, color, ylabel, median_lw=4, median_alpha=1.0
+    )
 
-    Replaces ``cassinilib/PlotFFT.py:FieldVisual()``.
 
-    Parameters
-    ----------
-    ax : Axes
-    data : array_like, optional
-        Individual values (drawn as thin lines + bold median).
-    data_range : tuple, optional
-        (min, max) to shade as a rectangle.
-    ylim : tuple, optional
-        Y-axis limits.
-    """
+# --- Internal helpers ---
+
+
+def _draw_vertical_indicator(
+    ax: plt.Axes,
+    data: ArrayLike | None,
+    data_range: tuple[float, float] | None,
+    ylim: tuple[float, float] | None,
+    color: str,
+    ylabel: str,
+    median_lw: float = 3,
+    median_alpha: float = 0.8,
+) -> None:
+    """Shared implementation for vertical log-scale indicator bars."""
     _style_vertical_indicator(ax, "left")
     ax.set_yscale("log")
     ax.set_ylabel(ylabel, alpha=0.5, fontsize=14)
@@ -395,13 +363,12 @@ def draw_field_indicator(
         data = np.asarray(data, dtype=float)
         for val in data:
             ax.axhline(y=val, lw=1, color=color, alpha=0.1)
-        ax.axhline(y=float(np.median(data)), lw=4, color=color, alpha=1.0)
+        ax.axhline(
+            y=float(np.median(data)), lw=median_lw, color=color, alpha=median_alpha
+        )
 
     if ylim is not None:
         ax.set_ylim(ylim)
-
-
-# --- Internal helpers ---
 
 
 def _lt_to_degrees(lt: float) -> float:

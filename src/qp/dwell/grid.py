@@ -144,6 +144,22 @@ def _accumulate_grid(
     return counts.reshape(shape).astype(float) * dt_minutes
 
 
+def _accumulate_grid_2d(
+    i_lat: np.ndarray,
+    i_lt: np.ndarray,
+    mask: np.ndarray,
+    shape: tuple[int, int],
+    dt_minutes: float,
+) -> np.ndarray:
+    """Accumulate dwell time into a 2D (lat, LT) grid using bincount."""
+    il, ilt = i_lat[mask], i_lt[mask]
+    if len(il) == 0:
+        return np.zeros(shape, dtype=float)
+    flat = np.ravel_multi_index((il, ilt), shape)
+    counts = np.bincount(flat, minlength=math.prod(shape))
+    return counts.reshape(shape).astype(float) * dt_minutes
+
+
 def accumulate_dwell_time(
     x: ArrayLike,
     y: ArrayLike,
@@ -325,19 +341,15 @@ def accumulate_inv_lat_grid(
         & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
     )
 
-    def _accum_2d(mask):
-        il, ilt = i_lat[mask], i_lt[mask]
-        if len(il) == 0:
-            return np.zeros(shape_2d, dtype=float)
-        flat = np.ravel_multi_index((il, ilt), shape_2d)
-        return np.bincount(flat, minlength=math.prod(shape_2d)).reshape(shape_2d).astype(float) * dt_minutes
+    def accum(mask: np.ndarray) -> np.ndarray:
+        return _accumulate_grid_2d(i_lat, i_lt, mask, shape_2d, dt_minutes)
 
-    result = {"total": _accum_2d(valid)}
+    result = {"total": accum(valid)}
 
     if region_codes is not None:
         codes = np.asarray(region_codes, dtype=int)
         for code, name in REGION_CODES.items():
-            result[name] = _accum_2d(valid & (codes == code))
+            result[name] = accum(valid & (codes == code))
 
     return result
 
@@ -413,21 +425,15 @@ def accumulate_traced_inv_lat_grid(
     if closed_only:
         valid &= closed
 
-    def _accum_2d(mask: np.ndarray) -> np.ndarray:
-        il, ilt = i_lat[mask], i_lt[mask]
-        if len(il) == 0:
-            return np.zeros(shape_2d, dtype=float)
-        flat = np.ravel_multi_index((il, ilt), shape_2d)
-        n_cells = math.prod(shape_2d)
-        counts = np.bincount(flat, minlength=n_cells)
-        return counts.reshape(shape_2d).astype(float) * dt_minutes
+    def accum(mask: np.ndarray) -> np.ndarray:
+        return _accumulate_grid_2d(i_lat, i_lt, mask, shape_2d, dt_minutes)
 
-    result = {"total": _accum_2d(valid)}
+    result = {"total": accum(valid)}
 
     if region_codes is not None:
         codes = np.asarray(region_codes, dtype=int)
         for code, name in REGION_CODES.items():
-            result[name] = _accum_2d(valid & (codes == code))
+            result[name] = accum(valid & (codes == code))
 
     return result
 
@@ -492,20 +498,14 @@ def accumulate_weak_field_grid(
         & (bt < b_threshold)
     )
 
-    def _accum_2d(mask: np.ndarray) -> np.ndarray:
-        il, ilt = i_lat[mask], i_lt[mask]
-        if len(il) == 0:
-            return np.zeros(shape_2d, dtype=float)
-        flat = np.ravel_multi_index((il, ilt), shape_2d)
-        n_cells = math.prod(shape_2d)
-        counts = np.bincount(flat, minlength=n_cells)
-        return counts.reshape(shape_2d).astype(float) * dt_minutes
+    def accum(mask: np.ndarray) -> np.ndarray:
+        return _accumulate_grid_2d(i_lat, i_lt, mask, shape_2d, dt_minutes)
 
-    result = {"total": _accum_2d(valid)}
+    result = {"total": accum(valid)}
 
     if region_codes is not None:
         codes = np.asarray(region_codes, dtype=int)
         for code, name in REGION_CODES.items():
-            result[name] = _accum_2d(valid & (codes == code))
+            result[name] = accum(valid & (codes == code))
 
     return result

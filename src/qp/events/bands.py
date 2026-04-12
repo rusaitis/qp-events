@@ -27,6 +27,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+from numpy.typing import NDArray
+
 
 _MIN = 60.0  # seconds in a minute
 
@@ -139,6 +142,11 @@ REJECT_BAND_LF: Band = Band(
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
+
+def freq_to_period(freq: NDArray[np.floating]) -> NDArray[np.floating]:
+    """Convert frequency array to period, returning inf where freq is zero."""
+    return np.where(freq > 0, 1.0 / freq, np.inf)
 
 
 def get_band(band: str | Band) -> Band:

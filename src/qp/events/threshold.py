@@ -35,7 +35,14 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
-from qp.events.bands import QP_BANDS, REJECT_BAND_HF, REJECT_BAND_LF, Band, get_band
+from qp.events.bands import (
+    QP_BANDS,
+    REJECT_BAND_HF,
+    REJECT_BAND_LF,
+    Band,
+    freq_to_period,
+    get_band,
+)
 from qp.signal.pipeline import SpectralResult
 
 
@@ -143,7 +150,7 @@ def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
     (above 12 h or below 10 min) are also excluded since their power
     is dominated by edge effects and aliasing.
     """
-    periods_sec = np.where(cwt_freq > 0, 1.0 / cwt_freq, np.inf)
+    periods_sec = freq_to_period(cwt_freq)
     keep = np.ones_like(cwt_freq, dtype=bool)
     # exclude QP bands
     for band in QP_BANDS.values():
@@ -213,7 +220,7 @@ def wavelet_sigma_mask(
     # Interpolate the threshold to every row of the CWT in log-period
     # space. Periods are monotonically *decreasing* with frequency,
     # so interp wants strictly increasing x — work in log10(period).
-    periods_sec = np.where(cwt_freq > 0, 1.0 / cwt_freq, np.inf)
+    periods_sec = freq_to_period(cwt_freq)
     log_p_bg = np.log10(periods_sec[bg_rows])
     log_p_all = np.log10(periods_sec)
 

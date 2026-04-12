@@ -9,6 +9,5 @@ from qp.plotting.style import (
     LOC_LABELS,
     QP_COLORS,
     use_paper_style,
-    dark_background,
     new_figure,
 )

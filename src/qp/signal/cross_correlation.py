@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.signal import hilbert, windows
 
 
 def cross_correlate(
@@ -92,32 +93,46 @@ def classify_polarization(phase_deg: float, tolerance: float = 30.0) -> str:
 
     Returns 'circular', 'linear', or 'mixed'.
     """
-    # Normalize to 0-360
     phase = phase_deg % 360.0
 
-    # Check proximity to 90/270 (circular) or 0/180/360 (linear)
-    circular_angles = [90.0, 270.0]
-    linear_angles = [0.0, 180.0, 360.0]
-
-    for a in circular_angles:
+    for a in (90.0, 270.0):
         if abs(phase - a) < tolerance:
             return "circular"
-    for a in linear_angles:
+    for a in (0.0, 180.0, 360.0):
         if abs(phase - a) < tolerance:
             return "linear"
     return "mixed"
 
 
 # ----------------------------------------------------------------------
-# Phase 6.5 — Stokes / ellipticity / inclination from two perpendicular
-# components.
-#
-# The "circular vs linear" categorical label is too lossy: a 75°
-# phase shift is "mixed" but is much closer to circular than linear.
-# This module gives the continuous Stokes-parameter description so
-# Fig 10 can plot a histogram of ellipticities instead of a 3-way
-# bar chart.
+# Stokes / ellipticity / inclination from two perpendicular components.
 # ----------------------------------------------------------------------
+
+
+def _stokes_from_analytic(
+    a: np.ndarray, b: np.ndarray,
+) -> tuple[float, float, float, float]:
+    """Compute Stokes parameters from analytic (Hilbert-transformed) signals."""
+    abs_a2 = np.abs(a) ** 2
+    abs_b2 = np.abs(b) ** 2
+    cross = np.conj(a) * b
+    si = float(np.mean(abs_a2 + abs_b2))  # Stokes I
+    sq = float(np.mean(abs_a2 - abs_b2))  # Stokes Q
+    su = float(2 * np.real(np.mean(cross)))  # Stokes U
+    sv = float(2 * np.imag(np.mean(cross)))  # Stokes V
+    return si, sq, su, sv
+
+
+def _ellipticity_from_stokes(
+    si: float, sq: float, su: float, sv: float,
+) -> tuple[float, float, float]:
+    """Derive ellipticity, inclination, polarization fraction from Stokes."""
+    p = np.sqrt(sq**2 + su**2 + sv**2)
+    if p <= 0 or si <= 0:
+        return 0.0, 0.0, 0.0
+    chi = 0.5 * np.arcsin(np.clip(sv / p, -1.0, 1.0))
+    psi = 0.5 * np.arctan2(su, sq)
+    return float(np.tan(chi)), float(np.degrees(psi)), float(p / si)
 
 
 def stokes_parameters(
@@ -143,15 +158,9 @@ def stokes_parameters(
     -------
     I, Q, U, V : float
     """
-    from scipy.signal import hilbert
-
     a = hilbert(np.asarray(b_perp1, dtype=float))
     b = hilbert(np.asarray(b_perp2, dtype=float))
-    I = float(np.mean(np.abs(a) ** 2 + np.abs(b) ** 2))
-    Q = float(np.mean(np.abs(a) ** 2 - np.abs(b) ** 2))
-    U = float(2 * np.real(np.mean(np.conj(a) * b)))
-    V = float(2 * np.imag(np.mean(np.conj(a) * b)))
-    return I, Q, U, V
+    return _stokes_from_analytic(a, b)
 
 
 def ellipticity_inclination(
@@ -170,19 +179,8 @@ def ellipticity_inclination(
     polarization_fraction : float
         Fraction of total power that is polarized
         ``sqrt(Q^2 + U^2 + V^2) / I``. 1.0 = fully polarized.
-
-    The standard formulas in terms of Stokes:
-        chi = 0.5 * arcsin(V / sqrt(Q² + U² + V²))   # ellipticity angle
-        psi = 0.5 * arctan2(U, Q)                     # inclination
-        ellipticity = tan(chi)
     """
-    I, Q, U, V = stokes_parameters(b_perp1, b_perp2)
-    p = np.sqrt(Q ** 2 + U ** 2 + V ** 2)
-    if p <= 0 or I <= 0:
-        return 0.0, 0.0, 0.0
-    chi = 0.5 * np.arcsin(np.clip(V / p, -1.0, 1.0))
-    psi = 0.5 * np.arctan2(U, Q)
-    return float(np.tan(chi)), float(np.degrees(psi)), float(p / I)
+    return _ellipticity_from_stokes(*stokes_parameters(b_perp1, b_perp2))
 
 
 def stokes_parameters_tapered(
@@ -204,19 +202,12 @@ def stokes_parameters_tapered(
         Fraction of the window inside the cosine taper (0 = rectangular,
         1 = Hann). Default 0.25 tapers the outer 12.5% on each side.
     """
-    from scipy.signal import hilbert, windows
-
     b1 = np.asarray(b_perp1, dtype=float)
     b2 = np.asarray(b_perp2, dtype=float)
-    n = len(b1)
-    taper = windows.tukey(n, alpha=alpha)
+    taper = windows.tukey(len(b1), alpha=alpha)
     a = hilbert(b1 * taper)
     b = hilbert(b2 * taper)
-    I = float(np.mean(np.abs(a) ** 2 + np.abs(b) ** 2))
-    Q = float(np.mean(np.abs(a) ** 2 - np.abs(b) ** 2))
-    U = float(2 * np.real(np.mean(np.conj(a) * b)))
-    V = float(2 * np.imag(np.mean(np.conj(a) * b)))
-    return I, Q, U, V
+    return _stokes_from_analytic(a, b)
 
 
 def ellipticity_inclination_tapered(
@@ -225,13 +216,9 @@ def ellipticity_inclination_tapered(
     alpha: float = 0.25,
 ) -> tuple[float, float, float]:
     r"""Ellipticity with Tukey taper — fixes edge artifacts in short events."""
-    I, Q, U, V = stokes_parameters_tapered(b_perp1, b_perp2, alpha=alpha)
-    p = np.sqrt(Q ** 2 + U ** 2 + V ** 2)
-    if p <= 0 or I <= 0:
-        return 0.0, 0.0, 0.0
-    chi = 0.5 * np.arcsin(np.clip(V / p, -1.0, 1.0))
-    psi = 0.5 * np.arctan2(U, Q)
-    return float(np.tan(chi)), float(np.degrees(psi)), float(p / I)
+    return _ellipticity_from_stokes(
+        *stokes_parameters_tapered(b_perp1, b_perp2, alpha=alpha)
+    )
 
 
 def per_oscillation_ellipticity(
@@ -265,12 +252,9 @@ def per_oscillation_ellipticity(
     for i in range(n_cycles):
         lo = i * samples_per_cycle
         hi = lo + samples_per_cycle
-        try:
-            e, _, _ = ellipticity_inclination_tapered(b1[lo:hi], b2[lo:hi])
-            if np.isfinite(e):
-                ellipticities.append(e)
-        except Exception:
-            pass
+        e, _, _ = ellipticity_inclination_tapered(b1[lo:hi], b2[lo:hi])
+        if np.isfinite(e):
+            ellipticities.append(e)
 
     if not ellipticities:
         e, _, _ = ellipticity_inclination_tapered(b1, b2)

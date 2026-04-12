@@ -40,6 +40,21 @@ from qp.signal.wavelet import morlet_cwt
 #   the functions that use it for clarity.
 
 
+def _cwt_event_measure(
+    cwt_power: np.ndarray,
+    freq: np.ndarray,
+    period_band: tuple[float, float],
+    n_period_bins: int,
+) -> np.ndarray:
+    """Compute event measure by extracting CWT power at target periods.
+
+    Returns the L2 norm across period bins at each time step.
+    """
+    target_freqs = 1.0 / np.linspace(period_band[0], period_band[1], n_period_bins)
+    idx = np.array([np.argmin(np.abs(freq - f)) for f in target_freqs])
+    return np.linalg.norm(cwt_power[idx, :], axis=0)
+
+
 # ----------------------------------------------------------------------
 # Legacy single-band detector (back-compat)
 # ----------------------------------------------------------------------
@@ -103,18 +118,7 @@ def detect_wave_packets(
     if max_power > 0:
         cwt_power /= max_power
 
-    # Extract power at target period bins
-    period_min_sec, period_max_sec = period_band
-    target_periods = np.linspace(period_min_sec, period_max_sec, n_period_bins)
-    target_freqs = 1.0 / target_periods
-
-    cwt_slices = []
-    for f_target in target_freqs:
-        idx = np.argmin(np.abs(freq - f_target))
-        cwt_slices.append(cwt_power[idx, :])
-
-    # Event measure: norm across period bins
-    event_measure = np.linalg.norm(np.asarray(cwt_slices), axis=0)
+    event_measure = _cwt_event_measure(cwt_power, freq, period_band, n_period_bins)
 
     # Find peaks
     peaks, properties = find_peaks(
@@ -186,15 +190,7 @@ def compute_event_measure(
     if max_power > 0:
         cwt_power /= max_power
 
-    target_periods = np.linspace(period_band[0], period_band[1], n_period_bins)
-    target_freqs = 1.0 / target_periods
-
-    slices = []
-    for f_target in target_freqs:
-        idx = np.argmin(np.abs(freq - f_target))
-        slices.append(cwt_power[idx, :])
-
-    event_measure = np.linalg.norm(np.asarray(slices), axis=0)
+    event_measure = _cwt_event_measure(cwt_power, freq, period_band, n_period_bins)
     return time_sec, event_measure
 
 

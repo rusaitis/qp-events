@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
-from mpl_toolkits.mplot3d import proj3d  # noqa: F401
+from mpl_toolkits.mplot3d import proj3d
 
 
 # ============================================================================

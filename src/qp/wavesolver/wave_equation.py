@@ -127,15 +127,12 @@ def boundary_error(
         If provided, the fast numba path is used.
     """
     if va_samples is not None and dlnh_samples is not None:
-        y_end = _rk4_boundary_value(
-            omega,
-            s_span[0],
-            s_span[1],
-            va_samples,
-            dlnh_samples,
-            y0[0],
-            y0[1],
-        )
+        y_end = _scan_boundary_errors(
+            np.array([omega]),
+            s_span[0], s_span[1],
+            va_samples, dlnh_samples,
+            y0[0], y0[1],
+        )[0]
         return y_end - target
 
     # Fallback: scipy solve_ivp
@@ -236,33 +233,6 @@ def _scan_boundary_errors(
         errors[k] = y
 
     return errors
-
-
-@njit(cache=True)
-def _rk4_boundary_value(
-    omega: float,
-    s_min: float,
-    s_max: float,
-    va_samples: np.ndarray,
-    dlnh_samples: np.ndarray,
-    y0: float,
-    dy0: float,
-    n_steps: int = 3000,
-) -> float:
-    """RK4 boundary value for a single frequency.
-
-    Thin wrapper around ``_scan_boundary_errors``.
-    """
-    return _scan_boundary_errors(
-        np.array([omega]),
-        s_min,
-        s_max,
-        va_samples,
-        dlnh_samples,
-        y0,
-        dy0,
-        n_steps,
-    )[0]
 
 
 def count_mode_number(dy: np.ndarray) -> int:

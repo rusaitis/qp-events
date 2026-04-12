@@ -250,12 +250,9 @@ def amplitude_growth_rate(
     if n_cycles < 2:
         return 0.0
 
-    rms_vals: list[float] = []
-    for i in range(n_cycles):
-        chunk = env[i * spc:(i + 1) * spc]
-        rms = float(np.sqrt(np.mean(chunk ** 2)))
-        if rms > 0:
-            rms_vals.append(rms)
+    chunks = env[:n_cycles * spc].reshape(n_cycles, spc)
+    rms_all = np.sqrt(np.mean(chunks ** 2, axis=1))
+    rms_vals = rms_all[rms_all > 0]
 
     if len(rms_vals) < 2:
         return 0.0
@@ -296,20 +293,15 @@ def inter_cycle_coherence(
     if n_cycles < 2:
         return 1.0
 
-    normalised: list[np.ndarray] = []
-    for i in range(n_cycles):
-        chunk = x[i * spc:(i + 1) * spc].copy()
-        rms = float(np.sqrt(np.mean(chunk ** 2)))
-        if rms > 0:
-            normalised.append(chunk / rms)
-
-    if len(normalised) < 2:
+    chunks = x[:n_cycles * spc].reshape(n_cycles, spc)
+    rms = np.sqrt(np.mean(chunks ** 2, axis=1, keepdims=True))
+    valid = (rms > 0).ravel()
+    if valid.sum() < 2:
         return 1.0
 
-    corrs = [
-        float(np.dot(normalised[i], normalised[i + 1]) / len(normalised[i]))
-        for i in range(len(normalised) - 1)
-    ]
+    normed = chunks[valid] / rms[valid]
+    # Dot product between successive normalized cycles
+    corrs = np.sum(normed[:-1] * normed[1:], axis=1) / normed.shape[1]
     return float(np.clip(np.mean(corrs), -1.0, 1.0))
 
 

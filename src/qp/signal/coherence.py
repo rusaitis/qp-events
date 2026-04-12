@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy.ndimage import gaussian_filter1d, uniform_filter1d
 
 from qp.signal.wavelet import morlet_cwt
 
@@ -25,11 +26,8 @@ def _smooth_in_time(
 ) -> NDArray[np.complexfloating]:
     r"""Smooth a CWT matrix in time using a Gaussian whose width scales
     with the wavelet scale (Torrence & Webster 1999, Eq. 6)."""
-    from scipy.ndimage import gaussian_filter1d
-
     smoothed = np.empty_like(W)
     for i, s in enumerate(scales):
-        # Smoothing width ~ 0.6 * scale / dt (in samples)
         sigma_samples = max(1.0, 0.6 * s / dt)
         smoothed[i] = gaussian_filter1d(W[i].real, sigma_samples) + \
                        1j * gaussian_filter1d(W[i].imag, sigma_samples)
@@ -41,7 +39,6 @@ def _smooth_in_scale(
     n_octaves: float = 0.6,
 ) -> NDArray[np.complexfloating]:
     r"""Smooth in scale using a boxcar filter spanning ~0.6 octaves."""
-    from scipy.ndimage import uniform_filter1d
 
     n_scales = W.shape[0]
     # In log-scale space, 0.6 octaves ≈ a few rows

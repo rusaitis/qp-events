@@ -19,6 +19,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from qp.coords.transforms import (
+    sph2car,
     unit_vector,
     rotation_matrix_sph2car,
 )
@@ -131,9 +132,6 @@ def _sph_to_car_fields(
     # Rotate field vectors
     B_car = np.einsum("...ij,...j->...i", R, B_sph)
     B_avg_car = np.einsum("...ij,...j->...i", R, B_avg_sph)
-
-    # Convert position to Cartesian
-    from qp.coords.transforms import sph2car
 
     pos_car = sph2car(pos_sph)
 

@@ -58,15 +58,17 @@ def compute_dwell_time_map(
     lt_idx = value_to_bin(local_time, lt_range[0], lt_range[1], n_lt_bins)
     mlat_idx = value_to_bin(mag_lat, mlat_range[0], mlat_range[1], n_mlat_bins)
 
-    # Accumulate
-    for i in range(len(inv_lat)):
-        if (
-            0 <= lat_idx[i] < n_lat_bins
-            and 0 <= lt_idx[i] < n_lt_bins
-            and 0 <= mlat_idx[i] < n_mlat_bins
-        ):
-            dwell_map[lat_idx[i], lt_idx[i], mlat_idx[i]] += dt_seconds
-
+    # Vectorized accumulation via np.add.at
+    valid = (
+        (lat_idx >= 0) & (lat_idx < n_lat_bins)
+        & (lt_idx >= 0) & (lt_idx < n_lt_bins)
+        & (mlat_idx >= 0) & (mlat_idx < n_mlat_bins)
+    )
+    np.add.at(
+        dwell_map,
+        (lat_idx[valid], lt_idx[valid], mlat_idx[valid]),
+        dt_seconds,
+    )
     return dwell_map
 
 
@@ -149,12 +151,12 @@ def reduce_to_lt_lat(dwell_map: np.ndarray) -> np.ndarray:
 
 def reduce_to_mlat(dwell_map: np.ndarray) -> np.ndarray:
     """Reduce 3D dwell map to 1D magnetic latitude profile."""
-    return np.sum(np.sum(dwell_map, axis=0), axis=0)
+    return np.sum(dwell_map, axis=(0, 1))
 
 
 def reduce_to_lt(dwell_map: np.ndarray) -> np.ndarray:
     """Reduce 3D dwell map to 1D local time profile."""
-    return np.sum(np.sum(dwell_map, axis=0), axis=1)
+    return np.sum(dwell_map, axis=(0, 2))
 
 
 def normalize_event_to_dwell(

@@ -34,8 +34,8 @@ class ColumnDef:
 
 DATETIME_FMT = "%Y-%m-%dT%H:%M:%S"
 
-# Field component colors (publication palette)
-FIELD_COLORS = ["#DC267F", "#FFB000", "#FE6100", "#648FFF"]
+# Field component colors — canonical source is qp.plotting.style
+from qp.plotting.style import FIELD_COLORS
 
 MAG_COLUMNS_KRTP = [
     ColumnDef(0, "Time", "min", "str", "Time", fmt=DATETIME_FMT),
