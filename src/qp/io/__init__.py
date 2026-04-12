@@ -13,11 +13,7 @@ from qp.io.pds import (
     MISSION_END,
 )
 from qp.io.products import (
-    load_crossings,
     load_spacecraft_position,
-    load_mag_segments,
-    load_mag_metadata,
-    load_sls5,
 )
 from qp.io.mag_reader import (
     MagSegment,

@@ -53,57 +53,6 @@ def plot_lt_lat_heatmap(
     return im
 
 
-def plot_marginal_distributions(
-    fig: plt.Figure,
-    ax_main: plt.Axes,
-    data: ArrayLike,
-    lt_edges: ArrayLike,
-    lat_edges: ArrayLike,
-    ax_top: plt.Axes | None = None,
-    ax_right: plt.Axes | None = None,
-    color: str = "cyan",
-) -> None:
-    """Add marginal distributions (cumulative sums) to a heatmap.
-
-    Used for Fig 8 style: bar plots at top (sum over latitude)
-    and right (sum over local time).
-    """
-    data = np.asarray(data)
-    lt_centers = 0.5 * (np.asarray(lt_edges[:-1]) + np.asarray(lt_edges[1:]))
-    lat_centers = 0.5 * (np.asarray(lat_edges[:-1]) + np.asarray(lat_edges[1:]))
-
-    lt_sum = np.nansum(data, axis=0)  # sum over latitudes
-    lat_sum = np.nansum(data, axis=1)  # sum over local times
-
-    if ax_top is not None:
-        ax_top.bar(lt_centers, lt_sum, width=np.diff(lt_edges), color=color, alpha=0.6)
-        ax_top.set_xlim(ax_main.get_xlim())
-        ax_top.set_xticklabels([])
-
-    if ax_right is not None:
-        ax_right.barh(
-            lat_centers, lat_sum, height=np.diff(lat_edges), color=color, alpha=0.6
-        )
-        ax_right.set_ylim(ax_main.get_ylim())
-        ax_right.set_yticklabels([])
-
-
-def plot_ratio_vs_latitude(
-    ax: plt.Axes,
-    lat_centers: ArrayLike,
-    ratio: ArrayLike,
-    color: str = "white",
-    label: str = "",
-    ylabel: str = "Magnetic Latitude [deg]",
-    xlabel: str = "Event / Dwell Time Ratio",
-) -> None:
-    """Plot event-to-dwell-time ratio vs magnetic latitude (Fig 7 style)."""
-    ax.plot(ratio, lat_centers, color=color, lw=1.2, label=label)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.axhline(0, ls="--", lw=0.5, color="grey", alpha=0.3)
-
-
 def plot_polar_heatmap(
     ax: plt.Axes,
     data: ArrayLike,

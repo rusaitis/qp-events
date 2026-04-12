@@ -70,51 +70,6 @@ def rotation_matrix_sph2car(theta: ArrayLike, phi: ArrayLike) -> np.ndarray:
     return np.moveaxis(R, [0, 1], [-2, -1])
 
 
-def rotation_matrix_car2sph(theta: ArrayLike, phi: ArrayLike) -> np.ndarray:
-    """Rotation matrix from Cartesian (x, y, z) to spherical (r, theta, phi) basis.
-
-    Inverse (transpose) of rotation_matrix_sph2car.
-    """
-    theta = np.asarray(theta, dtype=float)
-    phi = np.asarray(phi, dtype=float)
-    st, ct = np.sin(theta), np.cos(theta)
-    sp, cp = np.sin(phi), np.cos(phi)
-    z = np.zeros_like(theta)
-
-    R = np.array(
-        [
-            [st * cp, st * sp, ct],
-            [ct * cp, ct * sp, -st],
-            [-sp, cp, z],
-        ]
-    )
-    return np.moveaxis(R, [0, 1], [-2, -1])
-
-
-def rotate_about_x(
-    x: ArrayLike, y: ArrayLike, z: ArrayLike, angle: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Rotate (x, y, z) about the x-axis by angle (radians)."""
-    c, s = np.cos(angle), np.sin(angle)
-    return (
-        np.asarray(x),
-        c * np.asarray(y) - s * np.asarray(z),
-        s * np.asarray(y) + c * np.asarray(z),
-    )
-
-
-def rotate_about_y(
-    x: ArrayLike, y: ArrayLike, z: ArrayLike, angle: float
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Rotate (x, y, z) about the y-axis by angle (radians)."""
-    c, s = np.cos(angle), np.sin(angle)
-    return (
-        c * np.asarray(x) + s * np.asarray(z),
-        np.asarray(y),
-        -s * np.asarray(x) + c * np.asarray(z),
-    )
-
-
 def phi_to_lt(phi: ArrayLike) -> np.ndarray:
     r"""Convert azimuthal angle (radians) to local time (hours).
 
@@ -155,35 +110,3 @@ def lt_to_phi(lt: ArrayLike) -> np.ndarray:
     """
     lt = np.asarray(lt, dtype=float)
     return lt / 12 * np.pi
-
-
-def lat_to_colat(lat: ArrayLike) -> np.ndarray:
-    r"""Convert latitude (degrees) to colatitude (degrees).
-
-    Parameters
-    ----------
-    lat : array_like
-        Latitude in degrees [-90, 90].
-
-    Returns
-    -------
-    ndarray
-        Colatitude in degrees [0, 180].
-    """
-    return 90.0 - np.asarray(lat, dtype=float)
-
-
-def colat_to_lat(colat: ArrayLike) -> np.ndarray:
-    r"""Convert colatitude (degrees) to latitude (degrees).
-
-    Parameters
-    ----------
-    colat : array_like
-        Colatitude in degrees [0, 180].
-
-    Returns
-    -------
-    ndarray
-        Latitude in degrees [-90, 90].
-    """
-    return 90.0 - np.asarray(colat, dtype=float)

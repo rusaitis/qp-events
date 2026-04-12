@@ -20,11 +20,13 @@ from qp.fieldline.tracer import (
     field_line_to_spherical,
     conjugate_latitude,
 )
-from qp.fieldline.dwell_time import (
+from qp.analysis.filtering import (
     value_to_bin,
     bin_to_value,
     bin_edges,
     bin_centers,
+)
+from qp.fieldline.dwell_time import (
     compute_dwell_time_map,
     filter_dwell_map,
     reduce_to_lt_lat,

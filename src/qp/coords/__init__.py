@@ -6,13 +6,8 @@ from qp.coords.transforms import (
     car2sph,
     sph2car,
     rotation_matrix_sph2car,
-    rotation_matrix_car2sph,
-    rotate_about_x,
-    rotate_about_y,
     phi_to_lt,
     lt_to_phi,
-    lat_to_colat,
-    colat_to_lat,
 )
 from qp.coords.ksm import (
     magnetic_latitude,

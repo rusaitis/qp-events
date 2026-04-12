@@ -22,7 +22,7 @@ _project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_project_root / "src"))
 
 import qp
-from qp.fieldline.dwell_time import value_to_bin
+from qp.analysis.filtering import value_to_bin
 from qp.plotting.style import use_paper_style, BG_COLOR
 
 # SurfaceMap bins

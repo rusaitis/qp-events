@@ -1,6 +1,8 @@
 """Data analysis: filtering, binning, spectral fitting, correlation."""
 
 from qp.analysis.filtering import (
+    bin_centers as bin_centers,
+    bin_edges as bin_edges,
     bin_to_value as bin_to_value,
     filter_by_datetime as filter_by_datetime,
     filter_by_property as filter_by_property,

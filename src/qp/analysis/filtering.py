@@ -133,6 +133,17 @@ def bin_to_value(
     return float(values[0]) if scalar else values
 
 
+def bin_edges(min_val: float, max_val: float, n_bins: int) -> np.ndarray:
+    """Return evenly spaced bin edges array."""
+    return np.linspace(min_val, max_val, n_bins + 1)
+
+
+def bin_centers(min_val: float, max_val: float, n_bins: int) -> np.ndarray:
+    """Return bin center values."""
+    edges = bin_edges(min_val, max_val, n_bins)
+    return 0.5 * (edges[:-1] + edges[1:])
+
+
 def group_by_bins(
     items: Sequence[Any],
     key: str | Callable[[Any], float],

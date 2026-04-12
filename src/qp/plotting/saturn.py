@@ -1,20 +1,15 @@
-"""Saturn 3D visualization: axes, vectors, reference shells, movie rendering.
+"""Saturn 3D visualization: axes, vectors, reference shells.
 
-Extracted from ``cassinilib/Plot.py`` — 3D helpers not already in
-``orbits.py`` (``draw_sphere``, ``draw_ring``, ``draw_field_line``).
+Extracted from ``cassinilib/Plot.py`` — 3D helpers for coordinate axes,
+vector arrows, and reference field-line shell overlays.
 """
 
 from __future__ import annotations
-
-import logging
-import subprocess
 
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d  # noqa: F401
-
-log = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -888,158 +883,3 @@ def draw_reference_shells(
         )
 
 
-def draw_plane_3d(
-    ax: plt.Axes,
-    origin: tuple[float, float, float] = (0, 0, 0),
-    normal: tuple[float, float, float] = (0, 0, 1),
-    xlim: tuple[float, float] = (-10, 10),
-    ylim: tuple[float, float] = (-10, 10),
-    color: str = "black",
-    alpha: float = 0.1,
-) -> None:
-    r"""Draw a plane in 3D space.
-
-    Replaces ``cassinilib/Plot.py:drawPlane()``.
-
-    Parameters
-    ----------
-    origin : tuple
-        A point on the plane.
-    normal : tuple
-        Normal vector to the plane.
-    xlim, ylim : tuple
-        Extent of the mesh grid.
-    """
-    origin = np.asarray(origin, dtype=float)
-    normal = np.asarray(normal, dtype=float)
-    d = -origin.dot(normal)
-    xx, yy = np.meshgrid(
-        np.linspace(xlim[0], xlim[1], 20),
-        np.linspace(ylim[0], ylim[1], 20),
-    )
-    if abs(normal[2]) > 1e-12:
-        zz = (-normal[0] * xx - normal[1] * yy - d) / normal[2]
-    else:
-        zz = np.zeros_like(xx)
-    ax.plot_surface(xx, yy, zz, alpha=alpha, color=color, zorder=-1)
-
-
-def add_text_3d(
-    ax: plt.Axes,
-    pos: tuple[float, float, float],
-    text: str,
-    color: str = "white",
-    alpha: float = 1.0,
-    box: bool = True,
-    fontsize: float = 18,
-) -> None:
-    r"""Add a text label in 3D space.
-
-    Replaces ``cassinilib/Plot.py:addText3D()``.
-    """
-    if box:
-        bbox = dict(boxstyle="round,pad=0.25", fc=color, lw=1, alpha=0.5)
-        ax.text(
-            pos[0],
-            pos[1],
-            pos[2],
-            text,
-            size=fontsize,
-            color="white",
-            ha="center",
-            va="center",
-            bbox=bbox,
-            alpha=alpha,
-        )
-    else:
-        ax.text(
-            pos[0],
-            pos[1],
-            pos[2],
-            text,
-            size=fontsize,
-            color=color,
-            ha="center",
-            va="center",
-            alpha=alpha,
-        )
-
-
-def project_points_3d(
-    ax: plt.Axes,
-    point: tuple[float, float, float],
-    color: str = "white",
-    lw: float = 1.0,
-    alpha: float = 0.7,
-    radius_line: bool = False,
-) -> None:
-    r"""Draw dashed projection lines from a 3D point to the axes planes.
-
-    Replaces ``cassinilib/Plot.py:projectPoints3D()``.
-    """
-    px, py, pz = float(point[0]), float(point[1]), float(point[2])
-    kw = dict(color=color, linestyle="--", lw=lw, alpha=alpha)
-    ax.plot([0, px], [py, py], [0, 0], **kw)
-    ax.plot([px, px], [0, py], [0, 0], **kw)
-    ax.plot([px, px], [py, py], [0, pz], **kw)
-    if radius_line:
-        ax.plot([px, 0], [py, 0], [0, 0], **kw)
-
-
-def draw_orbit_circle(
-    ax: plt.Axes,
-    center: tuple[float, float] = (0, 0),
-    radius: float = 4.0,
-    color: str = "#ffd000",
-    alpha: float = 0.8,
-    lw: float = 1.5,
-    z: float = 0.0,
-) -> None:
-    r"""Draw a circular orbit as a 2D patch in 3D space.
-
-    Replaces ``cassinilib/Plot.py:drawOrbit()``.
-    """
-    from matplotlib.patches import Circle
-    from mpl_toolkits.mplot3d import art3d
-
-    p = Circle(center, radius, ls="--", color=color, fill=False, lw=lw, alpha=alpha)
-    ax.add_patch(p)
-    art3d.pathpatch_2d_to_3d(p, z=z, zdir="z")
-
-
-def render_movie(
-    frame_pattern: str,
-    output: str = "movie.mp4",
-    fps: int = 30,
-    resolution: str = "1920x1080",
-) -> None:
-    r"""Render a movie from numbered frame images using ffmpeg.
-
-    Replaces ``cassinilib/Plot.py:processMovie2()``.
-
-    Parameters
-    ----------
-    frame_pattern : str
-        Input file pattern (e.g., ``'frames/frame_%03d.png'``).
-    output : str
-        Output filename.
-    fps : int
-        Frames per second.
-    resolution : str
-        Output resolution (e.g., ``'1920x1080'``).
-    """
-    cmd = [
-        "ffmpeg",
-        "-framerate",
-        str(fps),
-        "-i",
-        frame_pattern,
-        "-vcodec",
-        "mpeg4",
-        "-s:v",
-        resolution,
-        "-y",
-        output,
-    ]
-    log.info("Rendering movie: %s", " ".join(cmd))
-    subprocess.run(cmd, check=True)

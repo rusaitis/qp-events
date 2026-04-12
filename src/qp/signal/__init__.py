@@ -1,6 +1,11 @@
 """Signal processing: FFT, wavelet, power ratios, cross-correlation."""
 
-from qp.signal.fft import welch_psd, spectrogram, estimate_background
+from qp.signal.fft import (
+    welch_psd,
+    spectrogram,
+    estimate_background,
+    estimate_background_powerlaw,
+)
 from qp.signal.wavelet import morlet_cwt, cwt_power, cwt_averaged_spectrum
 from qp.signal.power_ratio import compute_power_ratios, freq_to_period_minutes
 from qp.signal.cross_correlation import (

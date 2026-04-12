@@ -11,43 +11,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike
 
-
-def value_to_bin(
-    value: float | ArrayLike,
-    vmin: float,
-    vmax: float,
-    n_bins: int,
-) -> int | np.ndarray:
-    """Map a value to a bin index.
-
-    Returns integer bin index in [0, n_bins).
-    """
-    value = np.asarray(value)
-    frac = (value - vmin) / (vmax - vmin)
-    idx = np.clip((frac * n_bins).astype(int), 0, n_bins - 1)
-    return int(idx) if idx.ndim == 0 else idx
-
-
-def bin_to_value(
-    idx: int | ArrayLike,
-    vmin: float,
-    vmax: float,
-    n_bins: int,
-) -> float | np.ndarray:
-    """Map a bin index back to a bin center value."""
-    idx = np.asarray(idx)
-    return vmin + (idx + 0.5) * (vmax - vmin) / n_bins
-
-
-def bin_edges(vmin: float, vmax: float, n_bins: int) -> np.ndarray:
-    """Return bin edges array."""
-    return np.linspace(vmin, vmax, n_bins + 1)
-
-
-def bin_centers(vmin: float, vmax: float, n_bins: int) -> np.ndarray:
-    """Return bin centers array."""
-    edges = bin_edges(vmin, vmax, n_bins)
-    return 0.5 * (edges[:-1] + edges[1:])
+from qp.analysis.filtering import value_to_bin
 
 
 def compute_dwell_time_map(
