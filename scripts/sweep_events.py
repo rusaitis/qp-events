@@ -82,26 +82,9 @@ from qp.signal.cross_correlation import (  # noqa: E402
 # Worker
 # ----------------------------------------------------------------------
 
-#: Production gate (calibrated by scripts/calibrate_threshold.py).
-#: Loose by default — multi-component coincidence is opt-in via --strict.
-PRODUCTION_GATE: GateConfig = GateConfig(
-    n_sigma=5.0,
-    min_pixels=300,
-    min_duration_hours=2.5,
-    min_oscillations=3.0,
-    enable_fft_screen=False,
-    require_both_perp=False,
-)
-
-#: Strict gate for Phase 6.3 multi-component coincidence catalogs.
-STRICT_GATE: GateConfig = GateConfig(
-    n_sigma=5.0,
-    min_pixels=300,
-    min_duration_hours=2.5,
-    min_oscillations=3.0,
-    enable_fft_screen=False,
-    require_both_perp=True,
-)
+#: Production gate — joint transverse power σ-mask + physical post-filters.
+#: 3.5σ on averaged (|cwt_perp1|+|cwt_perp2|)/2 ≈ 5σ on single component.
+PRODUCTION_GATE: GateConfig = GateConfig()
 
 
 def _segment_central_window(
@@ -271,11 +254,11 @@ def process_segment(
     b_perp2 = payload.b_perp2
     times = payload.times
 
-    # Run the gate
+    # Run the gate — pass b_par for transverse ratio filtering
     try:
         packets = detect_with_gate(
             b_perp1, b_perp2, times, dt=60.0,
-            bands=QP_BAND_NAMES, gate=gate,
+            b_par=b_par, bands=QP_BAND_NAMES, gate=gate,
         )
     except Exception:
         return []
@@ -586,17 +569,18 @@ def main() -> None:
                          help="multiprocessing pool size "
                               "(default: cpu_count - 2)")
     parser.add_argument("--output", type=Path,
-                         default=_PROJECT_ROOT / "Output" / "events_qp_v1.parquet")
+                         default=_PROJECT_ROOT / "Output" / "events_qp_v5.parquet")
     parser.add_argument("--summary", type=Path,
                          default=_PROJECT_ROOT / "Output" / "diagnostics" /
-                                 "event_catalog_summary.txt")
+                                 "event_catalog_v5_summary.txt")
     parser.add_argument("--serial", action="store_true",
                          help="run in single-process mode for debugging")
+    # DEPRECATED: --strict flag removed; the simplified pipeline
+    # always uses joint transverse power with physical post-filters.
     parser.add_argument("--strict", action="store_true",
-                         help="use the multi-component coincidence gate "
-                              "(Phase 6.3) — fewer but cleaner events")
+                         help=argparse.SUPPRESS)
     args = parser.parse_args()
-    gate = STRICT_GATE if args.strict else PRODUCTION_GATE
+    gate = PRODUCTION_GATE
 
     n_workers = args.n_workers or max(1, (os.cpu_count() or 4) - 2)
     print(f"Loading segments...")

@@ -211,7 +211,7 @@ class TestDetectWithGate:
                               noise_sigma=0.05, seed=2, add_red_noise=True)
         packets = detect_with_gate(
             b_perp1, b_perp2, times, dt=dt,
-            gate=GateConfig(fft_ratio_threshold=2.5, n_sigma=3.0),
+            gate=GateConfig(n_sigma=3.0),
         )
         qp60 = [p for p in packets if p.band == "QP60"]
         assert len(qp60) >= 1

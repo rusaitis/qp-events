@@ -103,6 +103,7 @@ def _detect_events_in_dataset(
     # spectral concentration, and same-band deduplication.
     return filter_detections(
         all_peaks, t, freq, joint_power, power_par, epoch=epoch,
+        spectral_concentration=0.6,
     )
 
 

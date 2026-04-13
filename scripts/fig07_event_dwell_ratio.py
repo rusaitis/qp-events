@@ -39,11 +39,10 @@ LT_SECTORS = [
 ]
 
 
-def main() -> None:
-    ds = xr.open_zarr(
-        _PROJECT_ROOT / "Output" / "event_time_grid_v1.zarr",
-        consolidated=False,
-    )
+def main(grid_path: Path | None = None) -> None:
+    if grid_path is None:
+        grid_path = _PROJECT_ROOT / "Output" / "event_time_grid_v5.zarr"
+    ds = xr.open_zarr(grid_path, consolidated=False)
     lt_centers = ds.local_time.values
     lat_centers = ds.magnetic_latitude.values
 

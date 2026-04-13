@@ -412,39 +412,27 @@ def detect_with_gate(
     b_perp2: ArrayLike,
     times: list[datetime.datetime] | NDArray[np.floating],
     *,
+    b_par: ArrayLike | None = None,
     dt: float = 60.0,
     bands: Iterable[str | Band] = QP_BAND_NAMES,
-    spectral_result_perp1=None,
-    spectral_result_perp2=None,
     gate=None,
     cwt_n_freqs: int = 300,
+    freq_max: float | None = 1.0e-3,
 ) -> list[WavePacketPeak]:
-    r"""Run the full Phase 2 detection gate on a single MFA segment.
+    r"""Detect QP wave packets in a three-component MFA segment.
 
     Pipeline
     --------
-    1. For each band, run :func:`screen_segment_by_power_ratio` on
-       both ``b_perp1`` and ``b_perp2`` Welch PSDs (caller may pass
-       precomputed :class:`SpectralResult` objects to skip the
-       analyze_segment step). Drop the band if neither component
-       triggers.
-    2. Compute the CWT of ``b_perp1`` (the dominant transverse
-       component in the published paper).
-    3. Build a :func:`wavelet_sigma_mask` from that CWT.
-    4. Hand the (CWT, mask) pair to :func:`detect_wave_packets_multi`,
-       restricted to the bands that survived step 1.
-
-    Returns the list of :class:`WavePacketPeak` accepted by every
-    stage. Polarization, coordinate, and PPO enrichment is the
-    sweep script's job (see ``scripts/sweep_events.py``).
+    1. CWT both transverse components; average into joint power.
+    2. σ-mask on the joint transverse power (robust MAD threshold).
+    3. Ridge extraction per QP band.
+    4. Physical post-filters: min oscillations, transverse ratio
+       (if ``b_par`` provided), spectral concentration, dedup.
     """
-    # Lazy imports to keep module-level deps minimal
     from qp.events.threshold import (
         DEFAULT_GATE,
-        screen_spectral_result,
         wavelet_sigma_mask,
     )
-    from qp.signal.pipeline import analyze_segment
 
     if gate is None:
         gate = DEFAULT_GATE
@@ -452,87 +440,54 @@ def detect_with_gate(
     b_perp1 = np.asarray(b_perp1, dtype=float)
     b_perp2 = np.asarray(b_perp2, dtype=float)
 
-    # Stage 1: Welch PSDs (compute lazily if not provided).
-    if spectral_result_perp1 is None:
-        spectral_result_perp1 = analyze_segment(
-            b_perp1, dt=dt,
-            detrend_window_sec=60.0,  # tiny — segments are pre-detrended
-            welch_nperseg=12 * 60,
-            welch_noverlap=6 * 60,
-        )
-    if spectral_result_perp2 is None:
-        spectral_result_perp2 = analyze_segment(
-            b_perp2, dt=dt,
-            detrend_window_sec=60.0,
-            welch_nperseg=12 * 60,
-            welch_noverlap=6 * 60,
-        )
+    # CWT both transverse components; joint power averages noise
+    cwt_kw: dict = {"dt": dt, "n_freqs": cwt_n_freqs}
+    if freq_max is not None:
+        cwt_kw["freq_max"] = freq_max
+    freq, _, cwt1 = morlet_cwt(b_perp1, **cwt_kw)
+    _, _, cwt2 = morlet_cwt(b_perp2, **cwt_kw)
+    joint_power = (np.abs(cwt1) + np.abs(cwt2)) / 2.0
 
-    if gate.enable_fft_screen:
-        triggered_bands: list[str | Band] = []
-        for b in bands:
-            s1 = screen_spectral_result(
-                spectral_result_perp1, b,
-                ratio_threshold=gate.fft_ratio_threshold,
-            )
-            s2 = screen_spectral_result(
-                spectral_result_perp2, b,
-                ratio_threshold=gate.fft_ratio_threshold,
-            )
-            if s1.triggered or s2.triggered:
-                triggered_bands.append(b)
-        if not triggered_bands:
-            return []
-    else:
-        triggered_bands = list(bands)
+    # Single σ-mask on combined transverse power
+    mask = wavelet_sigma_mask(joint_power, freq, n_sigma=gate.n_sigma)
 
-    # Stage 2: CWT on both transverse components and combine via the
-    # coincidence rule from Phase 6.3 (`require_both_perp`).
-    #
-    # We CWT both perp components and require σ-mask agreement in the
-    # same (period, time) cell. This eliminates compressional or
-    # single-axis contamination — a real Alfvén wave packet will fire
-    # both transverse components together.
-    freq, _, cwt_matrix1 = morlet_cwt(b_perp1, dt=dt, n_freqs=cwt_n_freqs)
-    cwt_power1 = np.abs(cwt_matrix1)
-    if gate.require_both_perp:
-        _, _, cwt_matrix2 = morlet_cwt(b_perp2, dt=dt, n_freqs=cwt_n_freqs)
-        cwt_power2 = np.abs(cwt_matrix2)
-        mask1 = wavelet_sigma_mask(cwt_power1, freq, n_sigma=gate.n_sigma)
-        mask2 = wavelet_sigma_mask(cwt_power2, freq, n_sigma=gate.n_sigma)
-        mask = mask1 & mask2
-        cwt_power = (cwt_power1 + cwt_power2) / 2.0
-    else:
-        cwt_power = cwt_power1
-        mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
-
-    # Stage 4: ridge extraction on triggered bands only
+    # Ridge extraction
     packets = detect_wave_packets_multi(
         b_perp1,
         times,
         dt=dt,
-        bands=triggered_bands,
+        bands=list(bands),
         cwt_freq=freq,
-        cwt_power=cwt_power,
+        cwt_power=joint_power,
         threshold_mask=mask,
         min_duration_hours=gate.min_duration_hours,
         min_pixels=gate.min_pixels,
         coi_factor=gate.coi_factor,
     )
 
-    # Stage 5: physical sanity — require at least N oscillations of
-    # the peak period inside the packet window. A "wave packet" with
-    # fewer than two oscillations is just a glitch.
-    if gate.min_oscillations > 0:
-        kept: list[WavePacketPeak] = []
-        for p in packets:
-            if p.period_sec is None or p.period_sec <= 0:
-                continue
-            duration_sec = (p.date_to - p.date_from).total_seconds()
-            n_osc = duration_sec / p.period_sec
-            if n_osc >= gate.min_oscillations:
-                kept.append(p)
-        packets = kept
+    # Physical post-filters (transverse ratio, spectral concentration,
+    # min oscillations, same-band dedup)
+    if isinstance(times, np.ndarray) and times.dtype.kind in ("f", "i"):
+        t_arr = np.asarray(times, dtype=float)
+    else:
+        epoch = datetime.datetime(2000, 1, 1)
+        t_arr = np.array(
+            [(t - epoch).total_seconds() for t in times], dtype=float,
+        )
+
+    par_power = None
+    if b_par is not None:
+        b_par = np.asarray(b_par, dtype=float)
+        _, _, cwt_p = morlet_cwt(b_par, **cwt_kw)
+        par_power = np.abs(cwt_p)
+
+    packets = filter_detections(
+        packets, t_arr, freq, joint_power, par_power,
+        min_oscillations=gate.min_oscillations,
+        transverse_ratio=gate.transverse_ratio,
+        spectral_concentration=gate.spectral_concentration,
+        dedup_window_sec=gate.dedup_window_sec,
+    )
 
     return packets
 
@@ -547,7 +502,7 @@ def filter_detections(
     epoch: datetime.datetime | None = None,
     min_oscillations: float = 2.5,
     transverse_ratio: float = 0.5,
-    spectral_concentration: float = 0.6,
+    spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
@@ -567,19 +522,22 @@ def filter_detections(
         for name, b in QP_BANDS.items()
     }
 
-    t_sec = t - t[0]
+    # Make times relative to segment start for index lookup
+    t_origin = t[0]
+    t_rel = t - t_origin
+    epoch_offset = t_origin  # offset from epoch to segment start
     filtered: list[WavePacketPeak] = []
     for peak in peaks:
-        from_sec = (peak.date_from - epoch).total_seconds()
-        to_sec = (peak.date_to - epoch).total_seconds()
-        i0 = int(np.searchsorted(t_sec, from_sec))
-        i1 = min(int(np.searchsorted(t_sec, to_sec)), len(t_sec) - 1)
+        from_rel = (peak.date_from - epoch).total_seconds() - epoch_offset
+        to_rel = (peak.date_to - epoch).total_seconds() - epoch_offset
+        i0 = int(np.searchsorted(t_rel, from_rel))
+        i1 = min(int(np.searchsorted(t_rel, to_rel)), len(t_rel) - 1)
         if i1 <= i0:
             continue
 
         # 1. Min oscillations
         if peak.period_sec and peak.period_sec > 0:
-            if (to_sec - from_sec) / peak.period_sec < min_oscillations:
+            if (to_rel - from_rel) / peak.period_sec < min_oscillations:
                 continue
 
         bm = band_masks.get(peak.band or "")
@@ -592,15 +550,16 @@ def filter_detections(
                     continue
 
             # 3. Spectral concentration — reject broadband transients
-            in_power = float(perp_power[bm, i0:i1].mean())
-            max_other = max(
-                (float(perp_power[om, i0:i1].mean())
-                 for ob, om in band_masks.items()
-                 if ob != peak.band and om.any()),
-                default=0.0,
-            )
-            if max_other > spectral_concentration * in_power:
-                continue
+            if spectral_concentration is not None:
+                in_power = float(perp_power[bm, i0:i1].mean())
+                max_other = max(
+                    (float(perp_power[om, i0:i1].mean())
+                     for ob, om in band_masks.items()
+                     if ob != peak.band and om.any()),
+                    default=0.0,
+                )
+                if max_other > spectral_concentration * in_power:
+                    continue
 
         filtered.append(peak)
 

@@ -246,41 +246,30 @@ def wavelet_sigma_mask(
 
 @dataclass(frozen=True, slots=True)
 class GateConfig:
-    """Knobs for the combined Phase 2 detection gate.
+    r"""Detection gate configuration.
 
-    Notes on the FFT screen
-    -----------------------
-    The FFT power ratio screen (Eq. 4 of the paper) was originally
-    designed as a fast pre-filter to skip quiet segments. In practice
-    the smoothed background estimator self-fits a strong single peak
-    (the Savitzky-Golay filter passes through it), so the in-band
-    ratio for an isolated QP60 packet is suppressed to ~2 even at
-    1 nT amplitude. This makes the screen too pessimistic to use as
-    a hard gate. We therefore default ``enable_fft_screen=False``;
-    callers that want the speedup can re-enable it after switching
-    the background estimator to a power-law fit (a possible Phase 6
-    refinement).
-
-    The wavelet σ-mask + ridge extractor handle this case correctly
-    because their noise model is built from period rows that the
-    signal cannot live in.
+    The pipeline thresholds the joint transverse CWT power
+    (average of both $b_{\perp 1}$ and $b_{\perp 2}$) using a robust
+    MAD-based σ-mask, extracts connected ridges per QP band, then
+    applies physical post-filters (min oscillations, transverse ratio,
+    spectral concentration, same-band dedup).
     """
 
-    fft_ratio_threshold: float = 5.0
-    n_sigma: float = 5.0  # calibrated by scripts/calibrate_threshold.py
-    min_duration_hours: float = 2.5
-    min_pixels: int = 300
-    min_oscillations: float = 3.0
+    # σ-mask threshold on joint transverse CWT power.
+    # 3.5σ on averaged power ≈ 5σ on a single component (√2 noise reduction).
+    n_sigma: float = 3.5
+    min_duration_hours: float = 2.0
+    min_pixels: int = 80
+    min_oscillations: float = 2.5
     coi_factor: float = 1.0
-    enable_fft_screen: bool = False
-    # Phase 6.3 multi-component coincidence: require both b_perp1 and
-    # b_perp2 to exceed the σ threshold in the same (period, time) cell.
-    # Eliminates compressional contamination and single-axis glitches.
-    # **Default is False** because the strict catalog (417 events) is
-    # too sparse to recover the PPO modulation in the Fig 9 separation
-    # analysis. The strict path is used by `sweep_events.py --strict`
-    # for the cleaner Phase 6.5 ellipticity analysis.
-    require_both_perp: bool = False
+    # Alfvén waves are transverse: reject if parallel CWT power exceeds
+    # this fraction of transverse in-band power.
+    transverse_ratio: float = 0.5
+    # Reject broadband transients: if another band has more than this
+    # fraction of the detection band's power. Disabled (None) by default
+    # for real data where QP bands naturally overlap; 0.6 for benchmarks.
+    spectral_concentration: float | None = None
+    dedup_window_sec: float = 10800.0
 
 
 DEFAULT_GATE: GateConfig = GateConfig()
