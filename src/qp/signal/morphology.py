@@ -13,24 +13,45 @@ from scipy.signal import butter, hilbert, sosfiltfilt
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _bandpass(
+def bandpass(
     data: np.ndarray,
     low_hz: float,
     high_hz: float,
     fs: float,
     order: int = 4,
 ) -> np.ndarray:
+    r"""Butterworth bandpass filter (zero-phase, forward-backward).
+
+    Parameters
+    ----------
+    data : ndarray
+        Input time series.
+    low_hz, high_hz : float
+        Passband edges in Hz.
+    fs : float
+        Sampling frequency in Hz.
+    order : int
+        Filter order (default 4).
+
+    Returns
+    -------
+    ndarray
+        Filtered signal, same length as input.
+    """
     nyq = 0.5 * fs
     lo = max(low_hz / nyq, 1e-4)
     hi = min(high_hz / nyq, 0.999)
     if lo >= hi:
         return data.copy()
     sos = butter(order, [lo, hi], btype="band", output="sos")
-    # Zero-phase (forward-backward) to avoid phase shift and minimise edge transients
     return sosfiltfilt(sos, data)
+
+
+# Keep alias for internal callers
+_bandpass = bandpass
 
 
 # ---------------------------------------------------------------------------

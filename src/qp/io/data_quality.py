@@ -54,14 +54,6 @@ _DOY_RE = re.compile(
     r"(?:\.(\d+))?"           # optional fractional seconds
 )
 
-# ISO format: "2003-09-11T00:02:02.439"
-_ISO_RE = re.compile(
-    r"(\d{4})-(\d{2})-(\d{2})"
-    r"T"
-    r"(\d{2}):(\d{2}):(\d{2})"
-    r"(?:\.(\d+))?"
-)
-
 
 def _parse_doy(s: str) -> datetime.datetime | None:
     """Parse a DOY timestamp string, return None on failure."""
@@ -77,13 +69,15 @@ def _parse_doy(s: str) -> datetime.datetime | None:
 
 def _parse_iso(s: str) -> datetime.datetime | None:
     """Parse an ISO timestamp string, return None on failure."""
-    m = _ISO_RE.search(s)
+    m = re.search(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?", s,
+    )
     if m is None:
         return None
-    y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    h, mi, sec = int(m.group(4)), int(m.group(5)), int(m.group(6))
-    frac = int(m.group(7).ljust(6, "0")[:6]) if m.group(7) else 0
-    return datetime.datetime(y, mo, d, h, mi, sec, frac)
+    try:
+        return datetime.datetime.fromisoformat(m.group(0))
+    except ValueError:
+        return None
 
 
 # ------------------------------------------------------------------

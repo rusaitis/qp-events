@@ -22,7 +22,8 @@ Kirchner, J. W. (2005). *Phys. Rev. E*, 71, 066110.
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import butter, sosfiltfilt
+
+from qp.signal.morphology import bandpass
 
 
 # Threshold above which we oversample to suppress low-frequency leakage
@@ -281,17 +282,12 @@ def bandlimited_noise_burst(
     ndarray, shape (n_samples,)
         Bandpass-filtered, windowed noise burst.
     """
-    # Generate colored noise
+    # Generate colored noise and bandpass filter to target band
     noise = power_law_noise(n_samples, dt, alpha, sigma=1.0, seed=seed)
-
-    # Bandpass filter
-    f_nyq = 0.5 / dt
-    lo = freq_lo / f_nyq
-    hi = min(freq_hi / f_nyq, 0.99)
-    if lo >= hi or lo <= 0:
+    fs = 1.0 / dt
+    if freq_lo <= 0 or freq_lo >= freq_hi:
         return np.zeros(n_samples)
-    sos = butter(4, [lo, hi], btype="band", output="sos")
-    noise = sosfiltfilt(sos, noise)
+    noise = bandpass(noise, freq_lo, freq_hi, fs)
 
     # Gaussian envelope
     t = np.arange(n_samples) * dt

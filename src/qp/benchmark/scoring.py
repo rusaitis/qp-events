@@ -231,16 +231,16 @@ def score_dataset(
         )
         recall_by_diff[diff] = matched_diff / len(gt_diff)
 
-    # Decoy rejection
+    # Decoy rejection: count how many decoys were falsely detected
     n_decoy = len(gt_decoys)
     decoy_detected = 0
-    if n_det > 0:
-        if n_gt == 0:
+    if n_decoy > 0 and n_det > 0:
+        if not (n_gt > 0):
             det_ranges = [
                 _det_time_range(det, t0_sec) for det in detections
             ]
-        for det_start, det_end in det_ranges:
-            for decoy in gt_decoys:
+        for decoy in gt_decoys:
+            for det_start, det_end in det_ranges:
                 iou_d = _time_iou(
                     decoy.start_sec, decoy.end_sec,
                     det_start, det_end,
@@ -330,8 +330,8 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         all_thresholds.update(s.f1_at_iou.keys())
     overall_f1_at_iou: dict[float, float] = {}
     for thr in sorted(all_thresholds):
-        # Micro-average: sum TP/FP/FN across datasets at this threshold
-        # Approximate from per-dataset f1_at_iou (exact would need raw counts)
+        # Macro-average of per-dataset F1 (exact micro-average would
+        # need raw TP/FP/FN counts per threshold, not stored)
         vals = [s.f1_at_iou.get(thr, 0.0) for s in scores if s.f1_at_iou]
         overall_f1_at_iou[thr] = (
             float(np.mean(vals)) if vals else 0.0

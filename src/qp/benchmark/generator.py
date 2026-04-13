@@ -104,6 +104,14 @@ def _resolve_period(spec: EventSpec) -> float:
     return centroid * (1.0 + spec.period_offset_frac)
 
 
+def _power_law_integral(f_lo: float, f_hi: float, alpha: float) -> float:
+    r"""Evaluate $\int_{f_1}^{f_2} f^{-\alpha}\,df$ analytically."""
+    if abs(alpha - 1.0) < 0.01:
+        return math.log(f_hi / f_lo)
+    exp = 1.0 - alpha
+    return (f_hi**exp - f_lo**exp) / exp
+
+
 def _in_band_snr(
     amplitude: float,
     noise_sigma: float,
@@ -123,40 +131,22 @@ def _in_band_snr(
         return amplitude / max(noise_sigma, 1e-30)
 
     f_nyq = 0.5 / dt
-    alpha = noise_alpha
+    f_min = 1e-6  # Hz, well below any QP band
 
-    # Total power integral: ∫₀^f_nyq f^{-α} df
-    # For f_min we use the lowest resolved frequency ~ 1/(N*dt)
-    # but for simplicity use a small cutoff
-    f_min = 1e-6  # Hz (well below any QP band)
-    if abs(alpha - 1.0) < 0.01:
-        # α ≈ 1: ∫ f^{-1} df = ln(f_hi/f_lo)
-        total_integral = math.log(f_nyq / f_min)
-    else:
-        exp = 1.0 - alpha
-        total_integral = (f_nyq**exp - f_min**exp) / exp
-
-    # Normalization constant C from σ² = C × total_integral
+    total_integral = _power_law_integral(f_min, f_nyq, noise_alpha)
     c_norm = noise_sigma**2 / total_integral
 
-    # Band edges
+    # Band edges (use Band properties for canonical lookup)
     if band_name and band_name.upper() in QP_BANDS:
         band = QP_BANDS[band_name.upper()]
-        f1 = 1.0 / band.period_max_sec
-        f2 = 1.0 / band.period_min_sec
+        f1 = band.freq_min_hz
+        f2 = band.freq_max_hz
     else:
-        # Use ±30% of the signal frequency
         f0 = 1.0 / period_sec
         f1 = 0.7 * f0
         f2 = 1.3 * f0
 
-    # In-band noise power
-    if abs(alpha - 1.0) < 0.01:
-        band_integral = math.log(f2 / f1)
-    else:
-        exp = 1.0 - alpha
-        band_integral = (f2**exp - f1**exp) / exp
-
+    band_integral = _power_law_integral(f1, f2, noise_alpha)
     noise_in_band = math.sqrt(c_norm * band_integral)
     return amplitude / max(noise_in_band, 1e-30)
 
@@ -264,16 +254,22 @@ def generate_benchmark_dataset(
                 f0 = 1.0 / period_sec
                 f_lo, f_hi = 0.5 * f0, 2.0 * f0
 
-            burst = bandlimited_noise_burst(
+            burst1 = bandlimited_noise_burst(
                 n_samples, scenario.dt,
                 center_sec=center_sec, decay_sec=decay_sec,
                 freq_lo=f_lo, freq_hi=f_hi,
                 amplitude=spec.amplitude,
                 seed=int(rng.integers(0, 2**31)),
             )
-            # Add to transverse components
-            b_perp1 += burst
-            b_perp2 += burst * 0.7  # decorrelated
+            burst2 = bandlimited_noise_burst(
+                n_samples, scenario.dt,
+                center_sec=center_sec, decay_sec=decay_sec,
+                freq_lo=f_lo, freq_hi=f_hi,
+                amplitude=spec.amplitude * 0.7,
+                seed=int(rng.integers(0, 2**31)),
+            )
+            b_perp1 += burst1
+            b_perp2 += burst2
         else:
             wave = WaveTemplate(
                 period=period_sec,
