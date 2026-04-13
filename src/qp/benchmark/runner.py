@@ -50,11 +50,12 @@ def _detect_events_in_dataset(
     from qp.events.threshold import wavelet_sigma_mask
     from qp.signal.wavelet import morlet_cwt
 
+    b_par = fields[:, 0].copy()
     b_perp1 = fields[:, 1].copy()
     b_perp2 = fields[:, 2].copy()
 
     # Interpolate NaN gaps so CWT doesn't produce garbage
-    for arr in [b_perp1, b_perp2]:
+    for arr in [b_par, b_perp1, b_perp2]:
         nans = np.isnan(arr)
         if nans.any() and not nans.all():
             good = ~nans
@@ -93,16 +94,46 @@ def _detect_events_in_dataset(
         )
         all_peaks.extend(peaks)
 
-    # Deduplicate: within same band, keep higher-power peak
-    all_peaks.sort(key=lambda p: p.peak_time)
-    merged: list[WavePacketPeak] = []
+    # Post-filter: transverse ratio + min oscillations
+    t_sec = t - t[0]
+    filtered: list[WavePacketPeak] = []
     for peak in all_peaks:
+        # Time window indices
+        pk_sec = (peak.peak_time - epoch).total_seconds()
+        from_sec = (peak.date_from - epoch).total_seconds()
+        to_sec = (peak.date_to - epoch).total_seconds()
+        i0 = int(np.searchsorted(t_sec, from_sec))
+        i1 = int(np.searchsorted(t_sec, to_sec))
+        i1 = min(i1, len(t_sec) - 1)
+        if i1 <= i0:
+            continue
+
+        # Min oscillations: require >= 3 cycles
+        if peak.period_sec and peak.period_sec > 0:
+            duration_sec = to_sec - from_sec
+            n_osc = duration_sec / peak.period_sec
+            if n_osc < 3.0:
+                continue
+
+        # Transverse ratio: reject if parallel dominates
+        par_rms = np.sqrt(np.mean(b_par[i0:i1] ** 2))
+        perp_rms = np.sqrt(
+            np.mean(b_perp1[i0:i1] ** 2 + b_perp2[i0:i1] ** 2)
+        )
+        if par_rms > 0 and perp_rms / par_rms < 1.0:
+            continue
+
+        filtered.append(peak)
+
+    # Deduplicate: within same band, keep higher-power peak
+    filtered.sort(key=lambda p: p.peak_time)
+    merged: list[WavePacketPeak] = []
+    for peak in filtered:
         if merged and peak.band == merged[-1].band:
             sep = abs(
                 (peak.peak_time - merged[-1].peak_time).total_seconds()
             )
             if sep < 7200:
-                # Keep whichever has higher prominence
                 if peak.prominence > merged[-1].prominence:
                     merged[-1] = peak
                 continue

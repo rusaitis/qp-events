@@ -1,3 +1,4 @@
 commit	date	score	f1	precision	recall	band_acc	period_err_pct	mean_iou	decoy_rejection	f1@0.5	tier1_recall	tier2_recall	tier3_recall	tier4_recall	loc	runtime_sec	status	notes
 2c24d3c	2026-04-13	0.2628	0.2523	0.1462	0.9203	0.6970	24.39	0.6436	0.0882	0.2409	1.0000	1.0000	0.8605	0.8889	10629	15.4	keep	initial baseline
 0bd1e21	2026-04-13	0.3514	0.5814	0.4170	0.9602	0.9544	5.86	0.8570	0.0882	0.5803	0.7778	1.0000	1.0000	1.0000	10655	15.0	keep	sigma mask n=3 + NaN interp + power-weighted dedup
+b2d96f3	2026-04-13	0.7473	0.6354	0.5023	0.8645	0.9493	6.00	0.8605	0.6176	0.5469	0.7778	0.8333	0.9070	0.8889	10679	15.1	keep	transverse ratio filter + min 3 oscillations
