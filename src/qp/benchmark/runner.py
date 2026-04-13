@@ -78,25 +78,16 @@ def _detect_events_in_dataset(
     _, _, cwt2 = morlet_cwt(
         b_perp2, dt=dt, n_freqs=n_freqs, freq_max=freq_max,
     )
-    power1 = np.abs(cwt1)
-    power2 = np.abs(cwt2)
-    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=3.0)
-    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=3.0)
-    joint_mask = mask1 & mask2
-    joint_power = (power1 + power2) / 2.0
+    joint_power = (np.abs(cwt1) + np.abs(cwt2)) / 2.0
+    # σ-mask on total transverse power: elevated power in the
+    # combined perpendicular field indicates wave activity.
+    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=3.0)
 
     # CWT of parallel component for in-band transverse ratio checks
     _, _, cwt_par = morlet_cwt(
         b_par, dt=dt, n_freqs=n_freqs, freq_max=freq_max,
     )
     power_par = np.abs(cwt_par)
-
-    # Primary: require coincidence in both transverse components (AND).
-    # Fallback: accept either component at stricter threshold (OR at 4σ)
-    # to capture linearly polarized Alfvén waves.
-    strict1 = wavelet_sigma_mask(power1, freq, n_sigma=4.0)
-    strict2 = wavelet_sigma_mask(power2, freq, n_sigma=4.0)
-    combined_mask = joint_mask | (strict1 | strict2)
 
     all_peaks = detect_wave_packets_multi(
         data=b_perp1,
