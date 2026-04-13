@@ -206,7 +206,7 @@ def _detect_events_in_dataset(
             sep = abs(
                 (peak.peak_time - merged[-1].peak_time).total_seconds()
             )
-            if sep < 7200:
+            if sep < 10800:  # 3h window
                 if peak.prominence > merged[-1].prominence:
                     merged[-1] = peak
                 continue
