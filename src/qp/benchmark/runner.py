@@ -102,6 +102,23 @@ def _detect_events_in_dataset(
         min_pixels=80,
     )
 
+    # Fallback: if AND mask found nothing, try single-component detection
+    # with strict sigma. Catches linearly polarized events.
+    if not all_peaks:
+        for power, mask in [(power1, mask1), (power2, mask2)]:
+            strict_mask = wavelet_sigma_mask(power, freq, n_sigma=5.0)
+            single_peaks = detect_wave_packets_multi(
+                data=b_perp1,
+                times=times,
+                dt=dt,
+                cwt_freq=freq,
+                cwt_power=power,
+                threshold_mask=strict_mask,
+                min_duration_hours=2.0,
+                min_pixels=100,
+            )
+            all_peaks.extend(single_peaks)
+
     # Split long detections at power minima. The CWT at long periods
     # (QP120) merges separate wave packets into one giant ridge.
     from scipy.signal import find_peaks as _find_peaks
