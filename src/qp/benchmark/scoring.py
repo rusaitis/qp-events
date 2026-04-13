@@ -349,3 +349,43 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         overall_f1_at_iou=overall_f1_at_iou,
         dataset_scores=scores,
     )
+
+
+def composite_detection_score(suite: SuiteScore) -> float:
+    r"""Weighted harmonic mean of detection capabilities.
+
+    Weights reflect scientific priorities: detection (F1) first,
+    then frequency accuracy (band + period), then localization
+    and specificity (IoU, decoy rejection).
+
+    $$\text{score} = \frac{\sum w_i}
+    {\sum w_i / \max(c_i, \epsilon)}$$
+    """
+    # Clamp period error to [0, 100] then convert to accuracy
+    total_matched = sum(len(s.matches) for s in suite.dataset_scores)
+    if total_matched > 0:
+        mean_period_err = float(np.mean([
+            m.period_error_pct
+            for s in suite.dataset_scores
+            for m in s.matches
+        ]))
+    else:
+        mean_period_err = 100.0
+    period_acc = max(0.0, 1.0 - mean_period_err / 100.0)
+
+    mean_iou = float(np.mean([
+        s.mean_iou for s in suite.dataset_scores if s.mean_iou > 0
+    ])) if any(s.mean_iou > 0 for s in suite.dataset_scores) else 0.0
+
+    components = [
+        (0.35, suite.overall_f1),
+        (0.20, suite.band_accuracy),
+        (0.15, period_acc),
+        (0.15, suite.decoy_rejection_rate),
+        (0.15, mean_iou),
+    ]
+
+    eps = 1e-10
+    w_sum = sum(w for w, _ in components)
+    denom = sum(w / max(c, eps) for w, c in components)
+    return w_sum / denom if denom > 0 else 0.0

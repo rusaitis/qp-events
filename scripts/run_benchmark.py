@@ -4,7 +4,7 @@
 Usage:
     uv run python scripts/run_benchmark.py              # full suite
     uv run python scripts/run_benchmark.py --tier tier1  # one tier
-    uv run python scripts/run_benchmark.py --save-data   # persist .npz files
+    uv run python scripts/run_benchmark.py --generate    # generate canonical data
     uv run python scripts/run_benchmark.py --scenario tier1_clean_qp60
 """
 
@@ -17,14 +17,26 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(description="QP event detection benchmark")
-    parser.add_argument("--tier", type=str, default=None,
-                        help="Run only scenarios from this tier (tier1-tier4, decoy)")
-    parser.add_argument("--scenario", type=str, nargs="+", default=None,
-                        help="Run specific scenario(s) by name")
-    parser.add_argument("--output", type=Path, default=Path("Output/benchmark"),
-                        help="Output directory (default: Output/benchmark)")
-    parser.add_argument("--save-data", action="store_true",
-                        help="Save .npz data files alongside manifests")
+    parser.add_argument(
+        "--tier", type=str, default=None,
+        help="Run only scenarios from this tier (tier1-tier4, decoy)",
+    )
+    parser.add_argument(
+        "--scenario", type=str, nargs="+", default=None,
+        help="Run specific scenario(s) by name",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=Path("Output/benchmark"),
+        help="Output directory (default: Output/benchmark)",
+    )
+    parser.add_argument(
+        "--generate", action="store_true",
+        help="Generate canonical datasets (zarr + manifest JSON)",
+    )
+    parser.add_argument(
+        "--regenerate", action="store_true",
+        help="Regenerate even if canonical data exists",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -33,17 +45,36 @@ def main():
         format="%(asctime)s %(levelname)-8s %(message)s",
     )
 
-    from qp.benchmark.runner import run_benchmark, run_tier
+    from qp.benchmark.runner import (
+        generate_canonical_datasets,
+        run_benchmark,
+        run_tier,
+    )
+
+    if args.generate:
+        generate_canonical_datasets(
+            output_dir=args.output,
+            scenario_ids=args.scenario,
+        )
+        return
 
     if args.tier:
-        suite = run_tier(args.tier, output_dir=args.output, save_data=args.save_data)
+        suite = run_tier(
+            args.tier,
+            data_dir=args.output,
+            regenerate=args.regenerate,
+        )
     elif args.scenario:
         suite = run_benchmark(
-            scenario_ids=args.scenario, output_dir=args.output,
-            save_data=args.save_data,
+            scenario_ids=args.scenario,
+            data_dir=args.output,
+            regenerate=args.regenerate,
         )
     else:
-        suite = run_benchmark(output_dir=args.output, save_data=args.save_data)
+        suite = run_benchmark(
+            data_dir=args.output,
+            regenerate=args.regenerate,
+        )
 
     print(f"\n{'=' * 60}")
     print("BENCHMARK RESULTS")
