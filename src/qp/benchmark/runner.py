@@ -85,6 +85,12 @@ def _detect_events_in_dataset(
     joint_mask = mask1 & mask2
     joint_power = (power1 + power2) / 2.0
 
+    # CWT of parallel component for in-band transverse ratio checks
+    _, _, cwt_par = morlet_cwt(
+        b_par, dt=dt, n_freqs=n_freqs, freq_max=freq_max,
+    )
+    power_par = np.abs(cwt_par)
+
     all_peaks = detect_wave_packets_multi(
         data=b_perp1,
         times=times,
@@ -198,13 +204,14 @@ def _detect_events_in_dataset(
             if n_osc < 2.5:
                 continue
 
-        # Transverse ratio: reject only when parallel strongly dominates
-        par_rms = np.sqrt(np.mean(b_par[i0:i1] ** 2))
-        perp_rms = np.sqrt(
-            np.mean(b_perp1[i0:i1] ** 2 + b_perp2[i0:i1] ** 2)
-        )
-        if par_rms > 0 and perp_rms / par_rms < 0.5:
-            continue
+        # Transverse ratio: compare in-band CWT power (not time-domain
+        # RMS, which is contaminated by out-of-band signals like PPO)
+        if peak.band and peak.band in band_row_masks:
+            bm = band_row_masks[peak.band]
+            perp_bp = float(joint_power[bm, i0:i1].mean())
+            par_bp = float(power_par[bm, i0:i1].mean())
+            if par_bp > 0 and perp_bp / par_bp < 0.5:
+                continue
 
         # Spectral concentration: reject if other bands have comparable
         # power averaged over the event window (broadband signature).
