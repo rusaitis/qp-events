@@ -169,7 +169,17 @@ def _detect_events_in_dataset(
             split_peaks.append(peak)
     all_peaks = split_peaks
 
-    # Post-filter: transverse ratio + min oscillations
+    # Pre-compute band row masks for spectral concentration checks
+    periods = 1.0 / freq
+    from qp.events.bands import QP_BANDS
+    band_row_masks = {}
+    for bname, bobj in QP_BANDS.items():
+        band_row_masks[bname] = (
+            (periods >= bobj.period_min_sec)
+            & (periods < bobj.period_max_sec)
+        )
+
+    # Post-filter: transverse ratio + min oscillations + spectral conc.
     t_sec = t - t[0]
     filtered: list[WavePacketPeak] = []
     for peak in all_peaks:
@@ -195,6 +205,27 @@ def _detect_events_in_dataset(
         )
         if par_rms > 0 and perp_rms / par_rms < 0.5:
             continue
+
+        # Spectral concentration: reject if other bands have comparable
+        # power at this time (broadband transient signature).
+        if peak.band and peak.band in band_row_masks:
+            pk_col = min(
+                int((peak.peak_time - epoch).total_seconds() / dt),
+                joint_power.shape[1] - 1,
+            )
+            in_band = band_row_masks[peak.band]
+            in_band_power = float(joint_power[in_band, pk_col].mean())
+            other_power = []
+            for ob, om in band_row_masks.items():
+                if ob != peak.band and om.any():
+                    other_power.append(
+                        float(joint_power[om, pk_col].mean())
+                    )
+            if other_power:
+                max_other = max(other_power)
+                # Reject if another band has >= 50% of this band's power
+                if max_other > 0.5 * in_band_power:
+                    continue
 
         filtered.append(peak)
 
