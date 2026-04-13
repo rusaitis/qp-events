@@ -248,27 +248,7 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    # Cross-band dedup: if detections in 2+ bands overlap in time,
-    # keep only the strongest — broadband transients fire all bands
-    final: list[WavePacketPeak] = []
-    for peak in merged:
-        pk_t = peak.peak_time
-        overlaps = [
-            p for p in final
-            if p.band != peak.band
-            and abs((p.peak_time - pk_t).total_seconds()) < 3600
-        ]
-        if overlaps:
-            # Another band already claimed this time; keep the stronger
-            existing = overlaps[0]
-            if peak.prominence > existing.prominence:
-                final.remove(existing)
-                final.append(peak)
-            # else drop the new one
-        else:
-            final.append(peak)
-
-    return final
+    return merged
 
 
 # ------------------------------------------------------------------
