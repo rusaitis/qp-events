@@ -4,43 +4,71 @@ Autonomous research loop for improving the QP wave event detection pipeline.
 
 ## Goal
 
-**Build a detection algorithm that is simple, physically motivated, and defensible in a paper.** The composite detection score in `scoreboard.tsv` tracks progress, but the real goal is a method you could describe in 2–3 sentences in a Methods section with clear physical reasoning for every filter and threshold.
+**Improve the composite detection score on a realistic 54-scenario benchmark** while keeping the detection method physically motivated, general, and defensible in a paper. The benchmark now includes multi-band co-occurrence, realistic noise (alpha=1.2, PPO modulation), and broadband decoys — tuned to match real Cassini data characteristics.
 
-**Current score: ~0.905.** A slight reduction (down to ~0.88) is acceptable if it comes with significant simplification or better physical motivation. A score increase is welcome only if the method stays clean.
+**Current score: ~0.889.** The main bottlenecks are:
+- **Co-occurrence recall (~50%)** — the detector finds one band but misses the weaker one when QP60+QP120 are simultaneous
+- **Decoy rejection (~71%)** — broadband noise bursts and red-slope decoys leak through
+- **Tier2 recall (84%)** — dragged down by co-occurrence failures
 
 ## Philosophy
 
-The current pipeline (`_detect_events_in_dataset()` in `runner.py`) grew organically through 40 iterations of score-chasing on synthetic data. It now has several heuristics that are hard to justify physically:
+Prefer **well-justified general techniques** over hand-tuned parameters. A method that works because of a physical or statistical principle is worth more than one that works because a threshold was tuned to the benchmark.
 
-- Magic thresholds tuned to specific scenarios (60% spectral concentration, 0.5 transverse ratio)
-- A single-component fallback that only fires when AND mask is empty
-- Ridge splitting via peak-finding with arbitrary prominence thresholds
-- Duplicate detection logic that belongs in the core detector, not the benchmark wrapper
+**Good approaches:**
+- Standard signal processing techniques (matched filtering, coherence analysis, adaptive thresholding)
+- Physics-based discrimination (wave mode identification, polarization analysis, dispersion relations)
+- Robust statistical methods (information-theoretic criteria, Bayesian detection, non-parametric tests)
+- Established methods from the space physics / geophysics literature
 
-**Every filter must answer: "Why would a physicist apply this to real Cassini data?"**
+**Bad approaches:**
+- Band-specific thresholds (different magic numbers for QP30 vs QP60 vs QP120)
+- Scenario-specific heuristics that only help one benchmark case
+- Complex multi-stage pipelines where each stage has 3+ tuned parameters
+- Overfitting to the benchmark's specific noise seeds or event placements
 
-Good reasons: "Alfvén waves are transverse, so compressional detections are rejected" (transverse ratio). "The MAD-based σ-mask is a standard robust outlier detection method" (sigma mask).
-
-Bad reasons: "60% threshold gave the best score on the benchmark" (overfitting). "We split ridges because QP120 produces one giant blob" (implementation artifact).
+**Every new filter or threshold must answer: "What is the physical or statistical principle behind this, and would a referee accept it in two sentences?"**
 
 ## Setup
 
 1. **Read the baseline**: `cat scoreboard.tsv | tail -5` to see recent scores.
-2. **Read the detection pipeline**: focus on `src/qp/benchmark/runner.py` (`_detect_events_in_dataset()`) — this is where all the benchmark-specific logic accumulated.
-3. **Read the core detector**: `src/qp/events/detector.py` — `detect_with_gate()` already has a cleaner, more principled pipeline. Consider using it instead of the ad-hoc logic in runner.py.
-4. **Read the scoring**: `src/qp/benchmark/scoring.py` — understand what the score measures.
+2. **Read the detection pipeline**: focus on `src/qp/benchmark/runner.py` (`_detect_events_in_dataset()`) and `src/qp/events/detector.py` (`detect_with_gate()`, `filter_detections()`).
+3. **Read the scoring**: `src/qp/benchmark/scoring.py` — understand what the composite score rewards.
+4. **Read the scenarios**: `src/qp/benchmark/scenarios.py` — understand the 54 scenarios, especially the co-occurrence and decoy ones.
 5. **Create branch**: `git checkout -b autoresearch/<tag>` from current branch.
+
+## Current pipeline anatomy
+
+The detection in `_detect_events_in_dataset()` (benchmark path):
+
+| Stage | Physical basis |
+|---|---|
+| NaN interpolation | Data gaps in Cassini MAG |
+| CWT (2 transverse components) | Standard time-frequency analysis |
+| Joint power = (|cwt1| + |cwt2|) / 2 | Combined transverse Alfven wave power |
+| Single sigma-mask at 3.5 sigma | Robust MAD-based outlier detection |
+| Ridge extraction per QP band | Connected-component labeling in (time, period) |
+| `filter_detections()` post-processing | Min oscillations, transverse ratio, spectral concentration (disabled), dedup |
+
+Production path (`detect_with_gate()`) is similar but also computes parallel CWT for transverse ratio filtering.
+
+### Known weaknesses
+
+1. **Co-occurrence blindness**: When QP60 and QP120 are simultaneous, the ridge extractor finds the stronger one. The weaker signal's ridge gets swallowed or doesn't form a separate connected component.
+2. **Spectral concentration disabled**: Was killing real events, now disabled — but this means broadband decoys leak through. Need a replacement discriminator.
+3. **No coherence test**: The pipeline doesn't check whether the detected signal is a coherent wave (consistent phase across cycles) vs. incoherent noise.
+4. **Single threshold**: The 3.5-sigma mask is a single global threshold. Adaptive or multi-scale thresholding might recover weak signals near strong ones.
 
 ## What you CAN modify
 
 | File | What to do |
 |---|---|
-| `src/qp/benchmark/runner.py` | **Primary target.** Simplify `_detect_events_in_dataset()`. Move logic into core modules or delete it. |
-| `src/qp/events/detector.py` | Move physically-motivated filters here (they belong in the detector, not the benchmark wrapper) |
-| `src/qp/events/ridge.py` | Simplify if possible |
-| `src/qp/events/threshold.py` | Adjust `GateConfig` defaults if they better reflect the physics |
-| `src/qp/signal/wavelet.py` | Only if changing CWT parameters for physical reasons |
-| `src/qp/events/quality.py` | Only if integrating quality gating into the pipeline |
+| `src/qp/benchmark/runner.py` | Modify `_detect_events_in_dataset()` — the benchmark detection path |
+| `src/qp/events/detector.py` | Modify `detect_with_gate()`, `filter_detections()`, or add new detection functions |
+| `src/qp/events/ridge.py` | Improve ridge extraction (e.g., multi-scale, adaptive thresholds) |
+| `src/qp/events/threshold.py` | Improve thresholding (e.g., adaptive sigma, scale-dependent masks) |
+| `src/qp/signal/wavelet.py` | Modify CWT parameters or add new transforms |
+| `src/qp/events/quality.py` | Add quality metrics that discriminate waves from noise |
 
 ## What you CANNOT modify
 
@@ -56,37 +84,37 @@ Bad reasons: "60% threshold gave the best score on the benchmark" (overfitting).
 uv run python scripts/score_pipeline.py --notes "description of what changed"
 ```
 
-This loads the canonical datasets from `Output/benchmark/`, runs detection, scores, and appends a row to `scoreboard.tsv`. Takes ~15–20 seconds. **Timeout: 5 minutes max.**
+This loads the canonical datasets from `Output/benchmark/`, runs detection, scores, and appends a row to `scoreboard.tsv`. Takes ~25-30 seconds. **Timeout: 5 minutes max.**
 
 ## The experiment loop
 
-**Max steps: 10.**
+**Max iterations: 100.**
 
-For each step:
+For each iteration:
 
 ### 1. Research
 
 Before changing anything, ask:
 
-- **What is the simplest detection pipeline that is physically defensible?** The core idea: CWT → σ-mask → ridge extraction → post-filters. Each step has a clear role.
-- **What logic in `_detect_events_in_dataset()` should live in the core detector modules instead?** The benchmark wrapper should be thin — ideally just calling `detect_with_gate()` or similar.
-- **What filters have clear physical motivation vs. what is benchmark tuning?**
-- **Can I delete code and keep the score above ~0.88?**
+- **What is the biggest score bottleneck right now?** Check per-tier recall, decoy rejection, and F1 separately.
+- **Is there a known signal processing or space physics technique that addresses this?** Use web search if you're stuck — look for methods in the literature (e.g., wavelet coherence, Hilbert-Huang transform, matched filtering for dispersive waves, polarization filtering).
+- **Will this approach generalize to real Cassini data?** If it only helps one scenario, it's overfitting.
 
 ### 2. Implement
 
 Priorities (in order):
 
-1. **Delete or simplify** heuristics that lack physical motivation
-2. **Move** physically-motivated logic from `runner.py` into `detector.py` or `threshold.py` where it belongs
-3. **Consolidate** — use `detect_with_gate()` or extend it rather than reimplementing in the benchmark wrapper
-4. **Improve** — only add new logic if it has a clear physical basis and the paper sentence is obvious
+1. **Fix the co-occurrence problem** — this is the single biggest score drag. Ideas: separate ridge extraction per component before combining, iterative detection (find strongest, subtract, re-detect), multi-scale thresholding.
+2. **Replace spectral concentration** with a better broadband discriminator — e.g., wavelet coherence (coherent waves have consistent phase, noise doesn't), or temporal regularity (waves are quasi-periodic, noise isn't).
+3. **Improve weak-signal detection** — adaptive thresholds that lower the sigma near strong detections, or matched filtering against known wave templates.
+4. **Reduce false positives** — only if decoy rejection is the bottleneck.
 
 **Hard rules:**
-- Every threshold must have a comment explaining the physical reasoning, not just what value was chosen
-- No band-specific special cases (e.g., different thresholds for QP120 vs QP60) unless physically justified
-- Prefer fewer, more general filters over many specific ones
-- If you can't explain a filter in one sentence to a referee, delete it
+- Every threshold must have a comment explaining the physical or statistical reasoning
+- No band-specific special cases unless physically justified (e.g., QP120 has different coherence properties because of CWT resolution)
+- Prefer fewer, more general techniques over many specific filters
+- If you can't explain a method in one sentence to a referee, simplify it
+- New code is fine as long as it improves the score — this is not a LOC reduction exercise
 
 ### 3. Run
 
@@ -97,51 +125,47 @@ uv run python scripts/score_pipeline.py --notes "brief description"
 ### 4. Evaluate
 
 **Keep if:**
-- LOC decreased AND score ≥ 0.88 (simplification win — this is the primary goal)
-- Score improved by ≥ 0.005 with no LOC increase
-- Score stayed the same but code is measurably simpler (fewer magic numbers, logic moved to proper modules)
+- Composite score improved by >= 0.005
+- Score stayed the same but a specific bottleneck improved (e.g., co-occurrence recall up, decoy rejection up) without regressing others
+- A principled method was added that improves one metric without hurting others, even if composite gain is < 0.005
 
 **Discard if:**
-- LOC increased without a clear physical justification for the new code
-- Score dropped below 0.88 (too much regression)
-- New code adds benchmark-specific heuristics (overfitting)
+- Score dropped
+- New code adds scenario-specific heuristics
+- Method is not explainable in 1-2 sentences
 
 ### 5. Commit or revert
 
-**Keep:** `git add -A && git commit -m "refactor: <what simplified>"` — prefer `refactor:` over `feat:` when simplifying.
+**Keep:** `git add -A && git commit -m "feat: <what improved>"` or `refactor:` if restructuring.
 
-**Discard:** `git checkout -- .` to revert. Log with `status=discard`.
+**Discard:** `git checkout -- .` to revert.
 
-### 6. Repeat
+### 6. When stuck — search the literature
 
-## Current pipeline anatomy
+If you've tried 5+ iterations without improvement, **use web search** to find new approaches:
 
-The detection in `_detect_events_in_dataset()` currently has these stages:
+- Search for: "wavelet coherence wave detection", "quasi-periodic signal detection magnetosphere", "matched filter dispersive waves", "time-frequency ridge extraction multi-component"
+- Look at recent papers on ULF wave detection, FLR identification, or magnetospheric wave catalogs
+- Check if scipy, pywt, or other installed packages have relevant functions you haven't tried
 
-| Stage | LOC | Physical basis | Concern |
-|---|---|---|---|
-| NaN interpolation | 8 | Data gaps in Cassini MAG | Fine — necessary preprocessing |
-| CWT (3 components) | 12 | Standard time-frequency analysis | Fine, but 3 CWTs is expensive |
-| Coincidence AND mask | 3 | Alfvén waves are transverse in both perp components | **Good** — physically motivated |
-| Single-component fallback | 12 | Linearly polarized waves exist | OK but the trigger logic is ad-hoc |
-| Ridge splitting at minima | 40 | Long CWT ridges at QP120 merge separate packets | **Suspect** — artifact of CWT resolution, not physics |
-| Band row mask setup | 8 | — | Bookkeeping |
-| Min oscillations filter | 4 | Wave packet needs ≥N cycles to be identifiable | **Good** |
-| CWT transverse ratio | 4 | Alfvén waves have perp > par power | **Good** — uses in-band CWT power |
-| Spectral concentration | 14 | Reject broadband transients | **OK** but the 60% threshold is tuned |
-| Same-band dedup | 8 | Avoid double-counting | Fine |
-| **Total** | ~115 | | Should be ~40–50 |
+Then implement the most promising approach and test it.
 
-**Target: reduce `_detect_events_in_dataset()` to ≤50 lines** by moving defensible filters into the core detector and deleting the rest.
+### 7. Repeat
 
-## What the Methods section should say
+## Score breakdown reference
 
-> "We detect quasi-periodic wave packets using a continuous wavelet transform (Morlet, ω₀=10) of both transverse MFA components. Statistically significant features are identified using a robust σ-mask (median + n·MAD of background period rows, n=3). We require coincidence between both transverse components to confirm the Alfvén wave polarization signature, with a single-component fallback for linearly polarized events. Connected ridges in the (time, period) plane exceeding 2 hours are classified into QP30/QP60/QP120 bands. Post-detection filters reject compressional contamination (in-band transverse-to-parallel CWT power ratio > 0.5) and broadband transients (spectral concentration test)."
+The composite score is a weighted harmonic mean:
+- 0.35 x F1 (detection rate — precision x recall balance)
+- 0.20 x band_accuracy (correct band identification)
+- 0.15 x period_accuracy (period error, clamped)
+- 0.15 x decoy_rejection_rate (false positive suppression)
+- 0.15 x mean_iou (temporal localization)
 
-That's ~80 words. Every word should map to code, and every piece of code should map to a word.
+Current bottlenecks (from 0.889 baseline):
+- F1 = 0.898 (limited by 84% tier2 recall from co-occurrence)
+- Band accuracy = 1.000 (perfect — not a bottleneck)
+- Period error = 0.32% (excellent — not a bottleneck)
+- Decoy rejection = 0.711 (worst component — broadband bursts leak)
+- Mean IoU = 0.863 (good — minor improvement possible)
 
-## Code size watchdog
-
-Current: ~10,784 LOC. **Target: ≤ 10,700 LOC** (net reduction). Each run records LOC.
-
-The `_detect_events_in_dataset()` function is currently ~225 lines. It should be ≤60.
+**Biggest gains available: decoy rejection (0.71 -> 0.90+) and co-occurrence recall (50% -> 80%+).**
