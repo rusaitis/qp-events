@@ -225,19 +225,42 @@ def magnetospheric_background(
         2 * np.pi * t / slow_period_sec
     )
 
-    # Dual PPO modulation (N and S systems with independent phases)
-    ppo_n_sec = ppo_n_period_hours * 3600.0
-    ppo_s_sec = ppo_s_period_hours * 3600.0
+    # Dual PPO modulation
+    if ppo_amplitude > 0:
+        inject_ppo(
+            bg, t, ppo_amplitude,
+            ppo_n_period_hours, ppo_s_period_hours,
+            seed=int(rng.integers(0, 2**31)),
+        )
+
+    return bg
+
+
+def inject_ppo(
+    bg: np.ndarray,
+    t: np.ndarray,
+    amplitude: float = 0.5,
+    n_period_hours: float = 10.6,
+    s_period_hours: float = 10.8,
+    seed: int | None = None,
+) -> None:
+    r"""Add dual N/S PPO modulation to transverse components in-place.
+
+    Northern (~10.6 h) and southern (~10.8 h) PPO systems with
+    independent random phases, producing beat modulation on ~25-day
+    timescales (Andrews et al. 2008, 2010).
+    """
+    rng = np.random.default_rng(seed)
+    n_sec = n_period_hours * 3600.0
+    s_sec = s_period_hours * 3600.0
     phase_n = rng.uniform(0, 2 * np.pi)
     phase_s = rng.uniform(0, 2 * np.pi)
 
     # B_perp1 gets full PPO, B_perp2 gets 0.3× (elliptical polarization)
-    for period, phase in [(ppo_n_sec, phase_n), (ppo_s_sec, phase_s)]:
+    for period, phase in [(n_sec, phase_n), (s_sec, phase_s)]:
         ppo_arg = 2 * np.pi * t / period + phase
-        bg[:, 1] += ppo_amplitude * np.sin(ppo_arg)
-        bg[:, 2] += 0.3 * ppo_amplitude * np.cos(ppo_arg)
-
-    return bg
+        bg[:, 1] += amplitude * np.sin(ppo_arg)
+        bg[:, 2] += 0.3 * amplitude * np.cos(ppo_arg)
 
 
 def bandlimited_noise_burst(

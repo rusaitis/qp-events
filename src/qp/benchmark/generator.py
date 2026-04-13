@@ -16,6 +16,7 @@ from qp.events.catalog import WaveTemplate
 from qp.signal.noise import (
     bandlimited_noise_burst,
     colored_noise_3component,
+    inject_ppo,
     magnetospheric_background,
 )
 from qp.signal.synthetic import simulate_wave_physics
@@ -73,6 +74,10 @@ class EventSpec:
     injection_type: str = "wave"  # "wave" or "noise_burst"
     # For non-band signals (decoys at specific periods)
     period_sec_override: float | None = None
+    # Override frequency range and spectral slope for noise bursts
+    burst_freq_lo: float | None = None
+    burst_freq_hi: float | None = None
+    burst_alpha: float = 1.0
 
 
 @dataclass
@@ -87,6 +92,9 @@ class ScenarioConfig:
     noise_sigma: float = 0.05
     background_trend: bool = True
     difficulty_tier: str = "tier1"
+    # PPO amplitude (nT). Applied independently of background_trend.
+    # 0.0 = no PPO; 0.5 = typical magnetospheric; 1.0 = strong.
+    ppo_amplitude: float = 0.0
     event_specs: list[EventSpec] = field(default_factory=list)
     gaps: list[GapSpec] = field(default_factory=list)
     noise_bursts: list[NoiseBurstSpec] = field(default_factory=list)
@@ -228,6 +236,13 @@ def generate_benchmark_dataset(
             seed=int(rng.integers(0, 2**31)),
         )
 
+    # Standalone PPO (independent of background_trend)
+    if scenario.ppo_amplitude > 0:
+        inject_ppo(
+            bg, t, amplitude=scenario.ppo_amplitude,
+            seed=int(rng.integers(0, 2**31)),
+        )
+
     # Non-stationary noise bursts (before event injection)
     if scenario.noise_bursts:
         _inject_noise_bursts(bg, t, scenario.noise_bursts)
@@ -246,19 +261,23 @@ def generate_benchmark_dataset(
 
         if spec.injection_type == "noise_burst":
             # Bandlimited noise burst (broadband decoy)
-            band_obj = QP_BANDS.get(spec.band.upper())
-            if band_obj:
-                f_lo = band_obj.freq_min_hz
-                f_hi = band_obj.freq_max_hz
+            if spec.burst_freq_lo is not None and spec.burst_freq_hi is not None:
+                f_lo, f_hi = spec.burst_freq_lo, spec.burst_freq_hi
             else:
-                f0 = 1.0 / period_sec
-                f_lo, f_hi = 0.5 * f0, 2.0 * f0
+                band_obj = QP_BANDS.get(spec.band.upper())
+                if band_obj:
+                    f_lo = band_obj.freq_min_hz
+                    f_hi = band_obj.freq_max_hz
+                else:
+                    f0 = 1.0 / period_sec
+                    f_lo, f_hi = 0.5 * f0, 2.0 * f0
 
             burst1 = bandlimited_noise_burst(
                 n_samples, scenario.dt,
                 center_sec=center_sec, decay_sec=decay_sec,
                 freq_lo=f_lo, freq_hi=f_hi,
                 amplitude=spec.amplitude,
+                alpha=spec.burst_alpha,
                 seed=int(rng.integers(0, 2**31)),
             )
             burst2 = bandlimited_noise_burst(
@@ -266,6 +285,7 @@ def generate_benchmark_dataset(
                 center_sec=center_sec, decay_sec=decay_sec,
                 freq_lo=f_lo, freq_hi=f_hi,
                 amplitude=spec.amplitude * 0.7,
+                alpha=spec.burst_alpha,
                 seed=int(rng.integers(0, 2**31)),
             )
             b_perp1 += burst1
