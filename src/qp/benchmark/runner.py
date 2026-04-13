@@ -106,7 +106,7 @@ def _detect_events_in_dataset(
     # with strict sigma. Catches linearly polarized events.
     if not all_peaks:
         for power, mask in [(power1, mask1), (power2, mask2)]:
-            strict_mask = wavelet_sigma_mask(power, freq, n_sigma=5.0)
+            strict_mask = wavelet_sigma_mask(power, freq, n_sigma=4.0)
             single_peaks = detect_wave_packets_multi(
                 data=b_perp1,
                 times=times,
