@@ -80,8 +80,8 @@ def _detect_events_in_dataset(
     )
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
-    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=3.0)
-    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=3.0)
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=3.5)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=3.5)
     joint_mask = mask1 & mask2
     joint_power = (power1 + power2) / 2.0
 
