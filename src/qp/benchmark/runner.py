@@ -68,10 +68,9 @@ def _detect_events_in_dataset(
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
-    # CWT both transverse components, AND their sigma masks (coincidence)
-    # Restrict freq_max to QP-relevant range for better low-freq resolution
+    # CWT both transverse components; restrict to QP-relevant frequencies
     n_freqs = 300
-    freq_max = 1.0e-3  # period > ~17 min; covers all QP bands
+    freq_max = 1.0e-3  # period ≥ ~17 min; covers all QP bands
     freq, _, cwt1 = morlet_cwt(
         b_perp1, dt=dt, n_freqs=n_freqs, freq_max=freq_max,
     )
