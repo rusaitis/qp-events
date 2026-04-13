@@ -228,8 +228,8 @@ def _detect_events_in_dataset(
                     )
             if other_power:
                 max_other = max(other_power)
-                # Reject if another band has >= 50% of this band's power
-                if max_other > 0.5 * in_band_power:
+                # Reject if another band has >= 60% of this band's power
+                if max_other > 0.6 * in_band_power:
                     continue
 
         filtered.append(peak)
