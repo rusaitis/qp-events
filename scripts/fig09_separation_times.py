@@ -21,24 +21,38 @@ _project_root = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_project_root / "src"))
 
 
-def load_qp60_peaks(catalog_path: Path):
-    """Load QP60 events from parquet, return sorted peak times in hours."""
+def load_qp60_separations(catalog_path: Path):
+    """Compute QP60 wave-packet separations within contiguous segments.
+
+    Only events in the same or adjacent MFA segments are used, so
+    multi-day observation gaps don't contaminate the distribution.
+    """
     import pandas as pd
     df = pd.read_parquet(catalog_path)
     qp60 = df[df["band"] == "QP60"].copy()
-    # Restrict to magnetosphere
     qp60 = qp60[qp60["region"] == "magnetosphere"]
-    # Parse peak times (midpoint of date_from/date_to)
-    from_dt = pd.to_datetime(qp60["date_from"])
-    to_dt = pd.to_datetime(qp60["date_to"])
-    peak_dt = from_dt + (to_dt - from_dt) / 2
-    peak_dt = peak_dt.sort_values()
-    # Compute separations in hours
-    seps_sec = peak_dt.diff().dt.total_seconds().dropna().values
-    seps_h = seps_sec / 3600.0
-    # Filter to reasonable range (skip multi-day gaps)
-    seps_h = seps_h[(seps_h > 0) & (seps_h < 36)]
-    return seps_h
+    qp60["peak_dt"] = (
+        pd.to_datetime(qp60["date_from"])
+        + (pd.to_datetime(qp60["date_to"]) - pd.to_datetime(qp60["date_from"])) / 2
+    )
+    qp60 = qp60.sort_values("peak_dt")
+
+    seps = []
+    prev_time = None
+    prev_seg = None
+    for _, row in qp60.iterrows():
+        seg = row.get("segment_id")
+        t = row["peak_dt"]
+        if prev_time is not None and prev_seg is not None and seg is not None:
+            # Accept if same segment or adjacent segment (overlap in 36h windows)
+            if abs(seg - prev_seg) <= 1:
+                sep_h = (t - prev_time).total_seconds() / 3600.0
+                if 0 < sep_h < 36:
+                    seps.append(sep_h)
+        prev_time = t
+        prev_seg = seg
+
+    return np.array(seps)
 
 
 def main():
@@ -50,7 +64,7 @@ def main():
     args = parser.parse_args()
 
     print(f"Loading catalog: {args.catalog}")
-    seps = load_qp60_peaks(args.catalog)
+    seps = load_qp60_separations(args.catalog)
     print(f"  QP60 separations: {len(seps)}")
 
     if len(seps) < 10:
