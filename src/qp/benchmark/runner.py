@@ -91,33 +91,23 @@ def _detect_events_in_dataset(
     )
     power_par = np.abs(cwt_par)
 
+    # Primary: require coincidence in both transverse components (AND).
+    # Fallback: accept either component at stricter threshold (OR at 4σ)
+    # to capture linearly polarized Alfvén waves.
+    strict1 = wavelet_sigma_mask(power1, freq, n_sigma=4.0)
+    strict2 = wavelet_sigma_mask(power2, freq, n_sigma=4.0)
+    combined_mask = joint_mask | (strict1 | strict2)
+
     all_peaks = detect_wave_packets_multi(
         data=b_perp1,
         times=times,
         dt=dt,
         cwt_freq=freq,
         cwt_power=joint_power,
-        threshold_mask=joint_mask,
+        threshold_mask=combined_mask,
         min_duration_hours=2.0,
         min_pixels=80,
     )
-
-    # Fallback: if AND mask found nothing, try single-component detection
-    # with strict sigma. Catches linearly polarized events.
-    if not all_peaks:
-        for power in [power1, power2]:
-            strict_mask = wavelet_sigma_mask(power, freq, n_sigma=4.0)
-            single_peaks = detect_wave_packets_multi(
-                data=b_perp1,
-                times=times,
-                dt=dt,
-                cwt_freq=freq,
-                cwt_power=power,
-                threshold_mask=strict_mask,
-                min_duration_hours=2.0,
-                min_pixels=100,
-            )
-            all_peaks.extend(single_peaks)
 
     # Physical post-filters: min oscillations, transverse ratio,
     # spectral concentration, and same-band deduplication.
