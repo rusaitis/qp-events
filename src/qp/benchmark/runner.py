@@ -74,9 +74,8 @@ def _detect_events_in_dataset(
     _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
-    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=4.0)
-    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=4.0)
-    # Coincidence: both components must fire at same (period, time) cell
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=3.0)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=3.0)
     joint_mask = mask1 & mask2
     joint_power = (power1 + power2) / 2.0
 
@@ -88,7 +87,7 @@ def _detect_events_in_dataset(
         cwt_power=joint_power,
         threshold_mask=joint_mask,
         min_duration_hours=2.0,
-        min_pixels=50,
+        min_pixels=80,
     )
 
     # Post-filter: transverse ratio + min oscillations
@@ -134,7 +133,27 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    return merged
+    # Cross-band dedup: if detections in 2+ bands overlap in time,
+    # keep only the strongest — broadband transients fire all bands
+    final: list[WavePacketPeak] = []
+    for peak in merged:
+        pk_t = peak.peak_time
+        overlaps = [
+            p for p in final
+            if p.band != peak.band
+            and abs((p.peak_time - pk_t).total_seconds()) < 3600
+        ]
+        if overlaps:
+            # Another band already claimed this time; keep the stronger
+            existing = overlaps[0]
+            if peak.prominence > existing.prominence:
+                final.remove(existing)
+                final.append(peak)
+            # else drop the new one
+        else:
+            final.append(peak)
+
+    return final
 
 
 # ------------------------------------------------------------------

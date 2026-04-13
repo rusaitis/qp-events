@@ -3,3 +3,5 @@ commit	date	score	f1	precision	recall	band_acc	period_err_pct	mean_iou	decoy_rej
 0bd1e21	2026-04-13	0.3514	0.5814	0.4170	0.9602	0.9544	5.86	0.8570	0.0882	0.5803	0.7778	1.0000	1.0000	1.0000	10655	15.0	keep	sigma mask n=3 + NaN interp + power-weighted dedup
 b2d96f3	2026-04-13	0.7473	0.6354	0.5023	0.8645	0.9493	6.00	0.8605	0.6176	0.5469	0.7778	0.8333	0.9070	0.8889	10679	15.1	keep	transverse ratio filter + min 3 oscillations
 029a5b9	2026-04-13	0.7992	0.7633	0.7075	0.8287	0.9519	5.85	0.8310	0.6176	0.6084	0.7778	0.6667	0.8953	0.8889	10674	12.5	keep	coincidence mask + n_sigma=4 + relaxed transverse ratio 0.5
+d08e799	2026-04-13	0.7622	0.6739	0.5522	0.8645	0.9539	5.79	0.8291	0.6176	0.5838	0.7778	0.8333	0.9070	0.8889	10688	16.0	keep	two-pass: coincidence n=3.5 + single-component n=5
+d08e799	2026-04-13	0.8145	0.7969	0.7816	0.8127	0.9559	5.90	0.8475	0.6176	0.6192	0.7778	0.6667	0.8488	0.8889	10689	12.8	keep	n_sigma=3 coincidence + min_pixels=80 + cross-band dedup
