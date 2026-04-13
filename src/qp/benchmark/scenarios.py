@@ -5,17 +5,24 @@ Events are spaced to avoid overlap (≥30 h between packet centers for
 QP30/QP60, ≥40 h for QP120).
 
 Scenario counts:
-    Tier 1 (easy):     5 scenarios, ~50 detectable events
-    Tier 2 (moderate): 6 scenarios, ~48 detectable events
-    Tier 3 (hard):     7 scenarios, ~52 detectable events
-    Tier 4 (extreme):  8 scenarios, ~54 detectable events
-    Decoy:             6 scenarios, ~27 non-detectable events
-    TOTAL:             32 scenarios, ~204 detectable + 27 decoy = 231 events
+    Tier 1 (easy):     5 scenarios
+    Tier 2 (moderate): 6 scenarios
+    Tier 3 (hard):     12 scenarios (+ gaps, steep noise, PPO beat, plasma sheet)
+    Tier 4 (extreme):  11 scenarios (+ heavy gaps, Kolmogorov, non-stationary)
+    Decoy:             6 scenarios (+ roll artifacts)
+    TOTAL:             40 scenarios
 """
 
 from __future__ import annotations
 
-from qp.benchmark.generator import EventSpec, ScenarioConfig
+from qp.benchmark.generator import (
+    EventSpec,
+    GapSpec,
+    NoiseBurstSpec,
+    RollArtifactSpec,
+    ScenarioConfig,
+)
+from qp.events.bands import classify_period
 
 _MIN = 60.0  # seconds
 
@@ -104,21 +111,22 @@ def tier1_full_spectrum() -> ScenarioConfig:
     """Sweep across the full detectable spectrum (5–180 min)."""
     periods_min = [5, 10, 20, 30, 45, 60, 80, 90, 100, 110, 120, 130, 150, 180]
     centers = _centers(len(periods_min), 15)
+    specs = []
+    for p, c in zip(periods_min, centers):
+        band_name = classify_period(p * _MIN)
+        specs.append(EventSpec(
+            band=band_name or "QP60",
+            period_sec_override=p * _MIN,
+            amplitude=3.0, center_hours=c, decay_hours=max(2.0, p / 30),
+            should_detect=band_name is not None,
+            difficulty="easy",
+        ))
     return ScenarioConfig(
         dataset_id="tier1_full_spectrum",
         description="Period sweep 5–180 min, high amplitude, white noise",
         duration_days=15, noise_alpha=0.0, noise_sigma=0.02,
         background_trend=False, difficulty_tier="tier1",
-        event_specs=[
-            EventSpec(
-                band="QP60",  # not band-matched; using period override
-                period_sec_override=p * _MIN,
-                amplitude=3.0, center_hours=c, decay_hours=max(2.0, p / 30),
-                should_detect=(20 <= p <= 150),  # only QP-band periods detectable
-                difficulty="easy",
-            )
-            for p, c in zip(periods_min, centers)
-        ],
+        event_specs=specs,
     )
 
 
@@ -245,7 +253,7 @@ def tier3_overlapping_bands() -> ScenarioConfig:
 
 def tier3_frequency_drift() -> ScenarioConfig:
     centers = _centers(6, 10)
-    chirps = [2e-8, -2e-8, 5e-8, -5e-8, 3e-8, -3e-8]
+    chirps = [2e-9, -2e-9, 5e-9, -5e-9, 3e-9, -3e-9]
     return ScenarioConfig(
         dataset_id="tier3_frequency_drift",
         description="QP60 with frequency chirp (travelling wave signature)",
@@ -332,7 +340,7 @@ def tier3_travelling_waves() -> ScenarioConfig:
         background_trend=False, difficulty_tier="tier3",
         event_specs=[
             EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, chirp_rate=3e-8, asymmetry=0.3,
+                      decay_hours=4.0, chirp_rate=3e-9, asymmetry=0.3,
                       propagation="travelling", difficulty="hard")
             for c in centers
         ],
@@ -401,7 +409,7 @@ def tier4_extreme_chirp() -> ScenarioConfig:
         background_trend=False, difficulty_tier="tier4",
         event_specs=[
             EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=5.0, chirp_rate=8e-8,
+                      decay_hours=5.0, chirp_rate=1e-8,
                       propagation="travelling", difficulty="extreme")
             for c in centers
         ],
@@ -510,18 +518,26 @@ def decoy_single_pulses() -> ScenarioConfig:
 
 
 def decoy_broadband_burst() -> ScenarioConfig:
-    """Broadband power bursts — just windowed colored noise, no spectral peak."""
+    """Broadband power bursts — bandpass-filtered Gaussian noise.
+
+    Uses bandlimited_noise_burst() to produce genuine broadband power
+    that is spectrally indistinguishable from a continuous noise process
+    in a CWT scalogram (unlike discrete sinusoids which produce
+    resolvable ridges).
+    """
     centers = _centers(4, 10)
     return ScenarioConfig(
         dataset_id="decoy_broadband_burst",
-        description="Broadband noise bursts (no monochromatic content)",
-        duration_days=10, noise_alpha=1.5, noise_sigma=0.1,
+        description="Bandlimited noise bursts (continuous broadband power)",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
         background_trend=False, difficulty_tier="decoy",
         event_specs=[
-            EventSpec(band="QP60", period_sec_override=3600.0,
-                      amplitude=0.0, center_hours=c, decay_hours=2.0,
-                      should_detect=False, difficulty="easy",
-                      event_type="decoy_broadband")
+            EventSpec(
+                band="QP60", amplitude=1.5, center_hours=c,
+                decay_hours=2.0, should_detect=False, difficulty="easy",
+                event_type="decoy_broadband",
+                injection_type="noise_burst",
+            )
             for c in centers
         ],
     )
@@ -561,6 +577,180 @@ def decoy_ppo_only() -> ScenarioConfig:
 
 
 # ======================================================================
+# NEW: Data gaps, artifacts, non-stationary noise, steep spectra
+# ======================================================================
+
+
+def tier3_gaps_at_onset() -> ScenarioConfig:
+    """Data gaps at the rising edge of QP60 events."""
+    centers = _centers(6, 10)
+    # Place 10-min gap 1h before each event center (rising edge)
+    gaps = [GapSpec(center_hours=c - 1.0, duration_minutes=10) for c in centers]
+    return ScenarioConfig(
+        dataset_id="tier3_gaps_at_onset",
+        description="QP60 with 10-min gaps at event onset",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
+                      decay_hours=4.0, difficulty="hard")
+            for c in centers
+        ],
+        gaps=gaps,
+    )
+
+
+def tier3_gaps_midpacket() -> ScenarioConfig:
+    """Data gaps in the middle of QP60 events."""
+    centers = _centers(6, 10)
+    gaps = [GapSpec(center_hours=c, duration_minutes=8) for c in centers]
+    return ScenarioConfig(
+        dataset_id="tier3_gaps_midpacket",
+        description="QP60 with 8-min gaps at event midpoint",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
+                      decay_hours=4.0, difficulty="hard")
+            for c in centers
+        ],
+        gaps=gaps,
+    )
+
+
+def tier4_heavy_gaps() -> ScenarioConfig:
+    """Frequent data gaps (~every 2h, 5–15 min each)."""
+    gaps = [
+        GapSpec(center_hours=h, duration_minutes=5 + (h % 3) * 5)
+        for h in range(12, 228, 2)  # every 2h across 10 days
+    ]
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id="tier4_heavy_gaps",
+        description="QP60 with frequent gaps (every ~2h, 5-15 min)",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, difficulty_tier="tier4",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
+                      decay_hours=4.0, difficulty="extreme")
+            for c in centers
+        ],
+        gaps=gaps,
+    )
+
+
+def tier3_steep_noise() -> ScenarioConfig:
+    """QP60 in steep α = 1.5 noise (von Papen et al. 2014)."""
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id="tier3_steep_noise",
+        description="QP60 in steep colored noise (alpha=1.5)",
+        duration_days=10, noise_alpha=1.5, noise_sigma=0.05,
+        background_trend=False, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
+                      decay_hours=4.0, difficulty="hard")
+            for c in centers
+        ],
+    )
+
+
+def tier4_kolmogorov_noise() -> ScenarioConfig:
+    """QP60 in Kolmogorov α ≈ 5/3 ≈ 1.7 noise (Xu et al. 2023)."""
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id="tier4_kolmogorov_noise",
+        description="QP60 in Kolmogorov turbulence (alpha=1.7)",
+        duration_days=10, noise_alpha=1.7, noise_sigma=0.05,
+        background_trend=False, difficulty_tier="tier4",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
+                      decay_hours=4.0, difficulty="extreme")
+            for c in centers
+        ],
+    )
+
+
+def tier3_ppo_beat() -> ScenarioConfig:
+    """QP60 with dual-PPO beat constructively enhancing transverse power."""
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id="tier3_ppo_beat",
+        description="QP60 with dual N/S PPO beat modulation",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=True, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
+                      decay_hours=4.0, difficulty="hard")
+            for c in centers
+        ],
+    )
+
+
+def tier3_plasma_sheet() -> ScenarioConfig:
+    """QP60 with localized noise bursts (plasma sheet crossings)."""
+    centers = _centers(6, 10)
+    bursts = [
+        NoiseBurstSpec(center_hours=c, duration_hours=3.0,
+                       sigma_multiplier=5.0)
+        for c in centers[:3]
+    ]
+    return ScenarioConfig(
+        dataset_id="tier3_plasma_sheet",
+        description="QP60 overlapping 5x noise bursts (plasma sheet)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.03,
+        background_trend=False, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
+                      decay_hours=4.0, difficulty="hard")
+            for c in centers
+        ],
+        noise_bursts=bursts,
+    )
+
+
+def tier4_nonstationary() -> ScenarioConfig:
+    """QP60 with continuously varying background noise level."""
+    centers = _centers(8, 10)
+    # Many overlapping noise bursts create non-stationary background
+    bursts = [
+        NoiseBurstSpec(center_hours=h, duration_hours=5.0,
+                       sigma_multiplier=3.0 + (h % 7))
+        for h in range(24, 216, 18)
+    ]
+    return ScenarioConfig(
+        dataset_id="tier4_nonstationary",
+        description="QP60 in non-stationary noise (varying σ)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.03,
+        background_trend=False, difficulty_tier="tier4",
+        event_specs=[
+            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
+                      decay_hours=4.0, difficulty="extreme")
+            for c in centers
+        ],
+        noise_bursts=bursts,
+    )
+
+
+def decoy_roll_artifacts() -> ScenarioConfig:
+    """Spacecraft roll maneuver artifacts (smooth transverse transients)."""
+    centers = _centers(6, 10)
+    rolls = [
+        RollArtifactSpec(center_hours=c, duration_hours=2.0,
+                         rotation_deg=15.0 + i * 5)
+        for i, c in enumerate(centers)
+    ]
+    return ScenarioConfig(
+        dataset_id="decoy_roll_artifacts",
+        description="Spacecraft roll maneuver artifacts",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=True, difficulty_tier="decoy",
+        event_specs=[],  # no injected wave events
+        roll_artifacts=rolls,
+    )
+
+
+# ======================================================================
 # Registry
 # ======================================================================
 
@@ -586,6 +776,11 @@ ALL_SCENARIOS: dict[str, callable] = {
     "tier3_near_threshold": tier3_near_threshold,
     "tier3_mixed_waveforms": tier3_mixed_waveforms,
     "tier3_travelling_waves": tier3_travelling_waves,
+    "tier3_gaps_at_onset": tier3_gaps_at_onset,
+    "tier3_gaps_midpacket": tier3_gaps_midpacket,
+    "tier3_steep_noise": tier3_steep_noise,
+    "tier3_ppo_beat": tier3_ppo_beat,
+    "tier3_plasma_sheet": tier3_plasma_sheet,
     # Tier 4
     "tier4_buried_in_noise": tier4_buried_in_noise,
     "tier4_qp120_short": tier4_qp120_short,
@@ -595,12 +790,16 @@ ALL_SCENARIOS: dict[str, callable] = {
     "tier4_incoherent": tier4_incoherent,
     "tier4_harmonic_contamination": tier4_harmonic_contamination,
     "tier4_elliptical_pol": tier4_elliptical_pol,
+    "tier4_heavy_gaps": tier4_heavy_gaps,
+    "tier4_kolmogorov_noise": tier4_kolmogorov_noise,
+    "tier4_nonstationary": tier4_nonstationary,
     # Decoys
     "decoy_compressional": decoy_compressional,
     "decoy_single_pulses": decoy_single_pulses,
     "decoy_broadband_burst": decoy_broadband_burst,
     "decoy_step_functions": decoy_step_functions,
     "decoy_ppo_only": decoy_ppo_only,
+    "decoy_roll_artifacts": decoy_roll_artifacts,
 }
 
 TIER_SCENARIOS: dict[str, list[str]] = {

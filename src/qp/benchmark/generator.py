@@ -6,15 +6,46 @@ synthetic datasets with full ground-truth manifests.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from qp.events.bands import QP_BANDS
 from qp.events.catalog import WaveTemplate
-from qp.signal.noise import magnetospheric_background
+from qp.signal.noise import (
+    bandlimited_noise_burst,
+    colored_noise_3component,
+    magnetospheric_background,
+)
 from qp.signal.synthetic import simulate_wave_physics
 from qp.benchmark.manifest import DatasetManifest, InjectedEvent
+
+
+@dataclass(frozen=True, slots=True)
+class GapSpec:
+    """A data gap to insert into the synthetic dataset."""
+
+    center_hours: float
+    duration_minutes: float
+
+
+@dataclass(frozen=True, slots=True)
+class NoiseBurstSpec:
+    """A localized noise enhancement (e.g., plasma sheet crossing)."""
+
+    center_hours: float
+    duration_hours: float
+    sigma_multiplier: float  # local noise increase factor
+
+
+@dataclass(frozen=True, slots=True)
+class RollArtifactSpec:
+    """A spacecraft roll maneuver artifact."""
+
+    center_hours: float
+    duration_hours: float  # typically 1–4h
+    rotation_deg: float  # rotation amplitude
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +58,7 @@ class EventSpec:
     center_hours: float = 12.0  # hours from dataset start
     decay_hours: float = 4.0  # Gaussian envelope width in hours
     mode: str = "alfvenic"  # "alfvenic", "compressional", "mixed"
-    polarization: str = "circular"  # "circular", "linear", "elliptical"
+    polarization: str = "circular"
     propagation: str = "standing"  # "standing", "travelling"
     waveform: str = "sine"
     chirp_rate: float = 0.0  # Hz/s
@@ -39,6 +70,7 @@ class EventSpec:
     should_detect: bool = True
     difficulty: str = "easy"
     event_type: str = "qp_wave"
+    injection_type: str = "wave"  # "wave" or "noise_burst"
     # For non-band signals (decoys at specific periods)
     period_sec_override: float | None = None
 
@@ -56,6 +88,9 @@ class ScenarioConfig:
     background_trend: bool = True
     difficulty_tier: str = "tier1"
     event_specs: list[EventSpec] = field(default_factory=list)
+    gaps: list[GapSpec] = field(default_factory=list)
+    noise_bursts: list[NoiseBurstSpec] = field(default_factory=list)
+    roll_artifacts: list[RollArtifactSpec] = field(default_factory=list)
 
 
 def _resolve_period(spec: EventSpec) -> float:
@@ -67,6 +102,98 @@ def _resolve_period(spec: EventSpec) -> float:
         raise ValueError(f"Unknown band: {spec.band!r}")
     centroid = band_obj.period_centroid_sec
     return centroid * (1.0 + spec.period_offset_frac)
+
+
+def _in_band_snr(
+    amplitude: float,
+    noise_sigma: float,
+    noise_alpha: float,
+    period_sec: float,
+    dt: float,
+    band_name: str | None,
+) -> float:
+    r"""Compute in-band SNR analytically.
+
+    $$\text{SNR}_{\text{in-band}} = \frac{A}{\sqrt{\int_{f_1}^{f_2}
+    C \cdot f^{-\alpha} \, df}}$$
+
+    where $C$ is set so that the total broadband RMS equals ``noise_sigma``.
+    """
+    if noise_sigma <= 0 or noise_alpha <= 0:
+        return amplitude / max(noise_sigma, 1e-30)
+
+    f_nyq = 0.5 / dt
+    alpha = noise_alpha
+
+    # Total power integral: ∫₀^f_nyq f^{-α} df
+    # For f_min we use the lowest resolved frequency ~ 1/(N*dt)
+    # but for simplicity use a small cutoff
+    f_min = 1e-6  # Hz (well below any QP band)
+    if abs(alpha - 1.0) < 0.01:
+        # α ≈ 1: ∫ f^{-1} df = ln(f_hi/f_lo)
+        total_integral = math.log(f_nyq / f_min)
+    else:
+        exp = 1.0 - alpha
+        total_integral = (f_nyq**exp - f_min**exp) / exp
+
+    # Normalization constant C from σ² = C × total_integral
+    c_norm = noise_sigma**2 / total_integral
+
+    # Band edges
+    if band_name and band_name.upper() in QP_BANDS:
+        band = QP_BANDS[band_name.upper()]
+        f1 = 1.0 / band.period_max_sec
+        f2 = 1.0 / band.period_min_sec
+    else:
+        # Use ±30% of the signal frequency
+        f0 = 1.0 / period_sec
+        f1 = 0.7 * f0
+        f2 = 1.3 * f0
+
+    # In-band noise power
+    if abs(alpha - 1.0) < 0.01:
+        band_integral = math.log(f2 / f1)
+    else:
+        exp = 1.0 - alpha
+        band_integral = (f2**exp - f1**exp) / exp
+
+    noise_in_band = math.sqrt(c_norm * band_integral)
+    return amplitude / max(noise_in_band, 1e-30)
+
+
+def _inject_noise_bursts(
+    bg: np.ndarray, t: np.ndarray,
+    bursts: list[NoiseBurstSpec],
+) -> None:
+    """Multiply background noise by localized Gaussian gain envelopes."""
+    for burst in bursts:
+        center = burst.center_hours * 3600.0
+        sigma = burst.duration_hours * 3600.0
+        gain = 1.0 + (burst.sigma_multiplier - 1.0) * np.exp(
+            -0.5 * ((t - center) / sigma) ** 2
+        )
+        bg *= gain[:, np.newaxis]
+
+
+def _inject_roll_artifact(
+    b_perp1: np.ndarray, b_perp2: np.ndarray,
+    t: np.ndarray, spec: RollArtifactSpec,
+) -> None:
+    """Inject a smooth spacecraft roll artifact into transverse components."""
+    center = spec.center_hours * 3600.0
+    half_dur = spec.duration_hours * 3600.0 / 2
+    mask = (t >= center - half_dur) & (t <= center + half_dur)
+    if not np.any(mask):
+        return
+    # Raised cosine angle ramp
+    local_t = (t[mask] - center) / half_dur  # [-1, 1]
+    angle_rad = np.radians(spec.rotation_deg) * 0.5 * (1 + np.cos(np.pi * local_t))
+    cos_a = np.cos(angle_rad)
+    sin_a = np.sin(angle_rad)
+    p1 = b_perp1[mask].copy()
+    p2 = b_perp2[mask].copy()
+    b_perp1[mask] = cos_a * p1 - sin_a * p2
+    b_perp2[mask] = sin_a * p1 + cos_a * p2
 
 
 def generate_benchmark_dataset(
@@ -104,14 +231,16 @@ def generate_benchmark_dataset(
             noise_sigma=scenario.noise_sigma,
         )
     else:
-        from qp.signal.noise import colored_noise_3component
-
         bg = colored_noise_3component(
             n_samples, scenario.dt,
             alpha=scenario.noise_alpha,
             sigma=scenario.noise_sigma,
             seed=int(rng.integers(0, 2**31)),
         )
+
+    # Non-stationary noise bursts (before event injection)
+    if scenario.noise_bursts:
+        _inject_noise_bursts(bg, t, scenario.noise_bursts)
 
     b_par = bg[:, 0].copy()
     b_perp1 = bg[:, 1].copy()
@@ -125,40 +254,75 @@ def generate_benchmark_dataset(
         center_sec = spec.center_hours * 3600.0
         decay_sec = spec.decay_hours * 3600.0
 
-        wave = WaveTemplate(
-            period=period_sec,
-            amplitude=spec.amplitude,
-            shift=center_sec,
-            decay_width=decay_sec,
-            waveform=spec.waveform,
-            chirp_rate=spec.chirp_rate,
-            asymmetry=spec.asymmetry,
-            amplitude_jitter=spec.amplitude_jitter,
-            sawtooth_width=spec.sawtooth_width,
-            harmonic_content=spec.harmonic_content,
-        )
+        if spec.injection_type == "noise_burst":
+            # Bandlimited noise burst (broadband decoy)
+            band_obj = QP_BANDS.get(spec.band.upper())
+            if band_obj:
+                f_lo = band_obj.freq_min_hz
+                f_hi = band_obj.freq_max_hz
+            else:
+                f0 = 1.0 / period_sec
+                f_lo, f_hi = 0.5 * f0, 2.0 * f0
 
-        _, wave_fields = simulate_wave_physics(
-            n_samples, scenario.dt, [wave],
-            mode=spec.mode,
-            polarization=spec.polarization,
-            ellipticity=spec.ellipticity,
-            propagation=spec.propagation,
-            seed=int(rng.integers(0, 2**31)),
-        )
+            burst = bandlimited_noise_burst(
+                n_samples, scenario.dt,
+                center_sec=center_sec, decay_sec=decay_sec,
+                freq_lo=f_lo, freq_hi=f_hi,
+                amplitude=spec.amplitude,
+                seed=int(rng.integers(0, 2**31)),
+            )
+            # Add to transverse components
+            b_perp1 += burst
+            b_perp2 += burst * 0.7  # decorrelated
+        else:
+            wave = WaveTemplate(
+                period=period_sec,
+                amplitude=spec.amplitude,
+                shift=center_sec,
+                decay_width=decay_sec,
+                waveform=spec.waveform,
+                chirp_rate=spec.chirp_rate,
+                asymmetry=spec.asymmetry,
+                amplitude_jitter=spec.amplitude_jitter,
+                sawtooth_width=spec.sawtooth_width,
+                harmonic_content=spec.harmonic_content,
+            )
 
-        b_par += wave_fields[:, 0]
-        b_perp1 += wave_fields[:, 1]
-        b_perp2 += wave_fields[:, 2]
+            _, wave_fields = simulate_wave_physics(
+                n_samples, scenario.dt, [wave],
+                mode=spec.mode,
+                polarization=spec.polarization,
+                ellipticity=spec.ellipticity,
+                seed=int(rng.integers(0, 2**31)),
+            )
 
-        # Compute event boundaries (3-sigma envelope width)
-        half_width = 3.0 * decay_sec
-        start_sec = max(0.0, center_sec - half_width)
-        end_sec = min(t[-1], center_sec + half_width)
+            b_par += wave_fields[:, 0]
+            b_perp1 += wave_fields[:, 1]
+            b_perp2 += wave_fields[:, 2]
+
+        # Compute event boundaries: ±3σ (primary) and ±2σ (secondary)
+        if spec.asymmetry != 0.5:
+            sigma_left = decay_sec * (0.5 + spec.asymmetry)
+            sigma_right = decay_sec * (1.5 - spec.asymmetry)
+        else:
+            sigma_left = decay_sec
+            sigma_right = decay_sec
+
+        start_sec = max(0.0, center_sec - 3.0 * sigma_left)
+        end_sec = min(t[-1], center_sec + 3.0 * sigma_right)
+        start_2s = max(0.0, center_sec - 2.0 * sigma_left)
+        end_2s = min(t[-1], center_sec + 2.0 * sigma_right)
         duration_sec = end_sec - start_sec
         n_osc = duration_sec / period_sec
 
         band_label = spec.band if spec.should_detect else None
+
+        # In-band SNR
+        snr_bb = spec.amplitude / max(scenario.noise_sigma, 1e-30)
+        snr_ib = _in_band_snr(
+            spec.amplitude, scenario.noise_sigma, scenario.noise_alpha,
+            period_sec, scenario.dt, band_label,
+        )
 
         injected_events.append(InjectedEvent(
             event_id=f"{scenario.dataset_id}-{i:03d}",
@@ -183,12 +347,27 @@ def generate_benchmark_dataset(
             envelope_asymmetry=spec.asymmetry,
             amplitude_jitter=spec.amplitude_jitter,
             harmonic_content=spec.harmonic_content,
-            snr_injected=spec.amplitude / max(scenario.noise_sigma, 1e-30),
+            snr_injected=snr_bb,
+            snr_in_band=snr_ib,
+            start_2sigma_sec=start_2s,
+            end_2sigma_sec=end_2s,
             difficulty=spec.difficulty,
         ))
 
+    # Roll artifacts (decoy transverse perturbations)
+    for roll in scenario.roll_artifacts:
+        _inject_roll_artifact(b_perp1, b_perp2, t, roll)
+
     b_tot = np.sqrt(b_par**2 + b_perp1**2 + b_perp2**2)
     fields = np.column_stack([b_par, b_perp1, b_perp2, b_tot])
+
+    # Data gaps (NaN insertion)
+    for gap in scenario.gaps:
+        gap_center = gap.center_hours * 3600.0
+        gap_half = gap.duration_minutes * 30.0
+        i_start = max(0, int((gap_center - gap_half) / scenario.dt))
+        i_end = min(n_samples, int((gap_center + gap_half) / scenario.dt))
+        fields[i_start:i_end, :] = np.nan
 
     manifest = DatasetManifest(
         dataset_id=scenario.dataset_id,

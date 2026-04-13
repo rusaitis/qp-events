@@ -25,6 +25,7 @@ class MatchResult:
     iou: float
     period_error_pct: float
     band_correct: bool
+    detection_latency_sec: float = 0.0  # peak_time − gt center
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,9 @@ class BenchmarkScore:
     n_decoy_events: int
     n_decoy_detected: int
     decoy_rejection_rate: float
+    mean_detection_latency_sec: float
+    median_period_error_pct: float
+    f1_at_iou: dict[float, float] = field(default_factory=dict)
     matches: list[MatchResult] = field(default_factory=list)
 
 
@@ -63,6 +67,7 @@ class SuiteScore:
     band_accuracy: float
     decoy_rejection_rate: float
     summary_score: float  # harmonic mean of (F1, band_accuracy, decoy_rejection)
+    overall_f1_at_iou: dict[float, float] = field(default_factory=dict)
     dataset_scores: list[BenchmarkScore] = field(default_factory=list)
 
 
@@ -89,6 +94,7 @@ def score_dataset(
     manifest: DatasetManifest,
     detections: list[WavePacketPeak],
     iou_threshold: float = 0.2,
+    iou_thresholds: tuple[float, ...] = (0.1, 0.2, 0.3, 0.5),
     t0_sec: float = 0.0,
 ) -> BenchmarkScore:
     r"""Score pipeline detections against ground truth.
@@ -100,7 +106,10 @@ def score_dataset(
     detections : list[WavePacketPeak]
         Pipeline output.
     iou_threshold : float
-        Minimum IoU to consider a match.
+        Primary IoU threshold for match acceptance.
+    iou_thresholds : tuple of float
+        Additional IoU thresholds for multi-threshold F1 reporting
+        (THUMOS14 convention).
     t0_sec : float
         Epoch offset (seconds) to align detection timestamps with
         the manifest's time axis. Typically 0 for synthetic data
@@ -113,10 +122,10 @@ def score_dataset(
 
     # Build IoU cost matrix (gt × detections)
     if n_gt > 0 and n_det > 0:
+        det_ranges = [_det_time_range(det, t0_sec) for det in detections]
         iou_matrix = np.zeros((n_gt, n_det))
         for i, gt in enumerate(gt_detectable):
-            for j, det in enumerate(detections):
-                det_start, det_end = _det_time_range(det, t0_sec)
+            for j, (det_start, det_end) in enumerate(det_ranges):
                 iou_matrix[i, j] = _time_iou(
                     gt.start_sec, gt.end_sec, det_start, det_end
                 )
@@ -125,35 +134,61 @@ def score_dataset(
         cost = -iou_matrix
         gt_idx, det_idx = linear_sum_assignment(cost)
 
+        # Build all matched pairs from Hungarian assignment
+        all_pairs: list[tuple[int, int, float]] = []
+        for gi, di in zip(gt_idx, det_idx):
+            all_pairs.append((gi, di, float(iou_matrix[gi, di])))
+
+        # Primary matches at the main threshold
         matches: list[MatchResult] = []
         matched_det: set[int] = set()
         matched_gt: set[int] = set()
 
-        for gi, di in zip(gt_idx, det_idx):
-            iou = iou_matrix[gi, di]
-            if iou >= iou_threshold:
+        for gi, di, iou_val in all_pairs:
+            if iou_val >= iou_threshold:
                 gt_ev = gt_detectable[gi]
                 det_ev = detections[di]
                 det_period = det_ev.period_sec or 0.0
                 period_err = (
-                    abs(det_period - gt_ev.period_sec) / gt_ev.period_sec * 100
+                    abs(det_period - gt_ev.period_sec)
+                    / gt_ev.period_sec * 100
                     if gt_ev.period_sec > 0
                     else 0.0
                 )
-                band_ok = det_ev.band == gt_ev.band if gt_ev.band else True
+                band_ok = (
+                    det_ev.band == gt_ev.band if gt_ev.band else True
+                )
+                # Detection latency: peak_time − gt center
+                det_peak_sec = (
+                    det_ev.peak_time.timestamp() - t0_sec
+                )
+                latency = det_peak_sec - gt_ev.center_sec
                 matches.append(MatchResult(
                     gt_event_id=gt_ev.event_id,
                     detected_idx=di,
-                    iou=iou,
+                    iou=iou_val,
                     period_error_pct=period_err,
                     band_correct=band_ok,
+                    detection_latency_sec=latency,
                 ))
                 matched_det.add(di)
                 matched_gt.add(gi)
+
+        # Multi-threshold F1 (reuse same Hungarian assignment)
+        f1_at_iou: dict[float, float] = {}
+        for thr in iou_thresholds:
+            tp_t = sum(1 for _, _, v in all_pairs if v >= thr)
+            fp_t = n_det - tp_t
+            fn_t = n_gt - tp_t
+            p_t = tp_t / (tp_t + fp_t) if (tp_t + fp_t) > 0 else 1.0
+            r_t = tp_t / (tp_t + fn_t) if (tp_t + fn_t) > 0 else 1.0
+            d_t = p_t + r_t
+            f1_at_iou[thr] = 2 * p_t * r_t / d_t if d_t > 0 else 0.0
     else:
         matches = []
         matched_det = set()
         matched_gt = set()
+        f1_at_iou = {thr: 0.0 for thr in iou_thresholds}
 
     tp = len(matches)
     fp = n_det - len(matched_det)
@@ -165,12 +200,24 @@ def score_dataset(
     f1 = 2 * precision * recall / denom if denom > 0 else 0.0
 
     band_acc = (
-        sum(1 for m in matches if m.band_correct) / tp if tp > 0 else 1.0
+        sum(1 for m in matches if m.band_correct) / tp
+        if tp > 0 else 1.0
     )
     mean_period_err = (
-        float(np.mean([m.period_error_pct for m in matches])) if matches else 0.0
+        float(np.mean([m.period_error_pct for m in matches]))
+        if matches else 0.0
     )
-    mean_iou = float(np.mean([m.iou for m in matches])) if matches else 0.0
+    median_period_err = (
+        float(np.median([m.period_error_pct for m in matches]))
+        if matches else 0.0
+    )
+    mean_iou = (
+        float(np.mean([m.iou for m in matches])) if matches else 0.0
+    )
+    mean_latency = (
+        float(np.mean([m.detection_latency_sec for m in matches]))
+        if matches else 0.0
+    )
 
     # Per-difficulty recall
     recall_by_diff: dict[str, float] = {}
@@ -179,20 +226,31 @@ def score_dataset(
         if not gt_diff:
             continue
         matched_diff = sum(
-            1 for gi in matched_gt if gt_detectable[gi].difficulty == diff
+            1 for gi in matched_gt
+            if gt_detectable[gi].difficulty == diff
         )
         recall_by_diff[diff] = matched_diff / len(gt_diff)
 
     # Decoy rejection
     n_decoy = len(gt_decoys)
     decoy_detected = 0
-    for det in detections:
-        det_start, det_end = _det_time_range(det, t0_sec)
-        for decoy in gt_decoys:
-            if _time_iou(decoy.start_sec, decoy.end_sec, det_start, det_end) > 0.1:
-                decoy_detected += 1
-                break
-    decoy_rejection = 1.0 - decoy_detected / n_decoy if n_decoy > 0 else 1.0
+    if n_det > 0:
+        if n_gt == 0:
+            det_ranges = [
+                _det_time_range(det, t0_sec) for det in detections
+            ]
+        for det_start, det_end in det_ranges:
+            for decoy in gt_decoys:
+                iou_d = _time_iou(
+                    decoy.start_sec, decoy.end_sec,
+                    det_start, det_end,
+                )
+                if iou_d > 0.1:
+                    decoy_detected += 1
+                    break
+    decoy_rejection = (
+        1.0 - decoy_detected / n_decoy if n_decoy > 0 else 1.0
+    )
 
     return BenchmarkScore(
         dataset_id=manifest.dataset_id,
@@ -212,6 +270,9 @@ def score_dataset(
         n_decoy_events=n_decoy,
         n_decoy_detected=decoy_detected,
         decoy_rejection_rate=decoy_rejection,
+        mean_detection_latency_sec=mean_latency,
+        median_period_error_pct=median_period_err,
+        f1_at_iou=f1_at_iou,
         matches=matches,
     )
 
@@ -263,6 +324,19 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         else 0.0
     )
 
+    # Aggregate multi-threshold F1 across datasets
+    all_thresholds: set[float] = set()
+    for s in scores:
+        all_thresholds.update(s.f1_at_iou.keys())
+    overall_f1_at_iou: dict[float, float] = {}
+    for thr in sorted(all_thresholds):
+        # Micro-average: sum TP/FP/FN across datasets at this threshold
+        # Approximate from per-dataset f1_at_iou (exact would need raw counts)
+        vals = [s.f1_at_iou.get(thr, 0.0) for s in scores if s.f1_at_iou]
+        overall_f1_at_iou[thr] = (
+            float(np.mean(vals)) if vals else 0.0
+        )
+
     return SuiteScore(
         overall_precision=precision,
         overall_recall=recall,
@@ -272,5 +346,6 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         band_accuracy=band_acc,
         decoy_rejection_rate=decoy_rej,
         summary_score=summary,
+        overall_f1_at_iou=overall_f1_at_iou,
         dataset_scores=scores,
     )

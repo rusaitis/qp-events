@@ -81,7 +81,8 @@ class TestManifestIO:
             wave_mode="alfvenic", propagation="standing",
             chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
             envelope_asymmetry=0.5, amplitude_jitter=0.0,
-            harmonic_content=0.0, snr_injected=20.0, difficulty="easy",
+            harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
+            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
         )
 
     def test_json_roundtrip(self, tmp_path):
@@ -129,7 +130,8 @@ class TestScoringBasics:
                 ellipticity=1.0, wave_mode="alfvenic", propagation="standing",
                 chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
                 envelope_asymmetry=0.5, amplitude_jitter=0.0,
-                harmonic_content=0.0, snr_injected=20.0, difficulty="easy",
+                harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
+            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
             )
             for i in range(3)
         ]
@@ -169,7 +171,8 @@ class TestScoringBasics:
                 wave_mode="alfvenic", propagation="standing",
                 chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
                 envelope_asymmetry=0.5, amplitude_jitter=0.0,
-                harmonic_content=0.0, snr_injected=20.0, difficulty="easy",
+                harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
+            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
             )
         ]
         manifest = DatasetManifest(
@@ -193,6 +196,8 @@ class TestScoringBasics:
                 band_accuracy=1.0, mean_period_error_pct=5.0, mean_iou=0.5,
                 recall_by_difficulty={}, n_decoy_events=0, n_decoy_detected=0,
                 decoy_rejection_rate=1.0,
+                mean_detection_latency_sec=0.0,
+                median_period_error_pct=5.0,
             ),
         ]
         suite = score_suite(scores)

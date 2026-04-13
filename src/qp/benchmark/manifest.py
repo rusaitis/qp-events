@@ -40,7 +40,10 @@ class InjectedEvent:
     envelope_asymmetry: float
     amplitude_jitter: float
     harmonic_content: float
-    snr_injected: float
+    snr_injected: float  # amplitude / broadband noise RMS
+    snr_in_band: float  # amplitude / in-band noise RMS
+    start_2sigma_sec: float  # ±2σ boundary (95.4% energy)
+    end_2sigma_sec: float
     difficulty: str  # "easy", "moderate", "hard", "extreme"
 
 
@@ -115,6 +118,7 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
                 "center_sec", "duration_sec", "n_oscillations", "ellipticity",
                 "chirp_rate", "sawtooth_width", "envelope_asymmetry",
                 "amplitude_jitter", "harmonic_content", "snr_injected",
+                "snr_in_band", "start_2sigma_sec", "end_2sigma_sec",
             ):
                 row[key] = float(row[key])
             events.append(InjectedEvent(**row))

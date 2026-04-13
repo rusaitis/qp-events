@@ -133,10 +133,17 @@ def run_benchmark(
         if output_dir is not None:
             manifest_to_json(manifest, output_dir / f"{scenario_id}.json")
             if save_data:
-                np.savez_compressed(
-                    output_dir / f"{scenario_id}.npz",
-                    time=t, fields=fields,
+                import zarr
+
+                store = zarr.open(
+                    str(output_dir / f"{scenario_id}.zarr"),
+                    mode="w",
                 )
+                store.array("time", t, dtype="float64")
+                store.array("fields", fields, dtype="float32")
+                store.attrs["dataset_id"] = scenario_id
+                store.attrs["seed"] = seed
+                store.attrs["dt"] = scenario.dt
 
     suite = score_suite(all_scores)
 

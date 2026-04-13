@@ -210,15 +210,14 @@ def simulate_wave_physics(
     mode: str = "alfvenic",
     polarization: str = "circular",
     ellipticity: float = 1.0,
-    propagation: str = "standing",
     par_leakage: float = 0.05,
     seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""Generate a 3-component field with physically motivated wave modes.
 
     Unlike :func:`simulate_multi_component` which uses naive phase offsets,
-    this function models the physics of Alfvénic vs compressional modes,
-    circular vs linear polarization, and standing vs travelling propagation.
+    this function models the physics of Alfvénic vs compressional modes
+    and circular vs linear polarization.
 
     Parameters
     ----------
@@ -241,11 +240,6 @@ def simulate_wave_physics(
         Minor/major axis ratio of the polarization ellipse, [-1, 1].
         Only used when ``polarization="elliptical"``.
         +1 = right-circular, -1 = left-circular, 0 = linear.
-    propagation : str
-        ``"standing"`` — uses waves as-is (chirp_rate=0 expected).
-        ``"travelling"`` — uses waves as-is (nonzero chirp_rate expected).
-        The distinction is encoded in the WaveTemplate chirp_rate and
-        asymmetry fields; this parameter is metadata for the manifest.
     par_leakage : float
         Fraction of transverse amplitude that leaks into B_par (Alfvénic)
         or fraction of parallel amplitude leaking into B_perp (compressional).
