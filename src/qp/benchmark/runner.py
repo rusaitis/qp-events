@@ -207,19 +207,17 @@ def _detect_events_in_dataset(
             continue
 
         # Spectral concentration: reject if other bands have comparable
-        # power at this time (broadband transient signature).
+        # power averaged over the event window (broadband signature).
         if peak.band and peak.band in band_row_masks:
-            pk_col = min(
-                int((peak.peak_time - epoch).total_seconds() / dt),
-                joint_power.shape[1] - 1,
-            )
             in_band = band_row_masks[peak.band]
-            in_band_power = float(joint_power[in_band, pk_col].mean())
+            in_band_power = float(
+                joint_power[in_band, i0:i1].mean()
+            )
             other_power = []
             for ob, om in band_row_masks.items():
                 if ob != peak.band and om.any():
                     other_power.append(
-                        float(joint_power[om, pk_col].mean())
+                        float(joint_power[om, i0:i1].mean())
                     )
             if other_power:
                 max_other = max(other_power)
