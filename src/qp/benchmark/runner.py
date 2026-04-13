@@ -157,24 +157,20 @@ def _detect_events_in_dataset(
             if par_bp > 0 and perp_bp / par_bp < 0.5:
                 continue
 
-        # Spectral concentration: reject if other bands have comparable
-        # power averaged over the event window (broadband signature).
+        # Spectral concentration: a quasi-periodic wave packet should
+        # dominate its band. Reject broadband transients where the
+        # detection band carries less power than the strongest other band.
         if peak.band and peak.band in band_row_masks:
-            in_band = band_row_masks[peak.band]
-            in_band_power = float(
-                joint_power[in_band, i0:i1].mean()
+            bm_in = band_row_masks[peak.band]
+            in_power = float(joint_power[bm_in, i0:i1].mean())
+            max_other = max(
+                (float(joint_power[om, i0:i1].mean())
+                 for ob, om in band_row_masks.items()
+                 if ob != peak.band and om.any()),
+                default=0.0,
             )
-            other_power = []
-            for ob, om in band_row_masks.items():
-                if ob != peak.band and om.any():
-                    other_power.append(
-                        float(joint_power[om, i0:i1].mean())
-                    )
-            if other_power:
-                max_other = max(other_power)
-                # Reject if another band has >= 60% of this band's power
-                if max_other > 0.6 * in_band_power:
-                    continue
+            if max_other > 0.6 * in_power:
+                continue
 
         filtered.append(peak)
 
