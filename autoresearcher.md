@@ -47,7 +47,7 @@ These files contain the detection pipeline — everything is fair game:
 uv run python scripts/score_pipeline.py --notes "description of what changed"
 ```
 
-This loads the 40 canonical datasets from `Output/benchmark/`, runs detection, scores, and appends a row to `scoreboard.tsv`. Takes ~15–20 seconds. **Timeout: 5 minutes max** — if it exceeds this, kill it and treat as a crash.
+This loads the canonical datasets from `Output/benchmark/`, runs detection, scores, and appends a row to `scoreboard.tsv`. Takes ~15–20 seconds. **Timeout: 5 minutes max** — if it exceeds this, kill it and treat as a crash.
 
 ## The scoreboard
 
@@ -64,7 +64,7 @@ commit  date  score  f1  precision  recall  band_acc  period_err_pct  mean_iou  
 
 ## The experiment loop
 
-**Max steps: 5** (for testing — increase later for longer runs).
+**Max steps: 10** (for testing — increase later for longer runs).
 
 For each step:
 
