@@ -137,3 +137,8 @@ class WaveTemplate:
     decay_width: float | None = None  # Gaussian envelope width (seconds)
     shift: float = 0.0  # time offset (seconds)
     cutoff: tuple[float, float] | None = None  # (start, end) in seconds
+    chirp_rate: float = 0.0  # Hz/s linear frequency drift
+    asymmetry: float = 0.5  # envelope: 0=fast-rise/slow-fall, 1=opposite, 0.5=symmetric
+    amplitude_jitter: float = 0.0  # fractional RMS jitter per cycle (0.3 = ±30%)
+    sawtooth_width: float = 0.8  # scipy sawtooth width (0=falling, 1=rising)
+    harmonic_content: float = 0.0  # fraction of amplitude in 2nd harmonic
