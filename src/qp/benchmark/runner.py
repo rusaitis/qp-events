@@ -81,7 +81,7 @@ def _detect_events_in_dataset(
     joint_power = (np.abs(cwt1) + np.abs(cwt2)) / 2.0
     # σ-mask on total transverse power: elevated power in the
     # combined perpendicular field indicates wave activity.
-    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=3.0)
+    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=3.5)
 
     # CWT of parallel component for in-band transverse ratio checks
     _, _, cwt_par = morlet_cwt(
