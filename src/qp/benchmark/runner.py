@@ -47,25 +47,53 @@ def _detect_events_in_dataset(
 ) -> list[WavePacketPeak]:
     """Run the detection pipeline on synthetic 3-component data."""
     from qp.events.detector import detect_wave_packets_multi
+    from qp.events.threshold import wavelet_sigma_mask
+    from qp.signal.wavelet import morlet_cwt
 
-    b_perp1 = fields[:, 1]
-    b_perp2 = fields[:, 2]
+    b_perp1 = fields[:, 1].copy()
+    b_perp2 = fields[:, 2].copy()
+
+    # Interpolate NaN gaps so CWT doesn't produce garbage
+    for arr in [b_perp1, b_perp2]:
+        nans = np.isnan(arr)
+        if nans.any() and not nans.all():
+            good = ~nans
+            arr[nans] = np.interp(
+                np.flatnonzero(nans),
+                np.flatnonzero(good),
+                arr[good],
+            )
 
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
+    # Shared CWT for both components — build sigma masks
+    n_freqs = 300
+    freq1, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
+    freq2, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
+    power1 = np.abs(cwt1)
+    power2 = np.abs(cwt2)
+    mask1 = wavelet_sigma_mask(power1, freq1, n_sigma=3.0)
+    mask2 = wavelet_sigma_mask(power2, freq2, n_sigma=3.0)
+
     all_peaks: list[WavePacketPeak] = []
-    for component in [b_perp1, b_perp2]:
+    for component, freq, power, mask in [
+        (b_perp1, freq1, power1, mask1),
+        (b_perp2, freq2, power2, mask2),
+    ]:
         peaks = detect_wave_packets_multi(
             data=component,
             times=times,
             dt=dt,
+            cwt_freq=freq,
+            cwt_power=power,
+            threshold_mask=mask,
             min_duration_hours=2.0,
             min_pixels=50,
         )
         all_peaks.extend(peaks)
 
-    # Deduplicate: merge peaks within 2h of each other in the same band
+    # Deduplicate: within same band, keep higher-power peak
     all_peaks.sort(key=lambda p: p.peak_time)
     merged: list[WavePacketPeak] = []
     for peak in all_peaks:
@@ -74,6 +102,9 @@ def _detect_events_in_dataset(
                 (peak.peak_time - merged[-1].peak_time).total_seconds()
             )
             if sep < 7200:
+                # Keep whichever has higher prominence
+                if peak.prominence > merged[-1].prominence:
+                    merged[-1] = peak
                 continue
         merged.append(peak)
 
