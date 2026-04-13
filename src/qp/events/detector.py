@@ -537,6 +537,135 @@ def detect_with_gate(
     return packets
 
 
+def filter_detections(
+    peaks: list[WavePacketPeak],
+    t: np.ndarray,
+    cwt_freq: np.ndarray,
+    perp_power: np.ndarray,
+    par_power: np.ndarray | None = None,
+    *,
+    epoch: datetime.datetime | None = None,
+    min_oscillations: float = 2.5,
+    transverse_ratio: float = 0.5,
+    spectral_concentration: float = 0.6,
+    dedup_window_sec: float = 10800.0,
+) -> list[WavePacketPeak]:
+    r"""Apply physically motivated post-filters to detected peaks.
+
+    Filters (in order):
+
+    1. **Min oscillations** — a wave packet must contain at least
+       ``min_oscillations`` cycles at its peak period. A detection
+       with fewer cycles is indistinguishable from a transient.
+
+    2. **Transverse ratio** — Alfvén waves carry power perpendicular
+       to $\mathbf{B}_0$. Reject detections where in-band parallel
+       CWT power exceeds the transverse power by the
+       ``transverse_ratio`` threshold.
+
+    3. **Spectral concentration** — a quasi-periodic wave packet
+       should dominate its band. Reject if another QP band carries
+       more than ``spectral_concentration`` times the in-band power
+       (broadband transient signature).
+
+    4. **Deduplication** — within the same band, keep the
+       higher-power detection when two peaks are closer than
+       ``dedup_window_sec``.
+
+    Parameters
+    ----------
+    peaks : list of WavePacketPeak
+        Raw detections from ``detect_wave_packets_multi``.
+    t : ndarray, shape (n_time,)
+        Time axis in seconds from segment start.
+    cwt_freq : ndarray, shape (n_freq,)
+        CWT frequency axis in Hz.
+    perp_power : ndarray, shape (n_freq, n_time)
+        Combined transverse CWT power (``(|cwt1| + |cwt2|) / 2``).
+    par_power : ndarray, shape (n_freq, n_time), optional
+        Parallel-component CWT power. If None, transverse ratio
+        check is skipped.
+    epoch : datetime, optional
+        Time origin for converting peak datetimes to indices.
+        Defaults to J2000.
+    min_oscillations : float
+        Minimum number of wave cycles.
+    transverse_ratio : float
+        Minimum perp/par CWT power ratio.
+    spectral_concentration : float
+        Maximum other-band / in-band power ratio.
+    dedup_window_sec : float
+        Time window for same-band deduplication.
+
+    Returns
+    -------
+    list of WavePacketPeak
+        Filtered and deduplicated detections.
+    """
+    from qp.events.bands import QP_BANDS
+
+    if epoch is None:
+        epoch = datetime.datetime(2000, 1, 1)
+
+    periods = 1.0 / cwt_freq
+    band_masks = {
+        name: (periods >= b.period_min_sec) & (periods < b.period_max_sec)
+        for name, b in QP_BANDS.items()
+    }
+
+    t_sec = t - t[0]
+    filtered: list[WavePacketPeak] = []
+    for peak in peaks:
+        from_sec = (peak.date_from - epoch).total_seconds()
+        to_sec = (peak.date_to - epoch).total_seconds()
+        i0 = int(np.searchsorted(t_sec, from_sec))
+        i1 = min(int(np.searchsorted(t_sec, to_sec)), len(t_sec) - 1)
+        if i1 <= i0:
+            continue
+
+        # 1. Min oscillations
+        if peak.period_sec and peak.period_sec > 0:
+            if (to_sec - from_sec) / peak.period_sec < min_oscillations:
+                continue
+
+        bm = band_masks.get(peak.band or "")
+        if bm is not None and bm.any():
+            # 2. Transverse ratio — Alfvén waves are transverse
+            if par_power is not None:
+                perp_bp = float(perp_power[bm, i0:i1].mean())
+                par_bp = float(par_power[bm, i0:i1].mean())
+                if par_bp > 0 and perp_bp / par_bp < transverse_ratio:
+                    continue
+
+            # 3. Spectral concentration — reject broadband transients
+            in_power = float(perp_power[bm, i0:i1].mean())
+            max_other = max(
+                (float(perp_power[om, i0:i1].mean())
+                 for ob, om in band_masks.items()
+                 if ob != peak.band and om.any()),
+                default=0.0,
+            )
+            if max_other > spectral_concentration * in_power:
+                continue
+
+        filtered.append(peak)
+
+    # 4. Deduplicate: within same band, keep higher-power peak
+    filtered.sort(key=lambda p: p.peak_time)
+    merged: list[WavePacketPeak] = []
+    for peak in filtered:
+        if merged and peak.band == merged[-1].band:
+            sep = abs(
+                (peak.peak_time - merged[-1].peak_time).total_seconds()
+            )
+            if sep < dedup_window_sec:
+                if peak.prominence > merged[-1].prominence:
+                    merged[-1] = peak
+                continue
+        merged.append(peak)
+    return merged
+
+
 def _dt_to_unix(dt_obj: datetime.datetime) -> float:
     """Convert a naive datetime to POSIX timestamp (assuming UTC)."""
     epoch = datetime.datetime(1970, 1, 1)

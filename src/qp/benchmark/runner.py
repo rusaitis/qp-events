@@ -46,7 +46,7 @@ def _detect_events_in_dataset(
     dt: float = 60.0,
 ) -> list[WavePacketPeak]:
     """Run the detection pipeline on synthetic 3-component data."""
-    from qp.events.detector import detect_wave_packets_multi
+    from qp.events.detector import detect_wave_packets_multi, filter_detections
     from qp.events.threshold import wavelet_sigma_mask
     from qp.signal.wavelet import morlet_cwt
 
@@ -119,76 +119,11 @@ def _detect_events_in_dataset(
             )
             all_peaks.extend(single_peaks)
 
-    # Pre-compute band row masks for spectral concentration checks
-    periods = 1.0 / freq
-    from qp.events.bands import QP_BANDS
-    band_row_masks = {}
-    for bname, bobj in QP_BANDS.items():
-        band_row_masks[bname] = (
-            (periods >= bobj.period_min_sec)
-            & (periods < bobj.period_max_sec)
-        )
-
-    # Post-filter: transverse ratio + min oscillations + spectral conc.
-    t_sec = t - t[0]
-    filtered: list[WavePacketPeak] = []
-    for peak in all_peaks:
-        from_sec = (peak.date_from - epoch).total_seconds()
-        to_sec = (peak.date_to - epoch).total_seconds()
-        i0 = int(np.searchsorted(t_sec, from_sec))
-        i1 = int(np.searchsorted(t_sec, to_sec))
-        i1 = min(i1, len(t_sec) - 1)
-        if i1 <= i0:
-            continue
-
-        # Min oscillations: require >= 2.5 cycles
-        if peak.period_sec and peak.period_sec > 0:
-            duration_sec = to_sec - from_sec
-            n_osc = duration_sec / peak.period_sec
-            if n_osc < 2.5:
-                continue
-
-        # Transverse ratio: compare in-band CWT power (not time-domain
-        # RMS, which is contaminated by out-of-band signals like PPO)
-        if peak.band and peak.band in band_row_masks:
-            bm = band_row_masks[peak.band]
-            perp_bp = float(joint_power[bm, i0:i1].mean())
-            par_bp = float(power_par[bm, i0:i1].mean())
-            if par_bp > 0 and perp_bp / par_bp < 0.5:
-                continue
-
-        # Spectral concentration: a quasi-periodic wave packet should
-        # dominate its band. Reject broadband transients where the
-        # detection band carries less power than the strongest other band.
-        if peak.band and peak.band in band_row_masks:
-            bm_in = band_row_masks[peak.band]
-            in_power = float(joint_power[bm_in, i0:i1].mean())
-            max_other = max(
-                (float(joint_power[om, i0:i1].mean())
-                 for ob, om in band_row_masks.items()
-                 if ob != peak.band and om.any()),
-                default=0.0,
-            )
-            if max_other > 0.6 * in_power:
-                continue
-
-        filtered.append(peak)
-
-    # Deduplicate: within same band, keep higher-power peak
-    filtered.sort(key=lambda p: p.peak_time)
-    merged: list[WavePacketPeak] = []
-    for peak in filtered:
-        if merged and peak.band == merged[-1].band:
-            sep = abs(
-                (peak.peak_time - merged[-1].peak_time).total_seconds()
-            )
-            if sep < 10800:  # 3h window
-                if peak.prominence > merged[-1].prominence:
-                    merged[-1] = peak
-                continue
-        merged.append(peak)
-
-    return merged
+    # Physical post-filters: min oscillations, transverse ratio,
+    # spectral concentration, and same-band deduplication.
+    return filter_detections(
+        all_peaks, t, freq, joint_power, power_par, epoch=epoch,
+    )
 
 
 # ------------------------------------------------------------------
