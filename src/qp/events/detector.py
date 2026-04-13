@@ -550,57 +550,11 @@ def filter_detections(
     spectral_concentration: float = 0.6,
     dedup_window_sec: float = 10800.0,
 ) -> list[WavePacketPeak]:
-    r"""Apply physically motivated post-filters to detected peaks.
+    r"""Apply physical post-filters and deduplication to detected peaks.
 
-    Filters (in order):
-
-    1. **Min oscillations** — a wave packet must contain at least
-       ``min_oscillations`` cycles at its peak period. A detection
-       with fewer cycles is indistinguishable from a transient.
-
-    2. **Transverse ratio** — Alfvén waves carry power perpendicular
-       to $\mathbf{B}_0$. Reject detections where in-band parallel
-       CWT power exceeds the transverse power by the
-       ``transverse_ratio`` threshold.
-
-    3. **Spectral concentration** — a quasi-periodic wave packet
-       should dominate its band. Reject if another QP band carries
-       more than ``spectral_concentration`` times the in-band power
-       (broadband transient signature).
-
-    4. **Deduplication** — within the same band, keep the
-       higher-power detection when two peaks are closer than
-       ``dedup_window_sec``.
-
-    Parameters
-    ----------
-    peaks : list of WavePacketPeak
-        Raw detections from ``detect_wave_packets_multi``.
-    t : ndarray, shape (n_time,)
-        Time axis in seconds from segment start.
-    cwt_freq : ndarray, shape (n_freq,)
-        CWT frequency axis in Hz.
-    perp_power : ndarray, shape (n_freq, n_time)
-        Combined transverse CWT power (``(|cwt1| + |cwt2|) / 2``).
-    par_power : ndarray, shape (n_freq, n_time), optional
-        Parallel-component CWT power. If None, transverse ratio
-        check is skipped.
-    epoch : datetime, optional
-        Time origin for converting peak datetimes to indices.
-        Defaults to J2000.
-    min_oscillations : float
-        Minimum number of wave cycles.
-    transverse_ratio : float
-        Minimum perp/par CWT power ratio.
-    spectral_concentration : float
-        Maximum other-band / in-band power ratio.
-    dedup_window_sec : float
-        Time window for same-band deduplication.
-
-    Returns
-    -------
-    list of WavePacketPeak
-        Filtered and deduplicated detections.
+    Filters: (1) min oscillation count, (2) transverse/parallel CWT
+    power ratio (Alfvén waves are transverse), (3) spectral
+    concentration (reject broadband transients), (4) same-band dedup.
     """
     from qp.events.bands import QP_BANDS
 
