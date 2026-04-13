@@ -68,38 +68,33 @@ def _detect_events_in_dataset(
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
-    # Shared CWT for both components — build sigma masks
+    # CWT both transverse components, AND their sigma masks (coincidence)
     n_freqs = 300
-    freq1, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
-    freq2, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
+    freq, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
-    mask1 = wavelet_sigma_mask(power1, freq1, n_sigma=3.0)
-    mask2 = wavelet_sigma_mask(power2, freq2, n_sigma=3.0)
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=4.0)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=4.0)
+    # Coincidence: both components must fire at same (period, time) cell
+    joint_mask = mask1 & mask2
+    joint_power = (power1 + power2) / 2.0
 
-    all_peaks: list[WavePacketPeak] = []
-    for component, freq, power, mask in [
-        (b_perp1, freq1, power1, mask1),
-        (b_perp2, freq2, power2, mask2),
-    ]:
-        peaks = detect_wave_packets_multi(
-            data=component,
-            times=times,
-            dt=dt,
-            cwt_freq=freq,
-            cwt_power=power,
-            threshold_mask=mask,
-            min_duration_hours=2.0,
-            min_pixels=50,
-        )
-        all_peaks.extend(peaks)
+    all_peaks = detect_wave_packets_multi(
+        data=b_perp1,
+        times=times,
+        dt=dt,
+        cwt_freq=freq,
+        cwt_power=joint_power,
+        threshold_mask=joint_mask,
+        min_duration_hours=2.0,
+        min_pixels=50,
+    )
 
     # Post-filter: transverse ratio + min oscillations
     t_sec = t - t[0]
     filtered: list[WavePacketPeak] = []
     for peak in all_peaks:
-        # Time window indices
-        pk_sec = (peak.peak_time - epoch).total_seconds()
         from_sec = (peak.date_from - epoch).total_seconds()
         to_sec = (peak.date_to - epoch).total_seconds()
         i0 = int(np.searchsorted(t_sec, from_sec))
@@ -108,19 +103,19 @@ def _detect_events_in_dataset(
         if i1 <= i0:
             continue
 
-        # Min oscillations: require >= 3 cycles
+        # Min oscillations: require >= 2.5 cycles
         if peak.period_sec and peak.period_sec > 0:
             duration_sec = to_sec - from_sec
             n_osc = duration_sec / peak.period_sec
-            if n_osc < 3.0:
+            if n_osc < 2.5:
                 continue
 
-        # Transverse ratio: reject if parallel dominates
+        # Transverse ratio: reject only when parallel strongly dominates
         par_rms = np.sqrt(np.mean(b_par[i0:i1] ** 2))
         perp_rms = np.sqrt(
             np.mean(b_perp1[i0:i1] ** 2 + b_perp2[i0:i1] ** 2)
         )
-        if par_rms > 0 and perp_rms / par_rms < 1.0:
+        if par_rms > 0 and perp_rms / par_rms < 0.5:
             continue
 
         filtered.append(peak)
