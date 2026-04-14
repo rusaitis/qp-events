@@ -723,20 +723,20 @@ def filter_detections(
             if out_pow > spectral_concentration * in_pow:
                 continue
 
-        # Trim ridge extent to the peak-row ±2 σ envelope: σ-mask
-        # ridges straggle past the wave's physical envelope. The
-        # Gaussian power envelope exp(-t²/σ²) reaches 0.02 of its
-        # peak at t ≈ 1.98 σ, so thresholding at ``0.02 × peak``
-        # gives the same window the benchmark's ground-truth manifest
-        # writes to ``start_sec`` / ``end_sec`` (± 2 σ, 95.4 % energy).
-        # Aligning these conventions removes a ~5 % systematic IoU
-        # underestimate that used to penalise perfect detections.
+        # Trim ridge extent to the peak-row envelope. The CWT at the
+        # peak period row has Gaussian-like envelope with variance
+        # σ_cwt² ≈ σ_signal² + σ_wavelet²: always wider than the GT's
+        # ±2σ_signal window because the Morlet kernel adds σ_wavelet.
+        # Trimming at 0.1 × peak (≈ ±2.15 σ_cwt) recovers ±2 σ_signal
+        # for typical events where σ_wav << σ_sig and avoids the √2
+        # overshoot that the previous 0.02 threshold (≈ ±2 σ_cwt)
+        # produced for short packets.
         if peak.period_sec and peak.period_sec > 0:
             pf_idx = int(np.argmin(np.abs(periods - peak.period_sec)))
             row = perp_power[pf_idx, i0 : i1 + 1]
             if row.size > 3 and row.max() > 0:
                 pk_local = int(row.argmax())
-                thr = 0.02 * row[pk_local]
+                thr = 0.1 * row[pk_local]
                 left = pk_local
                 while left > 0 and row[left - 1] > thr:
                     left -= 1
