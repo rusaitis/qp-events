@@ -542,6 +542,8 @@ def filter_detections(
     min_coherence: float | None = None,
     cwt_perp1_complex: np.ndarray | None = None,
     cwt_perp2_complex: np.ndarray | None = None,
+    b_perp_abs: np.ndarray | None = None,
+    max_crest_factor: float | None = 20.0,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
 
@@ -574,6 +576,13 @@ def filter_detections(
        prominence.
     9. **Harmonic suppression** — 2:1 / 3:1 period ratios with
        duration-match and power-ratio gating.
+    10. **Crest-factor veto** (if ``b_perp_abs`` provided) — reject
+        detections whose time-domain |b_⊥| window shows
+        ``max/median > max_crest_factor``. Sinusoidal waves have a
+        bounded crest factor (≈π/2 ≈ 1.57 for |sin|), while FGM
+        impulsive spikes and δ-function range-change artefacts produce
+        >10× spikes above the local baseline. Threshold 20 sits well
+        above every legitimate wave scenario in the benchmark.
     """
     from qp.events.bands import SEARCH_BAND
 
@@ -617,6 +626,22 @@ def filter_detections(
         # 1. Min oscillations
         if (to_rel - from_rel) / peak.period_sec < min_oscillations:
             continue
+
+        # 1b. Crest-factor veto: reject detections whose ridge-window
+        # |b_⊥| is dominated by a single-sample anomaly. Sinusoidal
+        # waves obey max/median(|b|) ~ 1.57 (|sin| peak-to-median); FGM
+        # impulsive spikes or range-change steps push this above 20.
+        # We measure on a LOCAL (within-ridge) median to avoid bias
+        # from long off-event quiet periods in clean scenarios.
+        if (
+            b_perp_abs is not None
+            and max_crest_factor is not None
+            and i1 > i0
+        ):
+            window = b_perp_abs[i0 : i1 + 1]
+            loc_med = float(np.median(window))
+            if loc_med > 1e-12 and float(window.max()) / loc_med > max_crest_factor:
+                continue
 
         # 2. Wavelet cross-coherence between transverse components.
         if (

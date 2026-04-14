@@ -101,12 +101,15 @@ def _detect_events_in_dataset(
 
     # Physical post-filters: min oscillations, transverse ratio,
     # spectral concentration, and same-band deduplication.
+    # b_perp_abs for crest-factor veto against FGM impulsive artefacts.
+    b_perp_abs = np.abs(b_perp1) + np.abs(b_perp2)
     return filter_detections(
         all_peaks, t, freq, joint_power, power_par, epoch=epoch,
         spectral_concentration=None,
         min_coherence=0.9,
         cwt_perp1_complex=cwt1,
         cwt_perp2_complex=cwt2,
+        b_perp_abs=b_perp_abs,
     )
 
 
