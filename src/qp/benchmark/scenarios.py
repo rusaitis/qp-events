@@ -15,6 +15,10 @@ Scenario counts:
 
 from __future__ import annotations
 
+import math
+
+import numpy as np
+
 from qp.benchmark.generator import (
     EventSpec,
     GapSpec,
@@ -22,13 +26,18 @@ from qp.benchmark.generator import (
     RollArtifactSpec,
     ScenarioConfig,
 )
-from qp.events.bands import classify_period
+from qp.events.bands import QP_BANDS, classify_period
 
 _MIN = 60.0  # seconds
 
+# Per-scenario RNG base, independent of the generator's noise seed so that
+# scenario structure (sampled periods, amplitudes) is reproducible across
+# runs. Picked to not collide with BASE_SEED in runner.py.
+_SCENARIO_SEED_BASE: int = 0x5CE_A10
+
 
 # ======================================================================
-# Helper: evenly space event centers across the dataset
+# Helpers
 # ======================================================================
 
 def _centers(
@@ -41,51 +50,85 @@ def _centers(
     return [margin_h + i * spacing + spacing / 2 for i in range(n_events)]
 
 
+def _scenario_rng(dataset_id: str) -> np.random.Generator:
+    """Deterministic RNG seeded from the scenario ID (stable across runs)."""
+    # Hash the id into a 64-bit int then fold with the base seed.
+    seed = _SCENARIO_SEED_BASE ^ (hash(dataset_id) & 0xFFFF_FFFF)
+    return np.random.default_rng(seed)
+
+
+def _sample_periods_in_band(
+    band_name: str, n: int, rng: np.random.Generator,
+) -> list[float]:
+    r"""Log-uniform sample ``n`` periods (in seconds) across a QP band.
+
+    Avoids pinning events to exact band centroids (30/60/120 min) so the
+    detector has to demonstrate band-general detection rather than
+    learning the injection points.
+    """
+    band = QP_BANDS[band_name]
+    log_lo = math.log(band.period_min_sec)
+    log_hi = math.log(band.period_max_sec)
+    return [float(math.exp(x)) for x in rng.uniform(log_lo, log_hi, n)]
+
+
 # ======================================================================
 # TIER 1: Easy (target ≥95% recall)
 # ======================================================================
 
 def tier1_clean_qp30() -> ScenarioConfig:
+    dataset_id = "tier1_clean_qp30"
     centers = _centers(8, 10)
+    rng = _scenario_rng(dataset_id)
+    periods = _sample_periods_in_band("QP30", 8, rng)
     return ScenarioConfig(
-        dataset_id="tier1_clean_qp30",
-        description="8 clean QP30 sine packets, white noise, circular pol",
+        dataset_id=dataset_id,
+        description="8 QP30 sine packets at log-uniform periods in 20–40 min",
         duration_days=10, noise_alpha=0.0, noise_sigma=0.01,
         background_trend=False, difficulty_tier="tier1",
         event_specs=[
-            EventSpec(band="QP30", amplitude=2.0, center_hours=c,
+            EventSpec(band="QP30", period_sec_override=p,
+                      amplitude=2.0, center_hours=c,
                       decay_hours=2.0, difficulty="easy")
-            for c in centers
+            for c, p in zip(centers, periods)
         ],
     )
 
 
 def tier1_clean_qp60() -> ScenarioConfig:
+    dataset_id = "tier1_clean_qp60"
     centers = _centers(8, 10)
+    rng = _scenario_rng(dataset_id)
+    periods = _sample_periods_in_band("QP60", 8, rng)
     return ScenarioConfig(
-        dataset_id="tier1_clean_qp60",
-        description="8 clean QP60 sine packets, white noise, circular pol",
+        dataset_id=dataset_id,
+        description="8 QP60 sine packets at log-uniform periods in 45–80 min",
         duration_days=10, noise_alpha=0.0, noise_sigma=0.01,
         background_trend=False, difficulty_tier="tier1",
         event_specs=[
-            EventSpec(band="QP60", amplitude=2.0, center_hours=c,
+            EventSpec(band="QP60", period_sec_override=p,
+                      amplitude=2.0, center_hours=c,
                       decay_hours=4.0, difficulty="easy")
-            for c in centers
+            for c, p in zip(centers, periods)
         ],
     )
 
 
 def tier1_clean_qp120() -> ScenarioConfig:
+    dataset_id = "tier1_clean_qp120"
     centers = _centers(8, 10)
+    rng = _scenario_rng(dataset_id)
+    periods = _sample_periods_in_band("QP120", 8, rng)
     return ScenarioConfig(
-        dataset_id="tier1_clean_qp120",
-        description="8 clean QP120 sine packets, white noise, circular pol",
+        dataset_id=dataset_id,
+        description="8 QP120 sine packets at log-uniform periods in 90–150 min",
         duration_days=10, noise_alpha=0.0, noise_sigma=0.01,
         background_trend=False, difficulty_tier="tier1",
         event_specs=[
-            EventSpec(band="QP120", amplitude=2.0, center_hours=c,
+            EventSpec(band="QP120", period_sec_override=p,
+                      amplitude=2.0, center_hours=c,
                       decay_hours=6.0, difficulty="easy")
-            for c in centers
+            for c, p in zip(centers, periods)
         ],
     )
 
@@ -1012,6 +1055,270 @@ def decoy_ppo_harmonic() -> ScenarioConfig:
 
 
 # ======================================================================
+# v3 hardening — continuous period coverage, short packets, broader decoys
+# ======================================================================
+
+# --- Short-packet scenarios (stress-test min_oscillations) ---------------
+
+def _short_packet_decay_hours(period_min: float, n_cycles: float) -> float:
+    r"""Gaussian σ that yields ``n_cycles`` full cycles between ±2σ.
+
+    Duration(±2σ) = 4·σ → n_cycles = Duration / P → σ = n_cycles·P/4.
+    """
+    return n_cycles * (period_min / 60.0) / 4.0
+
+
+def tier3_short_packets_qp60() -> ScenarioConfig:
+    """QP60 packets with 2.5–4.5 cycles spanning detection threshold."""
+    dataset_id = "tier3_short_packets_qp60"
+    centers = _centers(8, 10)
+    rng = _scenario_rng(dataset_id)
+    periods = _sample_periods_in_band("QP60", 8, rng)
+    # Paired: half above (≥3 cycles should detect), half below (fail osc test)
+    cycles_values = [2.5, 2.8, 3.0, 3.2, 3.5, 4.0, 4.2, 4.5]
+    amps = rng.uniform(0.8, 1.4, 8).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="QP60 packets at 2.5–4.5 cycles (tests osc threshold)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(
+                band="QP60", period_sec_override=p,
+                amplitude=a, center_hours=c,
+                decay_hours=_short_packet_decay_hours(p / _MIN, k),
+                difficulty="hard",
+            )
+            for c, p, k, a in zip(centers, periods, cycles_values, amps)
+        ],
+    )
+
+
+def tier3_short_packets_qp120() -> ScenarioConfig:
+    """QP120 packets with 2.5–4.5 cycles — the hardest band for cycle count."""
+    dataset_id = "tier3_short_packets_qp120"
+    centers = _centers(8, 10)
+    rng = _scenario_rng(dataset_id)
+    periods = _sample_periods_in_band("QP120", 8, rng)
+    cycles_values = [2.5, 2.8, 3.0, 3.2, 3.5, 4.0, 4.2, 4.5]
+    amps = rng.uniform(1.2, 2.4, 8).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="QP120 packets at 2.5–4.5 cycles (tests osc threshold)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(
+                band="QP120", period_sec_override=p,
+                amplitude=a, center_hours=c,
+                decay_hours=_short_packet_decay_hours(p / _MIN, k),
+                difficulty="hard",
+            )
+            for c, p, k, a in zip(centers, periods, cycles_values, amps)
+        ],
+    )
+
+
+def tier4_minimal_cycles_multiband() -> ScenarioConfig:
+    """2–3 cycle packets across all three bands in α=1.5 colored noise."""
+    dataset_id = "tier4_minimal_cycles_multiband"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(12, 12)
+    bands = ["QP30", "QP60", "QP120"] * 4
+    # 2–3 cycle range: most should fail the min_oscillations=3 cutoff
+    cycles = rng.uniform(2.0, 3.0, 12)
+    amps = rng.uniform(1.0, 2.0, 12)
+    specs = []
+    for c, b, k, a in zip(centers, bands, cycles, amps):
+        p_sec = _sample_periods_in_band(b, 1, rng)[0]
+        specs.append(EventSpec(
+            band=b, period_sec_override=p_sec,
+            amplitude=float(a), center_hours=c,
+            decay_hours=_short_packet_decay_hours(p_sec / _MIN, float(k)),
+            difficulty="extreme",
+        ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="12 packets at 2–3 cycles across QP30/60/120 in α=1.5 noise",
+        duration_days=12, noise_alpha=1.5, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
+        event_specs=specs,
+    )
+
+
+# --- QP60/QP120-heavy scenarios (rebalance band coverage) ---------------
+
+def tier3_qp60_continuous() -> ScenarioConfig:
+    """10 QP60 events log-uniform in 45–80 min, log-normal amplitudes."""
+    dataset_id = "tier3_qp60_continuous"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(10, 12)
+    periods = _sample_periods_in_band("QP60", 10, rng)
+    # Log-normal amplitudes matching Cassini catalog spread (~1 nT median)
+    amps = rng.lognormal(mean=0.0, sigma=0.35, size=10).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="10 QP60 events, continuous periods + log-normal amps",
+        duration_days=12, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP60", period_sec_override=p,
+                      amplitude=float(a), center_hours=c,
+                      decay_hours=3.0, difficulty="hard")
+            for c, p, a in zip(centers, periods, amps)
+        ],
+    )
+
+
+def tier3_qp120_continuous() -> ScenarioConfig:
+    """10 QP120 events log-uniform in 90–150 min, log-normal amplitudes."""
+    dataset_id = "tier3_qp120_continuous"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(10, 15)  # Longer to accommodate longer packets
+    periods = _sample_periods_in_band("QP120", 10, rng)
+    amps = rng.lognormal(mean=0.2, sigma=0.35, size=10).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="10 QP120 events, continuous periods + log-normal amps",
+        duration_days=15, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
+        event_specs=[
+            EventSpec(band="QP120", period_sec_override=p,
+                      amplitude=float(a), center_hours=c,
+                      decay_hours=5.0, difficulty="hard")
+            for c, p, a in zip(centers, periods, amps)
+        ],
+    )
+
+
+def tier4_qp120_weak_long() -> ScenarioConfig:
+    """Long-duration low-amplitude QP120 buried in α=1.5 noise."""
+    dataset_id = "tier4_qp120_weak_long"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(6, 12)
+    periods = _sample_periods_in_band("QP120", 6, rng)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="6 weak QP120 packets in α=1.5 colored noise",
+        duration_days=12, noise_alpha=1.5, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
+        event_specs=[
+            EventSpec(band="QP120", period_sec_override=p,
+                      amplitude=0.5, center_hours=c,
+                      decay_hours=5.0, difficulty="extreme")
+            for c, p in zip(centers, periods)
+        ],
+    )
+
+
+# --- Out-of-band decoys (should_detect=False, test edge-veto) -----------
+
+def decoy_inter_qp60_qp120() -> ScenarioConfig:
+    """Periods in the 80–90 min gap between QP60 and QP120."""
+    dataset_id = "decoy_inter_qp60_qp120"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(6, 10)
+    periods = [80.5, 82.0, 84.0, 86.0, 88.0, 89.5]
+    amps = rng.uniform(0.8, 1.4, 6).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Coherent waves at 80–90 min (gap between QP60 and QP120)",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[
+            EventSpec(band="QP60", period_sec_override=p * _MIN,
+                      amplitude=float(a), center_hours=c, decay_hours=4.0,
+                      should_detect=False, difficulty="extreme",
+                      event_type="qp_wave_inter_band")
+            for p, c, a in zip(periods, centers, amps)
+        ],
+    )
+
+
+def decoy_just_above_qp120() -> ScenarioConfig:
+    """Periods at 155–180 min, just above the QP120 upper edge."""
+    dataset_id = "decoy_just_above_qp120"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(6, 12)
+    periods = [155.0, 160.0, 165.0, 170.0, 175.0, 180.0]
+    amps = rng.uniform(1.0, 1.8, 6).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Waves at 155–180 min (just above QP120 upper edge 150)",
+        duration_days=12, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[
+            EventSpec(band="QP120", period_sec_override=p * _MIN,
+                      amplitude=float(a), center_hours=c, decay_hours=6.0,
+                      should_detect=False, difficulty="extreme",
+                      event_type="qp_wave_above_band")
+            for p, c, a in zip(periods, centers, amps)
+        ],
+    )
+
+
+def decoy_near_qp30_lower() -> ScenarioConfig:
+    """Periods 15–19 min, just below the QP30 lower edge (20 min)."""
+    dataset_id = "decoy_near_qp30_lower"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(6, 10)
+    periods = [15.0, 16.0, 17.0, 18.0, 18.5, 19.0]
+    amps = rng.uniform(0.6, 1.2, 6).tolist()
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Waves at 15–19 min (below QP30 lower edge 20)",
+        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[
+            EventSpec(band="QP30", period_sec_override=p * _MIN,
+                      amplitude=float(a), center_hours=c, decay_hours=2.0,
+                      should_detect=False, difficulty="extreme",
+                      event_type="qp_wave_below_band")
+            for p, c, a in zip(periods, centers, amps)
+        ],
+    )
+
+
+# --- Continuous-spectrum scenario ---------------------------------------
+
+def tier3_continuous_spectrum() -> ScenarioConfig:
+    """24 events log-uniform in 20–240 min — natural cluster test.
+
+    About half fall in QP bands (``should_detect=True`` via
+    :func:`classify_period`), half outside. A general detector should
+    cleanly separate the two populations without band-specific tuning.
+    """
+    dataset_id = "tier3_continuous_spectrum"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(24, 24)  # spread over 24 days
+    log_lo = math.log(20 * _MIN)
+    log_hi = math.log(240 * _MIN)
+    periods = [math.exp(x) for x in rng.uniform(log_lo, log_hi, 24)]
+    amps = rng.uniform(1.2, 2.2, 24).tolist()
+    specs = []
+    for c, p, a in zip(centers, periods, amps):
+        band_name = classify_period(p) or "QP60"
+        should_det = classify_period(p) is not None
+        # Use period-proportional decay for consistent ~6-cycle packets
+        decay_h = 6.0 * (p / _MIN) / 60.0 / 4.0 * 2.0  # ≈ 0.75·P_h
+        specs.append(EventSpec(
+            band=band_name, period_sec_override=p,
+            amplitude=float(a), center_hours=c,
+            decay_hours=max(1.5, decay_h),
+            should_detect=should_det,
+            difficulty="hard",
+            event_type="continuous_spectrum",
+        ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="24 events sampled log-uniform in 20–240 min (mixed band/non-band)",
+        duration_days=24, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
+        event_specs=specs,
+    )
+
+
+# ======================================================================
 # Registry
 # ======================================================================
 
@@ -1076,6 +1383,20 @@ ALL_SCENARIOS: dict[str, callable] = {
     "decoy_red_noise_qp120": decoy_red_noise_qp120,
     "decoy_broadband_redslope": decoy_broadband_redslope,
     "decoy_ppo_harmonic": decoy_ppo_harmonic,
+    # v3 hardening — continuous-period QP60/QP120 coverage
+    "tier3_qp60_continuous": tier3_qp60_continuous,
+    "tier3_qp120_continuous": tier3_qp120_continuous,
+    "tier4_qp120_weak_long": tier4_qp120_weak_long,
+    # v3 hardening — short-packet (min_oscillations boundary) stress tests
+    "tier3_short_packets_qp60": tier3_short_packets_qp60,
+    "tier3_short_packets_qp120": tier3_short_packets_qp120,
+    "tier4_minimal_cycles_multiband": tier4_minimal_cycles_multiband,
+    # v3 hardening — out-of-band decoys (edge-veto stress tests)
+    "decoy_inter_qp60_qp120": decoy_inter_qp60_qp120,
+    "decoy_just_above_qp120": decoy_just_above_qp120,
+    "decoy_near_qp30_lower": decoy_near_qp30_lower,
+    # v3 hardening — continuous-spectrum population test
+    "tier3_continuous_spectrum": tier3_continuous_spectrum,
 }
 
 TIER_SCENARIOS: dict[str, list[str]] = {

@@ -4,12 +4,13 @@ Autonomous research loop for improving the QP wave event detection pipeline.
 
 ## Goal
 
-**Improve the composite detection score on a realistic 54-scenario benchmark** while keeping the detection method physically motivated, general, and defensible in a paper. The benchmark now includes multi-band co-occurrence, realistic noise (alpha=1.2, PPO modulation), and broadband decoys — tuned to match real Cassini data characteristics.
+**Improve the composite detection score on a realistic 64-scenario benchmark** while keeping the detection method physically motivated, general, and defensible in a paper. The benchmark (v3 hardened) includes multi-band co-occurrence, realistic noise (alpha=1.2, PPO modulation), broadband decoys, log-uniform-jittered periods within each QP band, 2–4.5-cycle short packets that stress `min_oscillations`, continuous-spectrum population tests, and out-of-band decoy waves (15–19, 80–90, 155–180 min) that stress the edge veto.
 
-**Current score: ~0.889.** The main bottlenecks are:
-- **Co-occurrence recall (~50%)** — the detector finds one band but misses the weaker one when QP60+QP120 are simultaneous
-- **Decoy rejection (~71%)** — broadband noise bursts and red-slope decoys leak through
-- **Tier2 recall (84%)** — dragged down by co-occurrence failures
+**Current score: ~0.937.** The main bottlenecks are:
+- **tier3_continuous_spectrum decoys (6/8 leak)** — coherent waves at inter-band periods trigger band-edge detections
+- **Short packets below 3 cycles** — correctly rejected by `min_oscillations=3` but contribute to apparent recall loss in `tier4_minimal_cycles_multiband` (graceful, expected)
+- **Tier 1 clean QP120 jittered** — 2/8 events at near-edge periods (close to 90 or 150 min) miss due to edge veto
+- **Decoy rejection (~87%)** — leaks are mostly from the new continuous-spectrum scenario's inter-band waves
 
 ## Philosophy
 
