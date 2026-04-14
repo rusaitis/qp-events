@@ -501,7 +501,7 @@ def filter_detections(
     par_power: np.ndarray | None = None,
     *,
     epoch: datetime.datetime | None = None,
-    min_oscillations: float = 2.5,
+    min_oscillations: float = 5.0,
     transverse_ratio: float = 0.5,
     spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,
