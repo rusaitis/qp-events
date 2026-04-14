@@ -741,7 +741,7 @@ def filter_detections(
             row = perp_power[pf_idx, i0 : i1 + 1]
             if row.size > 3 and row.max() > 0:
                 pk_local = int(row.argmax())
-                thr = 0.1 * row[pk_local]
+                thr = 0.15 * row[pk_local]
                 left = pk_local
                 while left > 0 and row[left - 1] > thr:
                     left -= 1
