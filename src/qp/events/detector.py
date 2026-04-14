@@ -399,13 +399,78 @@ def detect_wave_packets_multi(
             min_pixels=min_pixels,
             coi_factor=coi_factor,
         ))
+    # Split ridges whose peak-row power has multiple clear temporal
+    # maxima. Connected-component labelling merges temporally adjacent
+    # wave packets at similar periods (the time extent of a CWT ridge
+    # bleeds ~1 period on each side from Morlet smearing, so packets
+    # separated by < ~1 h at QP120 periods fuse into one blob). A
+    # single ridge with two peaks over its time range, each above 50%
+    # of the ridge max and separated by a dip below 30% of the max,
+    # is two distinct wave packets — we split at the intervening dip.
+    split_ridges: list[Ridge] = []
+    for ridge in ridges:
+        split_ridges.extend(_split_ridge_by_peaks(ridge, cwt_power))
     packets: list[WavePacketPeak] = [
         _ridge_to_packet(ridge, times_list, n_time, classify_period)
-        for ridge in ridges
+        for ridge in split_ridges
     ]
 
     packets.sort(key=lambda p: p.peak_time)
     return packets
+
+
+def _split_ridge_by_peaks(
+    ridge: Ridge,
+    cwt_power: np.ndarray,
+) -> list[Ridge]:
+    """Split a single ridge into multiple ridges at temporal minima.
+
+    Looks at the CWT power on the ridge's peak period row across its
+    full time extent. Uses ``scipy.signal.find_peaks`` with a
+    prominence gate to locate multiple wave-packet centres. If only
+    one prominent peak exists (the common case), returns ``[ridge]``.
+    """
+    i0, i1 = ridge.t_start_idx, ridge.t_end_idx
+    if i1 - i0 < 6:
+        return [ridge]
+    row = cwt_power[ridge.peak_period_idx, i0 : i1 + 1]
+    if row.size < 6 or row.max() <= 0:
+        return [ridge]
+    # Peaks ≥ 50% of the ridge max, prominence ≥ 20% of max
+    from scipy.signal import find_peaks
+    peaks_rel, _ = find_peaks(
+        row, height=0.5 * row.max(), prominence=0.2 * row.max(),
+    )
+    if peaks_rel.size < 2:
+        return [ridge]
+    # Split midpoints between consecutive peaks at local minimum.
+    splits: list[int] = [0]
+    for p_a, p_b in zip(peaks_rel[:-1], peaks_rel[1:]):
+        seg = row[p_a : p_b + 1]
+        local_min = int(seg.argmin()) + int(p_a)
+        splits.append(local_min)
+    splits.append(int(row.size))
+    out: list[Ridge] = []
+    for s_a, s_b in zip(splits[:-1], splits[1:]):
+        if s_b - s_a < 3:
+            continue
+        sub = row[s_a:s_b]
+        if sub.size == 0 or sub.max() <= 0:
+            continue
+        pk_local = int(sub.argmax()) + s_a
+        out.append(Ridge(
+            t_start_idx=i0 + s_a,
+            t_end_idx=i0 + s_b - 1,
+            p_min_idx=ridge.p_min_idx,
+            p_max_idx=ridge.p_max_idx,
+            peak_time_idx=i0 + pk_local,
+            peak_period_idx=ridge.peak_period_idx,
+            peak_period_sec=ridge.peak_period_sec,
+            peak_power=float(row[pk_local]),
+            period_fwhm_sec=ridge.period_fwhm_sec,
+            n_pixels=ridge.n_pixels,  # approximate; used only for logging
+        ))
+    return out if out else [ridge]
 
 
 def _ridge_to_packet(
