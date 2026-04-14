@@ -21,9 +21,12 @@ import math
 import numpy as np
 
 from qp.benchmark.generator import (
+    CalibrationPlateauSpec,
     EventSpec,
     GapSpec,
+    ImpulseSpikeSpec,
     NoiseBurstSpec,
+    RangeChangeStepSpec,
     RollArtifactSpec,
     ScenarioConfig,
 )
@@ -817,20 +820,143 @@ def decoy_compressional() -> ScenarioConfig:
     )
 
 
-def decoy_single_pulses() -> ScenarioConfig:
+def decoy_short_transients() -> ScenarioConfig:
+    """Short (~1-cycle) compressional transients.
+
+    These are 1-cycle Gaussian-enveloped compressional pulses — they
+    model short-lived magnetic pressure transients (flux-tube
+    interchange, brief magnetosonic events) whose duration is too
+    short to sustain a QP wave train. Not a model of single-sample
+    FGM corruption (see :func:`decoy_impulsive_spikes` for that).
+    """
     centers = _centers(8, 10)
     return ScenarioConfig(
-        dataset_id="decoy_single_pulses",
-        description="Isolated 1-cycle magnetic pressure pulses",
+        dataset_id="decoy_short_transients",
+        description="Isolated 1-cycle compressional transients",
         duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="decoy",
         event_specs=[
             EventSpec(band="QP60", amplitude=3.0, center_hours=c,
                       decay_hours=0.5, mode="compressional",
                       should_detect=False, difficulty="easy",
-                      event_type="decoy_single_pulse")
+                      event_type="decoy_short_transient")
             for c in centers
         ],
+    )
+
+
+def decoy_impulsive_spikes() -> ScenarioConfig:
+    """Single-sample δ-function spikes (FGM spurious-range-change analogue).
+
+    Calibrated against 2007-019T22:49 UT in the 1-min averaged
+    ``CO-E_SW_J_S-MAG-4-SUMM-1MINAVG-V2`` product, where a single
+    minute shows ``|B|`` jumping from 5.6 → 63.4 nT with component
+    amplitudes ``Br=52, Bp=35, Bth=6 nT`` — two components dominate
+    and one is weak. We inject 6 such spikes in a 10-day scenario
+    (~50× denser than the mission-averaged rate of ~1 per 95 days)
+    to make single-sample rejection statistically meaningful on a
+    short synthetic.
+    """
+    rng = _scenario_rng("decoy_impulsive_spikes")
+    centers = _centers(6, 10)
+    spikes = []
+    for c in centers:
+        # Per-component magnitudes 30–60 nT, matching the 2007-019
+        # observation. One axis is randomly chosen to be weak
+        # (1/10 of the others) to reproduce the anisotropic signature.
+        strong_amps = [float(rng.uniform(30.0, 60.0)) for _ in range(3)]
+        weak_axis = int(rng.integers(0, 3))
+        strong_amps[weak_axis] *= 0.1
+        s_par = float(rng.choice((-1.0, 1.0)))
+        s_p1 = float(rng.choice((-1.0, 1.0)))
+        s_p2 = float(rng.choice((-1.0, 1.0)))
+        amps = (
+            s_par * strong_amps[0],
+            s_p1 * strong_amps[1],
+            s_p2 * strong_amps[2],
+        )
+        spikes.append(
+            ImpulseSpikeSpec(center_hours=float(c), amplitudes_nT=amps)
+        )
+    return ScenarioConfig(
+        dataset_id="decoy_impulsive_spikes",
+        description="30–60 nT single-sample FGM spikes (spurious-range analogue)",
+        duration_days=10, noise_alpha=1.3, noise_sigma=0.07,
+        background_trend=True, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[],
+        impulse_spikes=spikes,
+    )
+
+
+def decoy_range_change_steps() -> ScenarioConfig:
+    """Piecewise-constant DC jumps mimicking FGM range reconfigurations.
+
+    ``RANGE_CHANGES.ASC`` documents 8295 legitimate range transitions
+    across the mission; each produces a small DC-like step in all
+    three components when gain and offset are re-applied. A detector
+    that flags these as QP waves is overfitting to aperiodic
+    transients. We inject ~30 random-signed steps in a 10-day window
+    (≈1 per 8 h, Cassini-realistic cadence).
+    """
+    rng = _scenario_rng("decoy_range_change_steps")
+    n_steps = 30
+    centers = [float(rng.uniform(0.5, 9.5) * 24.0) for _ in range(n_steps)]
+    steps = [
+        RangeChangeStepSpec(
+            center_hours=c,
+            step_nT=(
+                float(rng.normal(0.0, 0.3)),
+                float(rng.normal(0.0, 0.3)),
+                float(rng.normal(0.0, 0.3)),
+            ),
+        )
+        for c in centers
+    ]
+    return ScenarioConfig(
+        dataset_id="decoy_range_change_steps",
+        description="Heaviside steps mimicking FGM range changes (~1 per 8 h)",
+        duration_days=10, noise_alpha=1.3, noise_sigma=0.07,
+        background_trend=True, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[],
+        range_change_steps=steps,
+    )
+
+
+def decoy_scas_calibration() -> ScenarioConfig:
+    """Raised-cosine plateaus mimicking SCAS / DPU calibration windows.
+
+    Calibrated against 2007-021T15:30 UT in the 1-min averaged
+    product: ``|B|`` makes a 2-min step from 5 to 20 nT at the onset
+    of a SCAS window, holds a stable plateau for the full calibration
+    duration (~68 min typical), then steps back down at the end. The
+    vector components remain near their nominal values throughout —
+    the PDS Bt column carries the calibration-corrupted total. We
+    inject 3 plateaus per 10-day synthetic (realistic SCAS cadence
+    in Saturn orbit) with ``btot_excess_nT`` ∈ [8, 20] reflecting the
+    observed range across the 2007 calibration events.
+    """
+    rng = _scenario_rng("decoy_scas_calibration")
+    plateaus = [
+        CalibrationPlateauSpec(
+            start_hours=float(rng.uniform(0.5, 9.0) * 24.0),
+            duration_minutes=float(rng.uniform(30.0, 90.0)),
+            transition_minutes=2.0,
+            # Small vector-component offsets (a few × noise σ). The
+            # dominant artifact sits in ``btot_excess_nT``.
+            plateau_par_nT=float(rng.normal(0.0, 0.3)),
+            plateau_perp1_nT=float(rng.normal(0.0, 0.3)),
+            plateau_perp2_nT=float(rng.normal(0.0, 0.3)),
+            btot_excess_nT=float(rng.uniform(8.0, 20.0)),
+        )
+        for _ in range(3)
+    ]
+    return ScenarioConfig(
+        dataset_id="decoy_scas_calibration",
+        description="SCAS-like Bt plateaus (calibration-window analogue)",
+        duration_days=10, noise_alpha=1.3, noise_sigma=0.07,
+        background_trend=True, ppo_amplitude=0.5, difficulty_tier="decoy",
+        event_specs=[],
+        calibration_plateaus=plateaus,
     )
 
 
@@ -1948,6 +2074,25 @@ def decoy_null_alpha_steep() -> ScenarioConfig:
     )
 
 
+def decoy_null_canonical() -> ScenarioConfig:
+    """Null scenario at the canonical operational noise parameters.
+
+    The other ``decoy_null_alpha_*`` scenarios bracket α ∈ {0.8, 1.2,
+    1.7} but none sit at the realistic-background working point
+    (α=1.3, σ=0.07) used by ``tier2_realistic_background`` and the
+    catalog-realistic tier-3 scenarios. This scenario measures the
+    detector false-positive rate at the actual operational regime —
+    the number most directly comparable to real-mission FP/day.
+    """
+    return ScenarioConfig(
+        dataset_id="decoy_null_canonical",
+        description="Null at canonical α=1.3, σ=0.07 + PPO (operational FP/day)",
+        duration_days=10, noise_alpha=1.3, noise_sigma=0.07,
+        background_trend=True, ppo_amplitude=0.5,
+        difficulty_tier="decoy", event_specs=[],
+    )
+
+
 # --- Item 12: Out-of-distribution holdout family ---
 
 def holdout_unseen_regime() -> ScenarioConfig:
@@ -2186,11 +2331,17 @@ ALL_SCENARIOS: dict[str, callable] = {
     "tier4_nonstationary": tier4_nonstationary,
     # Decoys
     "decoy_compressional": decoy_compressional,
-    "decoy_single_pulses": decoy_single_pulses,
+    "decoy_short_transients": decoy_short_transients,
     "decoy_broadband_burst": decoy_broadband_burst,
     "decoy_step_functions": decoy_step_functions,
     "decoy_ppo_only": decoy_ppo_only,
     "decoy_roll_artifacts": decoy_roll_artifacts,
+    # Cassini-quality-table analogues (FGM spurious ranges,
+    # legitimate range changes, SCAS calibrations, operational null).
+    "decoy_impulsive_spikes": decoy_impulsive_spikes,
+    "decoy_range_change_steps": decoy_range_change_steps,
+    "decoy_scas_calibration": decoy_scas_calibration,
+    "decoy_null_canonical": decoy_null_canonical,
     # New: multi-band co-occurrence scenarios
     "tier2_qp60_qp120_cooccurrence": tier2_qp60_qp120_cooccurrence,
     "tier2_qp30_qp60_cooccurrence": tier2_qp30_qp60_cooccurrence,

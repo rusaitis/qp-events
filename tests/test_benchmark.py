@@ -3,7 +3,19 @@
 import numpy as np
 import pytest
 
-from qp.benchmark.generator import EventSpec, ScenarioConfig, generate_benchmark_dataset
+from qp.benchmark.generator import (
+    CalibrationPlateauSpec,
+    EventSpec,
+    ImpulseSpikeSpec,
+    RangeChangeStepSpec,
+    ScenarioConfig,
+    _btot_plateau_excess,
+    _calibration_plateau_envelope,
+    _inject_calibration_plateaus,
+    _inject_impulse_spikes,
+    _inject_range_change_steps,
+    generate_benchmark_dataset,
+)
 from qp.benchmark.manifest import (
     InjectedEvent,
     DatasetManifest,
@@ -12,7 +24,14 @@ from qp.benchmark.manifest import (
     manifest_to_json,
     manifest_from_json,
 )
-from qp.benchmark.scenarios import ALL_SCENARIOS, tier1_clean_qp60
+from qp.benchmark.scenarios import (
+    ALL_SCENARIOS,
+    decoy_impulsive_spikes,
+    decoy_null_canonical,
+    decoy_range_change_steps,
+    decoy_scas_calibration,
+    tier1_clean_qp60,
+)
 from qp.benchmark.scoring import score_dataset, score_suite
 from qp.events.catalog import WavePacketPeak
 
@@ -282,3 +301,132 @@ class TestRound3Scoring:
         score = score_dataset(m, [det])
         expected = 1.0 - (0.1 / (2.0 * FP_PER_DAY_TOLERANCE))
         assert abs(score.decoy_rejection_rate - expected) < 1e-9
+
+
+class TestCassiniQualityDecoys:
+    """Injection helpers for FGM data-quality-table artifacts."""
+
+    def test_impulse_spike_single_sample(self):
+        """Per-component spike lands on exactly one sample, zero elsewhere."""
+        n = 1000
+        b_par, b1, b2 = np.zeros(n), np.zeros(n), np.zeros(n)
+        spike = ImpulseSpikeSpec(
+            center_hours=2.0, amplitudes_nT=(40.0, -30.0, 6.0),
+        )
+        _inject_impulse_spikes(b_par, b1, b2, dt=60.0, spikes=[spike])
+        idx = int(2.0 * 3600 / 60)
+        assert b_par[idx] == 40.0
+        assert b1[idx] == -30.0
+        assert b2[idx] == 6.0
+        # Exactly one non-zero sample per component.
+        assert np.count_nonzero(b_par) == 1
+        assert np.count_nonzero(b1) == 1
+        assert np.count_nonzero(b2) == 1
+
+    def test_range_change_step_is_heaviside(self):
+        """Step persists after the transition; no oscillation."""
+        n = 500
+        b_par, b1, b2 = np.zeros(n), np.zeros(n), np.zeros(n)
+        step = RangeChangeStepSpec(
+            center_hours=1.0, step_nT=(0.5, -0.3, 0.1),
+        )
+        _inject_range_change_steps(b_par, b1, b2, dt=60.0, steps=[step])
+        idx = int(1.0 * 3600 / 60)
+        assert np.all(b_par[:idx] == 0.0)
+        assert np.all(b_par[idx:] == 0.5)
+        assert np.all(b1[idx:] == -0.3)
+        assert np.all(b2[idx:] == 0.1)
+
+    def test_calibration_plateau_onset_and_decay(self):
+        """Plateau rises via raised cosine, holds flat, decays to zero."""
+        n = 3000
+        dt = 60.0
+        t = np.arange(n) * dt
+        b_par, b1, b2 = np.zeros(n), np.zeros(n), np.zeros(n)
+        plateau = CalibrationPlateauSpec(
+            start_hours=2.0, duration_minutes=30.0,
+            transition_minutes=2.0,
+            plateau_par_nT=1.0, plateau_perp1_nT=0.5, plateau_perp2_nT=-0.5,
+            btot_excess_nT=15.0,
+        )
+        _inject_calibration_plateaus(b_par, b1, b2, t, plateaus=[plateau])
+        # Sample indices: start=2h, end=2.5h.
+        idx_before = int(1.5 * 3600 / dt)     # well before
+        idx_flat = int((2.0 + 0.25) * 3600 / dt)  # mid-plateau
+        idx_after = int(3.0 * 3600 / dt)      # well after
+        assert b_par[idx_before] == 0.0
+        np.testing.assert_allclose(b_par[idx_flat], 1.0, atol=1e-10)
+        np.testing.assert_allclose(b1[idx_flat], 0.5, atol=1e-10)
+        np.testing.assert_allclose(b2[idx_flat], -0.5, atol=1e-10)
+        # Plateau closes — components return to zero (no DC residual).
+        np.testing.assert_allclose(b_par[idx_after], 0.0, atol=1e-10)
+        # Envelope is smooth (raised cosine): at t=t0+1min, halfway
+        # through the transition, env=0.5 so b_par=0.5 nT.
+        idx_mid_onset = int((2.0 * 3600 + 60.0) / dt)
+        np.testing.assert_allclose(b_par[idx_mid_onset], 0.5, atol=0.01)
+        # btot excess is zero during transitions but 15 nT flat:
+        excess = _btot_plateau_excess(t, [plateau])
+        np.testing.assert_allclose(excess[idx_flat], 15.0, atol=1e-10)
+        assert excess[idx_before] == 0.0
+        assert excess[idx_after] == 0.0
+        # Envelope helper smooth monotonic during onset.
+        env = _calibration_plateau_envelope(t, plateau)
+        idx_t0 = int(2.0 * 3600 / dt)
+        assert 0.0 <= env[idx_t0] <= 1.0
+
+    def test_scenario_impulsive_spikes_produces_outliers(self):
+        """decoy_impulsive_spikes creates 30+ nT single-sample outliers."""
+        s = decoy_impulsive_spikes()
+        _, fields, manifest = generate_benchmark_dataset(s, seed=42)
+        assert manifest.n_detectable == 0
+        # Real spikes at 2007-019T22:49 reached |B|=63 nT against 5.6
+        # nT baseline. Our decoy uses 30–60 nT per component with one
+        # weak axis. Every one of the 6 spikes should produce a B_tot
+        # > 20 nT on some single minute.
+        b_tot = fields[:, 3]
+        n_big_outliers = int(np.sum(b_tot > 20.0))
+        assert n_big_outliers >= 6, (
+            f"Expected ≥6 B_tot outliers > 20 nT; got {n_big_outliers}"
+        )
+        # Peak B_tot should exceed 40 nT — close to the range-3 limit.
+        assert b_tot.max() > 40.0
+
+    def test_scenario_range_change_steps_no_periodicity(self):
+        """decoy_range_change_steps creates DC jumps, not oscillations."""
+        s = decoy_range_change_steps()
+        t, fields, manifest = generate_benchmark_dataset(s, seed=42)
+        assert manifest.n_detectable == 0
+        # The PSD should not peak inside any QP band; the dominant
+        # low-frequency contribution is the accumulated step train.
+        par_detrended = fields[:, 0] - np.mean(fields[:, 0])
+        freqs = np.fft.rfftfreq(len(par_detrended), d=s.dt)
+        power = np.abs(np.fft.rfft(par_detrended)) ** 2
+        # Peak power should sit below the QP120 band (f < ~0.0001 Hz).
+        peak_idx = int(np.argmax(power[1:]) + 1)
+        assert freqs[peak_idx] < 1e-4
+
+    def test_scenario_scas_calibration_produces_plateaus(self):
+        """decoy_scas_calibration elevates B_tot during calibration windows."""
+        s = decoy_scas_calibration()
+        _, fields, manifest = generate_benchmark_dataset(s, seed=42)
+        assert manifest.n_detectable == 0
+        b_tot = fields[:, 3]
+        # Plateaus raise B_tot by 8–20 nT on top of a ~5 nT background.
+        # Expect at least 30 samples (30 min-worth) with B_tot > 12 nT.
+        elevated = int(np.sum(b_tot > 12.0))
+        assert elevated >= 30, (
+            f"Expected ≥30 elevated samples > 12 nT; got {elevated}"
+        )
+        # B_tot max should clear the plateau_excess + baseline (~25 nT).
+        assert b_tot.max() > 12.0
+
+    def test_scenario_null_canonical_empty(self):
+        """decoy_null_canonical has no events but non-trivial background."""
+        s = decoy_null_canonical()
+        _, fields, manifest = generate_benchmark_dataset(s, seed=42)
+        assert manifest.n_events == 0
+        # Background combines noise (σ≈0.07), PPO (~0.5 nT), and (for
+        # B_par) a DC trend. We just verify the field is finite and
+        # non-trivial — exact RMS depends on the PPO realization.
+        assert np.all(np.isfinite(fields))
+        assert fields[:, 1].std() > 0.05

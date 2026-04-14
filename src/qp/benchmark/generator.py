@@ -50,6 +50,66 @@ class RollArtifactSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class ImpulseSpikeSpec:
+    """A single-sample impulsive spike (FGM spurious-range-change analogue).
+
+    Calibrated against real Cassini MAG data (1-min averaged
+    ``CO-E_SW_J_S-MAG-4-SUMM-1MINAVG-V2``). At ~1-min averaging, a
+    range-3 corruption at the underlying 1-sec cadence produces a
+    single minute where ``|B|`` is 10–15× the local baseline. Example
+    from 2007-019T22:49 (KRTP): ``Br`` jumps 4.4 → 52.3 nT, ``Bp``
+    jumps 3.3 → 35.1 nT, ``Bth`` stays near 5.8 — i.e. two components
+    dominate and one is weak. Amplitudes are therefore per-component
+    so scenarios can reproduce that anisotropic signature; signs are
+    folded directly into the amplitudes.
+    """
+
+    center_hours: float
+    amplitudes_nT: tuple[float, float, float]  # (B_par, B_perp1, B_perp2)
+
+
+@dataclass(frozen=True, slots=True)
+class RangeChangeStepSpec:
+    """A piecewise-constant level jump mimicking FGM range reconfigurations.
+
+    ``RANGE_CHANGES.ASC`` contains 8295 legitimate range transitions;
+    each produces a small DC-like offset in all three components when
+    sensor gain and zero-level calibration are re-applied. These
+    artifacts have no periodicity — a detector that flags them as
+    QP waves is overfitting to transients.
+    """
+
+    center_hours: float
+    step_nT: tuple[float, float, float]  # (B_par, B_perp1, B_perp2) DC jump
+
+
+@dataclass(frozen=True, slots=True)
+class CalibrationPlateauSpec:
+    """A raised-cosine plateau mimicking SCAS / DPU-controlled calibrations.
+
+    ``SCAS_TIMES.ASC`` documents 10–75 min calibration windows. Real
+    1-min MAG data around 2007-021T15:30 shows a 2-min step-like
+    onset into a ~4× elevated ``|B|`` plateau (5 → 20 nT) that
+    persists for the full calibration window, then a step-off at the
+    end. Crucially, the Bt column diverges from √(Br² + Bth² + Bp²)
+    during the plateau — the component fields look normal while the
+    Bt column carries the calibration-corrupted total. This is
+    represented by ``btot_excess_nT`` which is added to the Bt column
+    *after* the vector magnitude is computed, leaving B_par /
+    B_perp1 / B_perp2 either unchanged or modulated by the separate
+    ``plateau_*_nT`` offsets.
+    """
+
+    start_hours: float
+    duration_minutes: float  # full calibration window, transitions included
+    transition_minutes: float = 2.0
+    plateau_par_nT: float = 0.0
+    plateau_perp1_nT: float = 0.0
+    plateau_perp2_nT: float = 0.0
+    btot_excess_nT: float = 15.0
+
+
+@dataclass(frozen=True, slots=True)
 class EventSpec:
     """Specification for a single event to inject."""
 
@@ -101,6 +161,13 @@ class ScenarioConfig:
     gaps: list[GapSpec] = field(default_factory=list)
     noise_bursts: list[NoiseBurstSpec] = field(default_factory=list)
     roll_artifacts: list[RollArtifactSpec] = field(default_factory=list)
+    # Cassini-quality-table analogues. These model real FGM artifacts
+    # that the detector must reject without help from the SCAS /
+    # range-change flag tables — the benchmark deliberately does not
+    # propagate those flags so this is a conservative rejection test.
+    impulse_spikes: list[ImpulseSpikeSpec] = field(default_factory=list)
+    range_change_steps: list[RangeChangeStepSpec] = field(default_factory=list)
+    calibration_plateaus: list[CalibrationPlateauSpec] = field(default_factory=list)
     # Noise-shape upgrades (off by default for backward compat).
     # ``noise_tail_df``: degrees of freedom for Student-t Fourier
     # innovations (heavy tails). None → Gaussian.
@@ -281,6 +348,104 @@ def _inject_roll_artifact(
     gain2 = 1.0 - 0.018 * gain_env
     b_perp1[mask] = gain1 * (cos_a * p1 - sin_a * p2)
     b_perp2[mask] = gain2 * (sin_a * p1 + cos_a * p2)
+
+
+def _inject_impulse_spikes(
+    b_par: np.ndarray, b_perp1: np.ndarray, b_perp2: np.ndarray,
+    dt: float, spikes: list[ImpulseSpikeSpec],
+) -> None:
+    """Add single-sample δ-function spikes with per-component amplitudes."""
+    n = b_par.size
+    for spike in spikes:
+        idx = int(round(spike.center_hours * 3600.0 / dt))
+        if idx < 0 or idx >= n:
+            continue
+        a_par, a_p1, a_p2 = spike.amplitudes_nT
+        b_par[idx] += a_par
+        b_perp1[idx] += a_p1
+        b_perp2[idx] += a_p2
+
+
+def _inject_range_change_steps(
+    b_par: np.ndarray, b_perp1: np.ndarray, b_perp2: np.ndarray,
+    dt: float, steps: list[RangeChangeStepSpec],
+) -> None:
+    """Add piecewise-constant DC jumps at step centers (Heaviside steps)."""
+    n = b_par.size
+    for step in steps:
+        idx = int(round(step.center_hours * 3600.0 / dt))
+        if idx < 0 or idx >= n:
+            continue
+        b_par[idx:] += step.step_nT[0]
+        b_perp1[idx:] += step.step_nT[1]
+        b_perp2[idx:] += step.step_nT[2]
+
+
+def _calibration_plateau_envelope(
+    t: np.ndarray, spec: CalibrationPlateauSpec,
+) -> np.ndarray:
+    r"""Raised-cosine on/off envelope for a calibration plateau.
+
+    Zero before the window and after it closes; a steady 1.0 across
+    the flat plateau; raised-cosine transitions of duration
+    ``transition_minutes`` at each edge so the injected artifact is
+    smooth at the sample scale. The returned envelope is suitable for
+    multiplication by per-component plateau amplitudes and by the
+    ``btot_excess_nT`` DC offset.
+    """
+    env = np.zeros_like(t)
+    t0 = spec.start_hours * 3600.0
+    t1 = t0 + spec.duration_minutes * 60.0
+    trans = spec.transition_minutes * 60.0
+    if trans <= 0 or t1 - t0 < 2 * trans:
+        inside = (t >= t0) & (t <= t1)
+        env[inside] = 1.0
+        return env
+    on = (t >= t0) & (t < t0 + trans)
+    flat = (t >= t0 + trans) & (t <= t1 - trans)
+    off = (t > t1 - trans) & (t <= t1)
+    env[on] = 0.5 * (1.0 - np.cos(np.pi * (t[on] - t0) / trans))
+    env[flat] = 1.0
+    env[off] = 0.5 * (1.0 + np.cos(np.pi * (t[off] - (t1 - trans)) / trans))
+    return env
+
+
+def _inject_calibration_plateaus(
+    b_par: np.ndarray, b_perp1: np.ndarray, b_perp2: np.ndarray,
+    t: np.ndarray, plateaus: list[CalibrationPlateauSpec],
+) -> None:
+    """Add per-component plateau offsets over each calibration window.
+
+    The plateau returns to zero after the window closes (unlike the
+    historical ramp model, which left a persistent DC residual).
+    Real SCAS activity is followed by a post-calibration re-zero,
+    so modelling each plateau as a closed event is more faithful
+    than accumulating residual offsets across windows.
+    """
+    for spec in plateaus:
+        env = _calibration_plateau_envelope(t, spec)
+        b_par += env * spec.plateau_par_nT
+        b_perp1 += env * spec.plateau_perp1_nT
+        b_perp2 += env * spec.plateau_perp2_nT
+
+
+def _btot_plateau_excess(
+    t: np.ndarray, plateaus: list[CalibrationPlateauSpec],
+) -> np.ndarray:
+    r"""Additive |B| excess that is *not* captured by vector components.
+
+    During SCAS the observed Bt column rises above √(Br² + Bθ² + Bφ²)
+    by ~15 nT (2007-021T15:30 data). This models the PDS-level Bt
+    corruption without disturbing the vector-component fields — the
+    returned array is added to the precomputed ``b_tot`` in
+    :func:`generate_benchmark_dataset`.
+    """
+    excess = np.zeros_like(t)
+    for spec in plateaus:
+        if spec.btot_excess_nT == 0.0:
+            continue
+        excess += _calibration_plateau_envelope(t, spec) * spec.btot_excess_nT
+    return excess
 
 
 def generate_benchmark_dataset(
@@ -595,7 +760,30 @@ def generate_benchmark_dataset(
     for roll in scenario.roll_artifacts:
         _inject_roll_artifact(b_perp1, b_perp2, t, roll)
 
+    # Cassini data-quality-table analogues. Order: plateau component
+    # offsets first, then step/spike additions. Calibration-plateau
+    # ``btot_excess_nT`` is applied to the Bt column *after* b_tot is
+    # computed, reproducing the 2007-021T15:30 observation that the
+    # PDS Bt column diverges from √(Br² + Bθ² + Bφ²) during SCAS.
+    if scenario.calibration_plateaus:
+        _inject_calibration_plateaus(
+            b_par, b_perp1, b_perp2, t,
+            scenario.calibration_plateaus,
+        )
+    if scenario.range_change_steps:
+        _inject_range_change_steps(
+            b_par, b_perp1, b_perp2, scenario.dt,
+            scenario.range_change_steps,
+        )
+    if scenario.impulse_spikes:
+        _inject_impulse_spikes(
+            b_par, b_perp1, b_perp2, scenario.dt,
+            scenario.impulse_spikes,
+        )
+
     b_tot = np.sqrt(b_par**2 + b_perp1**2 + b_perp2**2)
+    if scenario.calibration_plateaus:
+        b_tot = b_tot + _btot_plateau_excess(t, scenario.calibration_plateaus)
     fields = np.column_stack([b_par, b_perp1, b_perp2, b_tot])
 
     # Data gaps (NaN insertion)
