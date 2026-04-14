@@ -559,6 +559,16 @@ def filter_detections(
                 band_col = perp_power[bm, i0:i1].mean(axis=1)
                 if band_col.size > 2 and band_col.max() > 0:
                     above_half = band_col > 0.5 * band_col.max()
+                    peak_local = int(band_col.argmax())
+                    # Edge-of-band veto: a ridge whose peak sits at the
+                    # first or last band row is almost always spillover
+                    # from a strong out-of-band feature (broadband burst,
+                    # adjacent band) rather than an in-band wave.
+                    n_band = int(band_col.size)
+                    if n_band >= 5 and (
+                        peak_local <= 0 or peak_local >= n_band - 1
+                    ):
+                        continue
                     if above_half.any():
                         band_periods = periods[bm]
                         log_p = np.log10(band_periods[above_half])
