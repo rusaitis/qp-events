@@ -91,8 +91,6 @@ V2_GATE: GateConfig = GateConfig(
     min_pixels=300,
     min_duration_hours=2.5,
     min_oscillations=3.0,
-    enable_fft_screen=False,  # CWT-only detection, FFT ratio stored as metric
-    require_both_perp=False,
 )
 
 
