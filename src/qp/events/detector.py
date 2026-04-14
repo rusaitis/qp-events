@@ -755,33 +755,39 @@ def filter_detections(
 
         filtered.append(peak)
 
-    # 8. Dedup by time + period proximity.
-    # Two detections whose peak times are within dedup_window_sec
-    # AND whose periods match within a third-octave (|log10 ratio| <
-    # 0.15) are the same physical wave packet, possibly split by a
-    # noise dip. Keep the higher-prominence one.
-    filtered.sort(key=lambda p: p.peak_time)
+    # 8. Dedup by time + period proximity via non-max suppression.
+    # Two detections whose peak times are within dedup_window_sec AND
+    # whose periods match within a third-octave (|log10 ratio| < 0.25)
+    # are the same physical wave packet, possibly split by a noise dip
+    # or across overlapping ridge slices. Sorting by prominence first
+    # makes the choice order-invariant: we always keep the strongest
+    # representative of each cluster. The previous time-sorted pass
+    # could retain a weak early peak and reject a later, stronger one
+    # simply because the former appeared first in the loop.
+    filtered.sort(key=lambda p: -p.prominence)
     merged: list[WavePacketPeak] = []
     for peak in filtered:
-        was_merged = False
+        if not peak.period_sec:
+            merged.append(peak)
+            continue
+        is_dupe = False
         for existing in merged:
+            if not existing.period_sec:
+                continue
             sep = abs(
                 (peak.peak_time - existing.peak_time).total_seconds()
             )
             if sep >= dedup_window_sec:
                 continue
-            if not existing.period_sec or not peak.period_sec:
-                continue
             log_ratio = abs(
                 math.log10(peak.period_sec / existing.period_sec)
             )
             if log_ratio < 0.25:
-                if peak.prominence > existing.prominence:
-                    merged[merged.index(existing)] = peak
-                was_merged = True
+                is_dupe = True
                 break
-        if not was_merged:
+        if not is_dupe:
             merged.append(peak)
+    merged.sort(key=lambda p: p.peak_time)
 
     # 5. Harmonic suppression — a non-sinusoidal QP wave (sawtooth,
     # square, asymmetric envelope, or explicit harmonic content) has
