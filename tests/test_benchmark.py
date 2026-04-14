@@ -218,3 +218,67 @@ class TestAllScenariosGenerate:
         assert fields.shape[1] == 4
         assert manifest.dataset_id == scenario_id
         assert manifest.n_events > 0
+
+
+class TestRound3Scoring:
+    """Round-3 scoring additions: per-tier F1, weight ablation, FP/day rate."""
+
+    def test_per_tier_f1_present(self):
+        from qp.benchmark.runner import run_benchmark
+        # Pick one cheap scenario per tier with no zarr churn — generate
+        # on the fly to keep this fast.
+        suite = run_benchmark(
+            scenario_ids=["tier1_clean_qp60"],
+            data_dir=__import__("pathlib").Path("/tmp/qp_test_per_tier"),
+            regenerate=True,
+        )
+        assert "tier1" in suite.per_tier_f1
+        assert 0.0 <= suite.per_tier_f1["tier1"] <= 1.0
+
+    def test_composite_weight_ablation(self):
+        from qp.benchmark.scoring import (
+            COMPOSITE_WEIGHTS,
+            composite_score_ablation,
+            SuiteScore,
+            BenchmarkScore,
+        )
+        # Build a synthetic SuiteScore with minimal fields filled
+        s = SuiteScore(
+            overall_precision=0.9, overall_recall=0.9, overall_f1=0.9,
+            per_tier_recall={}, per_band_recall={},
+            band_accuracy=0.95, decoy_rejection_rate=0.85,
+            summary_score=0.9, band_accuracy_macro=0.92,
+            dataset_scores=[],
+        )
+        scores = composite_score_ablation(s)
+        assert set(scores) == set(COMPOSITE_WEIGHTS)
+        # All scores are in [0, 1].
+        for name, v in scores.items():
+            assert 0.0 <= v <= 1.0, f"{name}: {v}"
+
+    def test_empty_null_uses_fp_per_day(self):
+        """decoy_rejection on empty-null scenarios scales with duration."""
+        import datetime as _dt
+        from qp.benchmark.scoring import score_dataset, FP_PER_DAY_TOLERANCE
+        from qp.benchmark.manifest import DatasetManifest
+        from qp.events.catalog import WavePacketPeak
+
+        # 10-day pure-null manifest with 0 events.
+        m = DatasetManifest(
+            dataset_id="decoy_test",
+            description="", duration_days=10.0, dt=60.0,
+            n_samples=14400, seed=0, noise_alpha=1.2, noise_sigma=0.05,
+            difficulty_tier="decoy",
+        )
+        # 1 detection over 10 days = 0.1 FP/day; tolerance 0.2 → score = 1 - 0.1/0.4 = 0.75
+        epoch = _dt.datetime(2000, 1, 1)
+        det = WavePacketPeak(
+            peak_time=epoch + _dt.timedelta(hours=10),
+            prominence=1.0,
+            date_from=epoch + _dt.timedelta(hours=8),
+            date_to=epoch + _dt.timedelta(hours=12),
+            band="QP60", period_sec=3600.0,
+        )
+        score = score_dataset(m, [det])
+        expected = 1.0 - (0.1 / (2.0 * FP_PER_DAY_TOLERANCE))
+        assert abs(score.decoy_rejection_rate - expected) < 1e-9

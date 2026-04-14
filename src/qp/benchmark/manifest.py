@@ -49,6 +49,8 @@ class InjectedEvent:
     # Empirical in-band SNR measured from the realised noise array.
     # NaN means not computed (older manifests or back-compat construction).
     snr_in_band_empirical: float = math.nan
+    envelope_shape: str = "gaussian"  # 'gaussian', 'lognormal', 'rayleigh'
+    harmonic_model: str = "linear_2f"  # 'linear_2f' or 'sawtooth_truncated'
 
 
 @dataclass
@@ -133,5 +135,11 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
                 typed["snr_in_band_empirical"] = float(
                     row["snr_in_band_empirical"]
                 )
+            # ``envelope_shape`` and ``harmonic_model`` default on
+            # InjectedEvent, so older CSVs without those columns still
+            # round-trip; if present, pass through as strings.
+            for opt_str in ("envelope_shape", "harmonic_model"):
+                if opt_str in row and not row[opt_str]:
+                    typed.pop(opt_str, None)
             events.append(InjectedEvent(**typed))  # type: ignore[arg-type]
     return events

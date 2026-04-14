@@ -180,3 +180,74 @@ class TestGenerateLongSignal:
         _, y1 = generate_long_signal(duration_days=1.0, dt=60.0, seed=42)
         _, y2 = generate_long_signal(duration_days=1.0, dt=60.0, seed=42)
         assert_allclose(y1, y2)
+
+
+class TestRound3Hardening:
+    """Round-3 envelope and harmonic-model additions."""
+
+    def test_lognormal_envelope_skewed(self):
+        """Log-normal envelope decays slower on the right tail than left."""
+        from qp.events.catalog import WaveTemplate
+        from qp.signal.synthetic import _generate_waveform
+
+        t = np.arange(2160) * 60.0  # 36 h
+        wave = WaveTemplate(
+            period=3600.0, amplitude=1.0, decay_width=2 * 3600.0,
+            shift=18 * 3600.0, envelope_shape="lognormal",
+        )
+        y = _generate_waveform(t, wave)
+        # Energy left of peak vs right of peak
+        peak_idx = int(np.argmax(np.abs(y)))
+        left_energy = float(np.sum(y[:peak_idx] ** 2))
+        right_energy = float(np.sum(y[peak_idx:] ** 2))
+        assert right_energy > 1.5 * left_energy
+
+    def test_rayleigh_envelope_zero_at_left_edge(self):
+        from qp.events.catalog import WaveTemplate
+        from qp.signal.synthetic import _generate_waveform
+
+        t = np.arange(2160) * 60.0
+        wave = WaveTemplate(
+            period=3600.0, amplitude=1.0, decay_width=2 * 3600.0,
+            shift=18 * 3600.0, envelope_shape="rayleigh",
+        )
+        y = _generate_waveform(t, wave)
+        # Rayleigh envelope = 0 at t = -decay_width = 16h ⇒ index 960
+        assert abs(y[960]) < 1e-6
+
+    def test_sawtooth_truncated_phase_locked(self):
+        """Sawtooth-truncated harmonics share phase with the fundamental."""
+        from qp.events.catalog import WaveTemplate
+        from qp.signal.synthetic import _generate_waveform
+
+        t = np.arange(2160) * 60.0
+        # Two waves with same parameters and seed should be identical;
+        # crucially, repeating them must NOT produce random phase
+        # variation in the harmonic content.
+        rng = np.random.default_rng(7)
+        wave = WaveTemplate(
+            period=3600.0, amplitude=1.0,
+            harmonic_content=0.5,
+            harmonic_model="sawtooth_truncated",
+        )
+        y1 = _generate_waveform(t, wave, rng=rng)
+        rng = np.random.default_rng(99)  # different RNG
+        y2 = _generate_waveform(t, wave, rng=rng)
+        # Phase-locked harmonics → output is deterministic regardless
+        # of the RNG (it does not read from it).
+        np.testing.assert_array_equal(y1, y2)
+
+    def test_linear_2f_random_phase(self):
+        """Linear-2f harmonic model uses a random phase per call."""
+        from qp.events.catalog import WaveTemplate
+        from qp.signal.synthetic import _generate_waveform
+
+        t = np.arange(2160) * 60.0
+        wave = WaveTemplate(
+            period=3600.0, amplitude=1.0,
+            harmonic_content=0.5, harmonic_model="linear_2f",
+        )
+        y1 = _generate_waveform(t, wave, rng=np.random.default_rng(1))
+        y2 = _generate_waveform(t, wave, rng=np.random.default_rng(2))
+        # Different RNGs → different waveforms (random harmonic phase).
+        assert not np.allclose(y1, y2)

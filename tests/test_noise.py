@@ -108,3 +108,71 @@ class TestMagnetosphericBackground:
         a = magnetospheric_background(1000, seed=99)
         b = magnetospheric_background(1000, seed=99)
         np.testing.assert_array_equal(a, b)
+
+
+class TestHeavyTailedAndRegimeSwitching:
+    """Tests for round-3 noise hardening additions."""
+
+    def test_heavy_tail_kurtosis(self):
+        """Student-t df=5 should produce heavier tails than Gaussian."""
+        from scipy import stats
+
+        gauss = power_law_noise(8192, alpha=0.0, sigma=1.0, seed=1)
+        heavy = power_law_noise(8192, alpha=0.0, sigma=1.0, seed=1, tail_df=5.0)
+        # Excess kurtosis: Gaussian ≈ 0; Student-t df=5 has population
+        # excess kurtosis = 6 / (df - 4) = 6. Sample estimate is noisy
+        # but should be clearly elevated vs Gaussian.
+        assert stats.kurtosis(heavy) > stats.kurtosis(gauss) + 0.5
+
+    def test_heavy_tail_variance_match(self):
+        """tail_df-renormalised noise still hits requested sigma."""
+        x = power_law_noise(16384, alpha=1.2, sigma=0.3, seed=7, tail_df=5.0)
+        np.testing.assert_allclose(np.std(x), 0.3, rtol=0.05)
+
+    def test_regime_switching_shape_and_variance(self):
+        from qp.signal.noise import regime_switching_noise
+
+        n = 86400 // 60 * 2  # 2 days at 1-min cadence
+        x = regime_switching_noise(
+            n, dt=60.0, alpha_range=(1.0, 1.7),
+            segment_hours_range=(6.0, 12.0), sigma=0.05, seed=11,
+        )
+        assert x.shape == (n,)
+        np.testing.assert_allclose(np.std(x), 0.05, rtol=0.05)
+
+    def test_regime_switching_seed_reproducibility(self):
+        from qp.signal.noise import regime_switching_noise
+
+        a = regime_switching_noise(2880, sigma=1.0, seed=22)
+        b = regime_switching_noise(2880, sigma=1.0, seed=22)
+        np.testing.assert_array_equal(a, b)
+
+    def test_realistic_ppo_broadens_line(self):
+        """Realistic PPO smears the line vs. the clean dual sinusoid."""
+        from qp.signal.noise import inject_ppo
+
+        # 30 days at 1-min cadence — enough Δf resolution to resolve
+        # the bandwidth difference between clean and realistic PPO.
+        n = 30 * 24 * 60
+        t = np.arange(n) * 60.0
+
+        clean = np.zeros((n, 3))
+        inject_ppo(clean, t, amplitude=1.0, seed=33, realistic=False)
+        rough = np.zeros((n, 3))
+        inject_ppo(rough, t, amplitude=1.0, seed=33, realistic=True)
+
+        psd_c = np.abs(np.fft.rfft(clean[:, 1])) ** 2
+        psd_r = np.abs(np.fft.rfft(rough[:, 1])) ** 2
+        freqs = np.fft.rfftfreq(n, d=60.0)
+        # Window: ±30 % around the geometric mean of the two PPO
+        # systems, generous enough to contain drift sidebands.
+        center = 1.0 / (10.7 * 3600.0)
+        mask = (freqs > 0.7 * center) & (freqs < 1.3 * center)
+
+        # Spectral entropy: lower for the clean dual-tone than for the
+        # broadened realistic PPO.
+        def _spread(p: np.ndarray) -> float:
+            p = p / p.sum()
+            return float(-np.sum(p[p > 0] * np.log(p[p > 0])))
+
+        assert _spread(psd_r[mask]) > _spread(psd_c[mask])

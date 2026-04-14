@@ -16,6 +16,14 @@ from qp.benchmark.manifest import DatasetManifest
 from qp.events.catalog import WavePacketPeak
 
 
+# Tolerated false-positive rate on empty-null scenarios, expressed as
+# detections per day. A perfect detector has 0; ``FP_PER_DAY_TOLERANCE``
+# FPs/day → decoy_rejection = 0.5; ``2×`` → 0.0. Chosen at 0.2 FP/day
+# (~1 false alarm per 5-day stretch of pure background), consistent with
+# the purity target for a publishable catalog.
+FP_PER_DAY_TOLERANCE: float = 0.2
+
+
 @dataclass(frozen=True, slots=True)
 class MatchResult:
     """One matched pair: ground truth event ↔ detection."""
@@ -81,6 +89,8 @@ class SuiteScore:
     band_accuracy_macro: float = 1.0
     # Per-band recall (band-correct TPs / GT events in that band).
     per_band_accuracy: dict[str, float] = field(default_factory=dict)
+    # Per-tier F1 (paired with per_tier_recall for paper tables).
+    per_tier_f1: dict[str, float] = field(default_factory=dict)
 
 
 def _time_iou(
@@ -272,10 +282,16 @@ def score_dataset(
         decoy_rejection = 1.0 - decoy_detected / n_decoy
     elif n_gt == 0 and manifest.difficulty_tier == "decoy":
         # Pure-noise decoy scenario: any detection is a false positive.
-        # Convert FP count to a bounded rate: 0 FPs → 1.0, ≥ 4 FPs → 0.0.
-        # Matches the order-of-magnitude of typical scenario event counts.
+        # Convert FP count to a duration-normalised rate so longer-duration
+        # nulls are not penalised more heavily than short ones: tolerate
+        # up to ``FP_PER_DAY_TOLERANCE`` FPs per day, with linear decay to
+        # 0 at ``2 × tolerance``. Zero FPs → 1.0.
         decoy_detected = n_det
-        decoy_rejection = max(0.0, 1.0 - n_det / 4.0)
+        fp_per_day = n_det / max(manifest.duration_days, 1e-9)
+        decoy_rejection = max(
+            0.0,
+            1.0 - fp_per_day / (2.0 * FP_PER_DAY_TOLERANCE),
+        )
         # n_decoy stays 0 (no injected decoys), but we report n_det via
         # n_decoy_detected so the scoreboard sees the penalty.
     else:
@@ -324,13 +340,20 @@ def score_dataset(
 def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
     """Aggregate scores across the entire benchmark suite.
 
-    Diagnostic scenarios (prefix ``diag_``) are excluded from the
-    aggregate metrics but kept in the returned ``dataset_scores`` so
-    they can be inspected per-scenario.
+    Diagnostic scenarios (prefix ``diag_``) and holdout scenarios
+    (prefix ``holdout_``) are excluded from the aggregate metrics
+    but kept in the returned ``dataset_scores`` so they can be
+    inspected per-scenario. Holdout scenarios exist precisely to
+    verify generalisation; folding them into the headline composite
+    would defeat that purpose.
     """
-    all_scores = scores  # keep full list, including diag_*
-    # Only aggregate non-diagnostic scenarios.
-    scores = [s for s in all_scores if not s.dataset_id.startswith("diag_")]
+    all_scores = scores  # keep full list, including diag_* and holdout_*
+    # Only aggregate non-diagnostic, non-holdout scenarios.
+    scores = [
+        s for s in all_scores
+        if not s.dataset_id.startswith("diag_")
+        and not s.dataset_id.startswith("holdout_")
+    ]
 
     total_tp = sum(s.n_true_positives for s in scores)
     total_fp = sum(s.n_false_positives for s in scores)
@@ -341,8 +364,12 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
     denom = precision + recall
     f1 = 2 * precision * recall / denom if denom > 0 else 0.0
 
-    # Per-tier recall
+    # Per-tier recall *and* F1 (the recall-only view hides precision
+    # drops inside a tier — e.g. tier-4 harmonic scenarios can achieve
+    # full recall while bleeding FPs). Per-tier F1 is what the paper's
+    # scoring table should show.
     per_tier: dict[str, float] = {}
+    per_tier_f1: dict[str, float] = {}
     for tier in ("tier1", "tier2", "tier3", "tier4", "decoy"):
         tier_scores = [
             s for s in scores if s.dataset_id.startswith(tier)
@@ -350,8 +377,14 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         if not tier_scores:
             continue
         tier_tp = sum(s.n_true_positives for s in tier_scores)
+        tier_fp = sum(s.n_false_positives for s in tier_scores)
+        tier_fn = sum(s.n_false_negatives for s in tier_scores)
         tier_gt = sum(s.n_detectable for s in tier_scores)
         per_tier[tier] = tier_tp / tier_gt if tier_gt > 0 else 0.0
+        p_t = tier_tp / (tier_tp + tier_fp) if (tier_tp + tier_fp) > 0 else 1.0
+        r_t = tier_tp / (tier_tp + tier_fn) if (tier_tp + tier_fn) > 0 else 1.0
+        d_t = p_t + r_t
+        per_tier_f1[tier] = 2 * p_t * r_t / d_t if d_t > 0 else 0.0
 
     # Unconditional per-band accuracy:
     #   (band-correct TPs in band b) / (injected GT in band b)
@@ -429,59 +462,110 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         dataset_scores=all_scores,
         band_accuracy_macro=band_accuracy_macro,
         per_band_accuracy=per_band,
+        per_tier_f1=per_tier_f1,
     )
 
 
 def _non_diagnostic_scores(
     suite: SuiteScore,
 ) -> list[BenchmarkScore]:
-    """Return dataset scores excluding diagnostic (``diag_*``) scenarios."""
+    """Return dataset scores excluding diagnostic and holdout scenarios."""
     return [
         s for s in suite.dataset_scores
         if not s.dataset_id.startswith("diag_")
+        and not s.dataset_id.startswith("holdout_")
     ]
 
 
-def composite_detection_score(suite: SuiteScore) -> float:
-    r"""Weighted harmonic mean of detection capabilities.
+#: Named composite-score weightings. Defaults reflect scientific
+#: priorities for the QP events paper; alternates are for an ablation
+#: table (does the ranking of detector variants survive re-weighting?).
+#: Order of fields: F1, band_macro, period, decoy, IoU.
+COMPOSITE_WEIGHTS: dict[str, tuple[float, float, float, float, float]] = {
+    "default":      (0.35, 0.20, 0.15, 0.15, 0.15),
+    "equal":        (0.20, 0.20, 0.20, 0.20, 0.20),
+    "f1_only":      (1.00, 0.00, 0.00, 0.00, 0.00),
+    "decoy_heavy":  (0.25, 0.15, 0.10, 0.40, 0.10),
+    "precision_heavy": (0.30, 0.15, 0.10, 0.35, 0.10),
+}
 
-    Diagnostic scenarios (``diag_*``) are excluded — they only
-    contribute to the per-scenario breakdown. Weights reflect
-    scientific priorities: detection (F1) first, then frequency
-    accuracy (band + period), then localization and specificity.
 
-    $$\text{score} = \frac{\sum w_i}
-    {\sum w_i / \max(c_i, \epsilon)}$$
-    """
+def _composite_components(
+    suite: SuiteScore,
+) -> tuple[float, float, float, float, float]:
+    """Return (F1, band_macro, period_acc, decoy_rej, mean_IoU)."""
     dataset_scores = _non_diagnostic_scores(suite)
-    # Clamp period error to [0, 100] then convert to accuracy
+    # Median (not mean) period error — robust to outlier matches where
+    # the detector locked onto a harmonic or a distant secondary peak.
+    # Clamp to [0, ∞) and normalise by 100 % to produce an accuracy in
+    # [0, 1]; period errors above 100 % saturate the component at 0.
     total_matched = sum(len(s.matches) for s in dataset_scores)
     if total_matched > 0:
-        mean_period_err = float(np.mean([
+        median_period_err = float(np.median([
             m.period_error_pct
             for s in dataset_scores
             for m in s.matches
         ]))
     else:
-        mean_period_err = 100.0
-    period_acc = max(0.0, 1.0 - mean_period_err / 100.0)
+        median_period_err = 100.0
+    period_acc = max(0.0, 1.0 - median_period_err / 100.0)
 
     mean_iou = float(np.mean([
         s.mean_iou for s in dataset_scores if s.mean_iou > 0
     ])) if any(s.mean_iou > 0 for s in dataset_scores) else 0.0
 
-    # Band component is the macro-averaged, unconditional accuracy —
-    # missed events count against their band, preventing a detector
-    # from inflating the score by dropping low-confidence detections.
-    components = [
-        (0.35, suite.overall_f1),
-        (0.20, suite.band_accuracy_macro),
-        (0.15, period_acc),
-        (0.15, suite.decoy_rejection_rate),
-        (0.15, mean_iou),
-    ]
+    return (
+        suite.overall_f1,
+        suite.band_accuracy_macro,
+        period_acc,
+        suite.decoy_rejection_rate,
+        mean_iou,
+    )
+
+
+def composite_detection_score(
+    suite: SuiteScore,
+    weights: str | tuple[float, float, float, float, float] = "default",
+) -> float:
+    r"""Weighted harmonic mean of detection capabilities.
+
+    Diagnostic scenarios (``diag_*``) are excluded — they only
+    contribute to the per-scenario breakdown. The default weights
+    reflect scientific priorities: detection (F1) first, then frequency
+    accuracy (band + period), then localization and specificity.
+
+    Alternative weightings (``"equal"``, ``"f1_only"``, ``"decoy_heavy"``,
+    ``"precision_heavy"``) are provided so a paper can show that the
+    ranking of detector variants does not depend on the particular
+    choice — the composite is a summary, not an oracle.
+
+    $$\text{score} = \frac{\sum w_i}
+    {\sum w_i / \max(c_i, \epsilon)}$$
+    """
+    if isinstance(weights, str):
+        w = COMPOSITE_WEIGHTS[weights]
+    else:
+        w = weights
+
+    c = _composite_components(suite)
+    components = list(zip(w, c))
 
     eps = 1e-10
-    w_sum = sum(w for w, _ in components)
-    denom = sum(w / max(c, eps) for w, c in components)
+    w_sum = sum(wi for wi, _ in components if wi > 0)
+    denom = sum(wi / max(ci, eps) for wi, ci in components if wi > 0)
     return w_sum / denom if denom > 0 else 0.0
+
+
+def composite_score_ablation(
+    suite: SuiteScore,
+) -> dict[str, float]:
+    """Composite score under every named weighting in ``COMPOSITE_WEIGHTS``.
+
+    Intended for the paper's supplementary table: a detector whose
+    ranking is stable across all entries is robust; a detector that
+    only leads under ``"default"`` weights is not.
+    """
+    return {
+        name: composite_detection_score(suite, name)
+        for name in COMPOSITE_WEIGHTS
+    }

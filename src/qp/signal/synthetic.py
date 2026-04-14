@@ -87,34 +87,104 @@ def _generate_waveform(
         f0 = 1.0 / wave.period
         y = _bandlimit(y, dt_sample, fc=10.0 * f0)
 
-    # Add 2nd harmonic content with a random phase so the fundamental
-    # and harmonic are not perfectly phase-locked (real nonlinear
-    # steepening produces harmonics with a Hilbert-phase lag). Phase
-    # comes from the same rng as amplitude jitter for reproducibility.
+    # Harmonic generation. Two models are supported:
+    #   * ``"linear_2f"`` (default) — phenomenological nuisance
+    #     harmonic at 2f with a random Hilbert-phase lag, scaled
+    #     linearly by ``harmonic_content``. Easy to reason about
+    #     but does not enforce the phase relationship of nonlinear
+    #     wave steepening.
+    #   * ``"sawtooth_truncated"`` — partial Fourier series of a
+    #     sawtooth wave truncated at 10 harmonics with phases tied
+    #     to the fundamental (a_n = (-1)^{n+1}/n). ``harmonic_content``
+    #     sets the steepening fraction: 0 → pure sine, 1 → fully
+    #     steepened sawtooth shape. Phases are deterministic from
+    #     the fundamental, matching real MHD wave steepening.
     if wave.harmonic_content > 0:
-        if rng is not None:
-            harm_phase = float(rng.uniform(-np.pi, np.pi))
+        if wave.harmonic_model == "linear_2f":
+            if rng is not None:
+                harm_phase = float(rng.uniform(-np.pi, np.pi))
+            else:
+                harm_phase = 0.0
+            y += wave.harmonic_content * np.sin(2 * phase_arg + harm_phase)
+        elif wave.harmonic_model == "sawtooth_truncated":
+            harm_sum = np.zeros_like(y)
+            n_harm = 10
+            for n in range(2, n_harm + 1):
+                # Fourier coefficient of a sawtooth: 2/(πn) (-1)^{n+1}.
+                # We feed n=1 from ``y`` already and add n≥2 here, scaled
+                # by ``harmonic_content`` so a value of 1 yields the
+                # full sawtooth Fourier-series amplitude relative to
+                # the fundamental.
+                coeff = 2.0 / (np.pi * n) * ((-1.0) ** (n + 1))
+                harm_sum += coeff * np.sin(n * phase_arg)
+            # Normalise so that ``harmonic_content`` ≈ steepening
+            # fraction: a value of 1 reproduces the truncated-sawtooth
+            # amplitude that a fully steepened wave would have, given
+            # that the fundamental coefficient of a sawtooth is 2/π.
+            y += wave.harmonic_content * (np.pi / 2.0) * harm_sum
+            # Anti-alias because high-n harmonics may sit above the
+            # detector's effective Nyquist.
+            if len(t) > 1:
+                dt_sample = float(t[1] - t[0])
+                f0 = 1.0 / wave.period
+                y = _bandlimit(y, dt_sample, fc=10.0 * f0)
         else:
-            harm_phase = 0.0
-        y += wave.harmonic_content * np.sin(2 * phase_arg + harm_phase)
+            raise ValueError(
+                f"Unknown harmonic_model: {wave.harmonic_model!r}"
+            )
 
-    # Envelope (symmetric or asymmetric Gaussian). For asymmetric
-    # packets, blend the left and right sigmas with a smooth erf switch
-    # so σ(t) is C^∞ at t=0 — the old ``np.where`` switch had a
-    # derivative kink that injected a broadband spike at the event
-    # centre, right where the detector looks for onset features.
+    # Envelope. Three shapes are supported, all peak-normalised to 1:
+    #   * ``"gaussian"`` — exp(-t²/2σ²), default, with optional
+    #     erf-blended left/right asymmetry (smooth at t=0 — the old
+    #     ``np.where`` switch had a derivative kink that injected a
+    #     broadband spike at the event centre).
+    #   * ``"lognormal"`` — fast rise, slow decay with a heavy tail.
+    #     Matches packets that grow out of a noise floor and unwind.
+    #   * ``"rayleigh"`` — sharp rise, slower fall than Gaussian.
+    # ``decay_width`` is the characteristic scale (Gaussian σ for
+    # ``gaussian`` / ``rayleigh``, mode-distance for ``lognormal``).
     if wave.decay_width is not None:
-        if wave.asymmetry != 0.5:
-            from scipy.special import erf
-            sigma_left = wave.decay_width * (0.5 + wave.asymmetry)
-            sigma_right = wave.decay_width * (1.5 - wave.asymmetry)
-            # Transition scale: a small fraction of the smaller sigma.
-            tau = 0.05 * min(sigma_left, sigma_right)
-            w = 0.5 * (1.0 + erf(time / max(tau, 1e-9)))
-            sigma = (1.0 - w) * sigma_left + w * sigma_right
-            envelope = np.exp(-0.5 * (time / sigma) ** 2)
+        shape = wave.envelope_shape
+        if shape == "gaussian":
+            if wave.asymmetry != 0.5:
+                from scipy.special import erf
+                sigma_left = wave.decay_width * (0.5 + wave.asymmetry)
+                sigma_right = wave.decay_width * (1.5 - wave.asymmetry)
+                tau = 0.05 * min(sigma_left, sigma_right)
+                w = 0.5 * (1.0 + erf(time / max(tau, 1e-9)))
+                sigma = (1.0 - w) * sigma_left + w * sigma_right
+                envelope = np.exp(-0.5 * (time / sigma) ** 2)
+            else:
+                envelope = np.exp(-0.5 * (time / wave.decay_width) ** 2)
+        elif shape == "lognormal":
+            # Place the mode at t=0 by setting τ = 1 + t/decay_width
+            # and using a shifted log-normal kernel whose mode in τ
+            # is at τ=1. The standard log-normal kernel
+            # exp(-(log τ - μ)²/(2s²)) has its mode at exp(μ - s²);
+            # choose μ = s² so the mode in τ is at 1, i.e. at t = 0.
+            # Then the envelope rises sharply for t < 0 and decays
+            # with a heavy right tail for t > 0.
+            s = 0.7
+            mu = s * s
+            tau = 1.0 + time / wave.decay_width
+            envelope = np.where(
+                tau > 0,
+                np.exp(
+                    -0.5 * ((np.log(np.maximum(tau, 1e-9)) - mu) / s) ** 2
+                ),
+                0.0,
+            )
+        elif shape == "rayleigh":
+            # Rayleigh-like envelope: peak at t = decay_width, zero
+            # at t = -decay_width, monotone decay for t > peak.
+            tau = (time + wave.decay_width) / wave.decay_width
+            envelope = np.where(
+                tau > 0,
+                tau * np.exp(-0.5 * (tau**2 - 1.0)),
+                0.0,
+            )
         else:
-            envelope = np.exp(-0.5 * (time / wave.decay_width) ** 2)
+            raise ValueError(f"Unknown envelope_shape: {shape!r}")
         y *= envelope
 
     # Per-cycle amplitude jitter

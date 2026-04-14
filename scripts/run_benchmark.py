@@ -76,6 +76,11 @@ def main():
             regenerate=args.regenerate,
         )
 
+    from qp.benchmark.scoring import (
+        composite_detection_score,
+        composite_score_ablation,
+    )
+
     print(f"\n{'=' * 60}")
     print("BENCHMARK RESULTS")
     print(f"{'=' * 60}")
@@ -83,11 +88,19 @@ def main():
     print(f"  Precision:           {suite.overall_precision:.3f}")
     print(f"  Recall:              {suite.overall_recall:.3f}")
     print(f"  Band accuracy:       {suite.band_accuracy:.3f}")
+    print(f"  Band accuracy macro: {suite.band_accuracy_macro:.3f}")
     print(f"  Decoy rejection:     {suite.decoy_rejection_rate:.3f}")
-    print(f"  Summary score:       {suite.summary_score:.3f}")
+    print(f"  Composite (default): {composite_detection_score(suite):.3f}")
     print()
-    for tier, recall in sorted(suite.per_tier_recall.items()):
-        print(f"  {tier:20s} recall = {recall:.3f}")
+    print("  Per-tier recall / F1:")
+    for tier in sorted(suite.per_tier_recall):
+        r = suite.per_tier_recall[tier]
+        f = suite.per_tier_f1.get(tier, float("nan"))
+        print(f"    {tier:20s} recall={r:.3f}  F1={f:.3f}")
+    print()
+    print("  Composite weight ablation:")
+    for name, val in composite_score_ablation(suite).items():
+        print(f"    {name:20s} {val:.3f}")
     print(f"{'=' * 60}")
 
 

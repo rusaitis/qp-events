@@ -21,6 +21,8 @@ Kirchner, J. W. (2005). *Phys. Rev. E*, 71, 066110.
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from qp.signal.morphology import bandpass
@@ -37,6 +39,7 @@ def power_law_noise(
     alpha: float = 1.2,
     sigma: float = 1.0,
     seed: int | None = None,
+    tail_df: float | None = None,
 ) -> np.ndarray:
     r"""Generate noise with PSD $\propto f^{-\alpha}$ (Timmer–König method).
 
@@ -53,6 +56,15 @@ def power_law_noise(
         Target RMS amplitude of the output.
     seed : int or None
         Random seed for reproducibility.
+    tail_df : float, optional
+        If given, draws the Fourier coefficients from a (scaled)
+        Student-t distribution with ``tail_df`` degrees of freedom
+        instead of Gaussian. ``tail_df=4`` gives heavy-tailed
+        innovations with finite variance (kurtosis 3 + 6/(df-4), so
+        undefined for df=4 and 9 for df=5 — use df≥5 in practice).
+        The output is renormalised to ``sigma`` after transforming.
+        Matches the heavy-tailed behaviour of real magnetometer
+        residuals around CME shocks and current-sheet crossings.
 
     Returns
     -------
@@ -74,12 +86,12 @@ def power_law_noise(
     amplitude[1:] = freqs[1:] ** (-alpha / 2)
     amplitude[0] = 0.0  # zero DC component
 
-    # Timmer-König: independent Gaussian draws for real and imaginary
-    # parts, each scaled by sqrt(P(f)/2)
-    spectrum = (
-        rng.standard_normal(len(freqs))
-        + 1j * rng.standard_normal(len(freqs))
-    ) * amplitude / np.sqrt(2)
+    # Timmer–König: independent Gaussian draws for real and imaginary
+    # parts, each scaled by sqrt(P(f)/2). Generates Gaussian-marginal
+    # colored noise.
+    re = rng.standard_normal(len(freqs))
+    im = rng.standard_normal(len(freqs))
+    spectrum = (re + 1j * im) * amplitude / np.sqrt(2)
 
     # Nyquist bin must be real for even-length signals
     if n_gen % 2 == 0:
@@ -92,12 +104,107 @@ def power_law_noise(
         start = (n_gen - n_samples) // 2
         noise = noise[start : start + n_samples]
 
+    # Heavy-tailed reshaping: keep the spectral shape but reshape
+    # the marginal distribution from Gaussian to Student-t. We do
+    # this by sorting the Gaussian samples and substituting the
+    # rank-equivalent t-quantiles (a copula-style transform that
+    # preserves the autocorrelation/PSD shape to leading order
+    # while converting the marginal). Without this step, applying
+    # Student-t draws in the Fourier domain leaves the time-domain
+    # marginal essentially Gaussian by CLT — the test we used to
+    # ship would have caught nothing.
+    if tail_df is not None:
+        from scipy import stats as _stats
+
+        df = max(float(tail_df), 2.1)
+        order = np.argsort(noise)
+        ranks = np.empty_like(order)
+        ranks[order] = np.arange(noise.size)
+        # Plotting positions in (0, 1) — Hazen formula, avoids 0 and 1.
+        u = (ranks + 0.5) / noise.size
+        # Student-t quantiles, standardised to unit variance.
+        scale = math.sqrt((df - 2.0) / df)
+        noise = _stats.t.ppf(u, df) * scale
+        # Restore the requested sample variance after the transform.
+
     # Normalize to requested sigma
     current_rms = np.sqrt(np.mean(noise**2))
     if current_rms > 0:
         noise *= sigma / current_rms
 
     return noise
+
+
+def regime_switching_noise(
+    n_samples: int,
+    dt: float = 60.0,
+    alpha_range: tuple[float, float] = (1.0, 1.7),
+    segment_hours_range: tuple[float, float] = (6.0, 12.0),
+    sigma: float = 1.0,
+    seed: int | None = None,
+    tail_df: float | None = None,
+) -> np.ndarray:
+    r"""Piecewise-stationary 1/f^α noise with time-varying slope.
+
+    Real Cassini backgrounds are not globally stationary: the spectral
+    slope drifts between α≈1.0 (quiet intervals) and α≈1.7 (active
+    plasma-sheet crossings) on 6–12 h timescales. A detector
+    validated on a single fixed α overstates specificity relative
+    to the real data. This generator concatenates segments of fixed
+    duration in ``segment_hours_range`` at α drawn uniformly from
+    ``alpha_range``, cross-fades between segments with a 5-minute
+    raised-cosine window to avoid discontinuity artefacts, and
+    renormalises the whole trace to ``sigma``.
+
+    Parameters
+    ----------
+    n_samples, dt, sigma, seed : same as :func:`power_law_noise`
+    alpha_range : (alpha_lo, alpha_hi)
+        Bounds for the per-segment α.
+    segment_hours_range : (lo, hi)
+        Bounds for per-segment duration in hours.
+    tail_df : float, optional
+        Passed through to :func:`power_law_noise` for heavy-tailed
+        innovations in every segment.
+
+    Returns
+    -------
+    ndarray, shape (n_samples,)
+    """
+    rng = np.random.default_rng(seed)
+    out = np.zeros(n_samples)
+    cursor = 0
+    seg_lo, seg_hi = segment_hours_range
+    a_lo, a_hi = alpha_range
+    fade_samples = max(1, int(300.0 / dt))  # 5-minute raised cosine
+    while cursor < n_samples:
+        seg_hours = float(rng.uniform(seg_lo, seg_hi))
+        seg_n = min(int(seg_hours * 3600.0 / dt), n_samples - cursor)
+        if seg_n <= 1:
+            break
+        a = float(rng.uniform(a_lo, a_hi))
+        seg = power_law_noise(
+            seg_n, dt=dt, alpha=a, sigma=sigma,
+            seed=int(rng.integers(0, 2**31)),
+            tail_df=tail_df,
+        )
+        if cursor == 0 or fade_samples >= seg_n:
+            out[cursor : cursor + seg_n] = seg
+        else:
+            # Raised-cosine cross-fade to eliminate the step in
+            # realised power at the segment boundary.
+            k = min(fade_samples, seg_n, cursor)
+            ramp = 0.5 * (1 - np.cos(np.linspace(0, math.pi, k)))
+            out[cursor : cursor + k] = (
+                (1 - ramp) * out[cursor : cursor + k] + ramp * seg[:k]
+            )
+            out[cursor + k : cursor + seg_n] = seg[k:seg_n]
+        cursor += seg_n
+    # Renormalise end-to-end so the advertised ``sigma`` is honoured.
+    rms = float(np.sqrt(np.mean(out**2)))
+    if rms > 0:
+        out *= sigma / rms
+    return out
 
 
 def colored_noise_3component(
@@ -243,24 +350,81 @@ def inject_ppo(
     n_period_hours: float = 10.6,
     s_period_hours: float = 10.8,
     seed: int | None = None,
+    *,
+    realistic: bool = False,
+    amp_lognormal_sigma: float = 0.25,
+    period_drift_hours: float = 0.1,
+    phase_slip_period_days: float = 50.0,
 ) -> None:
     r"""Add dual N/S PPO modulation to transverse components in-place.
 
     Northern (~10.6 h) and southern (~10.8 h) PPO systems with
     independent random phases, producing beat modulation on ~25-day
     timescales (Andrews et al. 2008, 2010).
+
+    With ``realistic=True``, three additional features that real PPO
+    exhibits but the bare sinusoid does not:
+
+    * **Log-normal amplitude envelope** — the per-cycle amplitude is
+      multiplied by ``exp(σ·N(0,1))`` with σ = ``amp_lognormal_sigma``,
+      so the magnitude wanders by ~25 % cycle-to-cycle.
+    * **Slow period drift** — the PPO period is sinusoidally modulated
+      by ±``period_drift_hours`` on the ~50-day system-tracking
+      timescale (Provan et al. 2018).
+    * **Occasional phase slips** — Brownian phase walk with a
+      coherence time of ``phase_slip_period_days`` reproduces the
+      occasional re-locking events observed in long PPO records.
+
+    These features push the PPO signal off a clean Fourier delta and
+    into a low-Q broadband bump — the regime that actually challenges
+    the detector's ability to reject PPO without rejecting QP120.
     """
     rng = np.random.default_rng(seed)
     n_sec = n_period_hours * 3600.0
     s_sec = s_period_hours * 3600.0
-    phase_n = rng.uniform(0, 2 * np.pi)
-    phase_s = rng.uniform(0, 2 * np.pi)
+    phase_n0 = float(rng.uniform(0, 2 * np.pi))
+    phase_s0 = float(rng.uniform(0, 2 * np.pi))
 
-    # B_perp1 gets full PPO, B_perp2 gets 0.3× (elliptical polarization)
-    for period, phase in [(n_sec, phase_n), (s_sec, phase_s)]:
-        ppo_arg = 2 * np.pi * t / period + phase
-        bg[:, 1] += amplitude * np.sin(ppo_arg)
-        bg[:, 2] += 0.3 * amplitude * np.cos(ppo_arg)
+    if not realistic:
+        # Original behaviour: pure dual-tone sinusoids.
+        for period, phase in [(n_sec, phase_n0), (s_sec, phase_s0)]:
+            ppo_arg = 2 * np.pi * t / period + phase
+            bg[:, 1] += amplitude * np.sin(ppo_arg)
+            bg[:, 2] += 0.3 * amplitude * np.cos(ppo_arg)
+        return
+
+    # Realistic regime — same per-component split (B_perp1 full,
+    # B_perp2 0.3×) but each PPO system carries a slowly-varying
+    # amplitude, period, and phase drift.
+    drift_period_sec = phase_slip_period_days * 86400.0
+    drift_omega = 2.0 * np.pi / max(drift_period_sec, 1.0)
+    for period_sec, phase0 in [(n_sec, phase_n0), (s_sec, phase_s0)]:
+        # Per-cycle log-normal amplitude envelope, interpolated to t.
+        n_cycles = max(2, int((t[-1] - t[0]) / period_sec) + 2)
+        cycle_amps = rng.lognormal(
+            mean=0.0, sigma=amp_lognormal_sigma, size=n_cycles,
+        )
+        cycle_t = t[0] + period_sec * np.arange(n_cycles)
+        amp_env = np.interp(t, cycle_t, cycle_amps)
+
+        # Period drift: ±period_drift_hours·3600 over a ~50-day cycle.
+        drift_phase = float(rng.uniform(0, 2 * np.pi))
+        omega_inst = (2.0 * np.pi / period_sec) * (
+            1.0
+            - (period_drift_hours * 3600.0 / period_sec)
+            * np.sin(drift_omega * t + drift_phase)
+        )
+        # Brownian phase walk: standard deviation grows like √t with a
+        # coherence time of ``phase_slip_period_days``. Increment per
+        # sample = sqrt(dt / coherence_sec) · N(0, 1) (in radians).
+        dt_local = float(t[1] - t[0]) if len(t) > 1 else 1.0
+        slip_inc = math.sqrt(dt_local / drift_period_sec) * rng.standard_normal(t.size)
+        slip_phase = np.cumsum(slip_inc)
+
+        # Cumulative instantaneous phase = ∫ω(t)dt + slip + initial.
+        inst_phase = np.cumsum(omega_inst) * dt_local + slip_phase + phase0
+        bg[:, 1] += amplitude * amp_env * np.sin(inst_phase)
+        bg[:, 2] += 0.3 * amplitude * amp_env * np.cos(inst_phase)
 
 
 def bandlimited_noise_burst(

@@ -181,6 +181,7 @@ def _multiband_specs(
     *,
     amplitude: float | list[float] = 1.0,
     n_cycles: float = 5.0,
+    n_cycles_sigma: float = 0.3,
     difficulty: str = "moderate",
     equalize_band_snr: bool = True,
     noise_alpha: float | None = None,
@@ -192,15 +193,26 @@ def _multiband_specs(
     r"""Build ``len(centers)`` EventSpecs distributed evenly across bands.
 
     Each event's period is log-uniform sampled within its assigned
-    band, and ``decay_hours`` is set to ``n_cycles * P / 4`` so every
-    packet spans roughly the same number of cycles across bands.
-    ``extra`` is passed through to :class:`EventSpec` unchanged.
+    band. ``decay_hours`` is set to ``n_cycles·P/4`` where
+    ``n_cycles`` is drawn per-event from ``LogNormal(ln(n_cycles),
+    n_cycles_sigma)`` — real catalog packets show substantial
+    duration scatter at fixed period, and deterministically coupling
+    duration to period ("5-cycle always") turns envelope width into
+    a free label. Pass ``n_cycles_sigma=0`` to recover the old
+    deterministic behaviour. ``extra`` is passed through to
+    :class:`EventSpec` unchanged.
 
     Parameters
     ----------
     amplitude : float or list[float]
         Reference amplitude (interpreted as QP60-band amplitude when
         ``equalize_band_snr`` is True).
+    n_cycles : float
+        Median number of cycles enclosed by the ±2σ envelope window.
+    n_cycles_sigma : float
+        Log-normal scatter of ``n_cycles`` per event. 0 disables
+        jitter. 0.3 (default) ≈ ±30 % fractional scatter — matches
+        the observed spread in the v5 catalog.
     equalize_band_snr : bool
         If True (default), scale each event's amplitude so its analytic
         in-band SNR matches what ``amplitude`` would produce at QP60.
@@ -229,11 +241,19 @@ def _multiband_specs(
     if amp_jitter_sigma > 0:
         jitter = rng.lognormal(mean=0.0, sigma=amp_jitter_sigma, size=len(amps))
         amps = [float(a * j) for a, j in zip(amps, jitter)]
+    # Log-normal n_cycles per event. Use ``math.log(n_cycles)`` as
+    # the mean so the *median* of the distribution is ``n_cycles``.
+    if n_cycles_sigma > 0:
+        cycles_draw = rng.lognormal(
+            mean=math.log(n_cycles), sigma=n_cycles_sigma, size=len(centers),
+        )
+    else:
+        cycles_draw = np.full(len(centers), n_cycles)
     specs: list[EventSpec] = []
-    for c, b, a in zip(centers, bands, amps):
+    for c, b, a, n_cyc in zip(centers, bands, amps, cycles_draw):
         p_sec = _sample_periods_in_band(b, 1, rng)[0]
-        # ±2σ envelope encloses ~n_cycles full cycles → σ = n·P/4.
-        decay_h = n_cycles * p_sec / (4.0 * 3600.0)
+        # ±2σ envelope encloses ~n_cyc full cycles → σ = n·P/4.
+        decay_h = float(n_cyc) * p_sec / (4.0 * 3600.0)
         specs.append(EventSpec(
             band=b, period_sec_override=p_sec,
             amplitude=float(a), center_hours=c,
@@ -1639,6 +1659,391 @@ def tier3_continuous_spectrum() -> ScenarioConfig:
 
 
 # ======================================================================
+# Round-3 hardening scenarios — defensible-paper additions
+# ======================================================================
+
+# --- Item 3: Anisotropy sensitivity ---
+
+def tier3_isotropic_noise() -> ScenarioConfig:
+    """8 multiband packets in noise where σ_par = σ_perp.
+
+    The default magnetospheric background uses σ_par = σ_perp/2,
+    matching von Papen 2014. A detector whose transverse-ratio gate
+    rides on this prior would over-reject Alfvénic packets in
+    isotropic noise. This scenario exposes that dependency.
+    """
+    dataset_id = "tier3_isotropic_noise"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets in isotropic colored noise (σ_par = σ_perp)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.07,
+        background_trend=True, isotropic_noise=True,
+        difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.07,
+        ),
+    )
+
+
+def tier3_extreme_anisotropy() -> ScenarioConfig:
+    """8 multiband packets where σ_par = σ_perp / 4.
+
+    Pushes the parallel noise floor down by a factor 4 from the
+    nominal σ_perp/2. The transverse-ratio filter must still pass
+    Alfvénic events — a too-loose ratio threshold would let
+    compressional false positives through.
+    """
+    dataset_id = "tier3_extreme_anisotropy"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets in extreme-anisotropy noise (σ_par = σ_perp/4)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.07,
+        background_trend=True, anisotropy_par_ratio=0.25,
+        difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.07,
+        ),
+    )
+
+
+# --- Item 5: Non-Gaussian envelope shapes ---
+
+def tier3_lognormal_envelope() -> ScenarioConfig:
+    """8 multiband packets with log-normal envelopes (heavy-tailed decay).
+
+    Real packets often grow rapidly out of a noise floor and decay
+    slowly; the Gaussian-only training of a detector that trims by
+    fixed-power threshold may bias toward packets with symmetric
+    decay. This scenario forces the detector to handle skewed
+    envelopes without leaning on a Gaussian prior.
+    """
+    dataset_id = "tier3_lognormal_envelope"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets with log-normal envelopes",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=True, difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.05,
+            envelope_shape="lognormal",
+        ),
+    )
+
+
+def tier3_rayleigh_envelope() -> ScenarioConfig:
+    """8 multiband packets with Rayleigh-shaped envelopes (sharp rise)."""
+    dataset_id = "tier3_rayleigh_envelope"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets with Rayleigh envelopes (sharp rise, slow fall)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=True, difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.05,
+            envelope_shape="rayleigh",
+        ),
+    )
+
+
+# --- Item 1: Heavy-tailed and regime-switching noise ---
+
+def tier3_heavy_tail_noise() -> ScenarioConfig:
+    """8 multiband packets in Student-t (df=5) heavy-tailed colored noise.
+
+    Real magnetometer residuals show occasional rare-event spikes
+    (CME shocks, current-sheet crossings) that the Gaussian
+    Timmer–König model under-represents. df=5 gives kurtosis 9 vs
+    Gaussian 3 — large excursions are 2–4× more frequent.
+    """
+    dataset_id = "tier3_heavy_tail_noise"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets in heavy-tailed (Student-t df=5) noise",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.06,
+        background_trend=True, noise_tail_df=5.0,
+        difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.06,
+        ),
+    )
+
+
+def tier3_regime_switching_noise() -> ScenarioConfig:
+    """10 multiband packets in piecewise-stationary α(t)∈[1.0, 1.7] noise.
+
+    Tests robustness to non-stationary spectral slope on 6–12 h
+    blocks — the actual mode of variability in Cassini residuals.
+    """
+    dataset_id = "tier3_regime_switching_noise"
+    centers = _centers(10, 14)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="10 multiband packets in regime-switching α∈[1.0,1.7] noise",
+        duration_days=14, noise_alpha=1.3, noise_sigma=0.06,
+        background_trend=False,
+        noise_regime_switching=True,
+        noise_alpha_range=(1.0, 1.7),
+        noise_segment_hours_range=(6.0, 12.0),
+        ppo_amplitude=0.4, difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.7, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.3, noise_sigma=0.06,
+        ),
+    )
+
+
+# --- Item 2: Realistic PPO ---
+
+def tier3_realistic_ppo() -> ScenarioConfig:
+    """8 multiband packets atop log-normal-modulated, drifting PPO.
+
+    Real PPO is not a clean dual sinusoid — it has cycle-to-cycle
+    amplitude scatter, slow period drift, and occasional phase
+    slips. A detector that rejects clean 10.7 h tones may still
+    over-reject realistic PPO; this scenario discriminates that case.
+    """
+    dataset_id = "tier3_realistic_ppo"
+    centers = _centers(8, 14)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 multiband packets atop log-normal/drifting/phase-slipping PPO",
+        duration_days=14, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=True, ppo_amplitude=0.7,
+        realistic_ppo=True,
+        difficulty_tier="tier3",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.6, n_cycles=5.0,
+            difficulty="hard", noise_alpha=1.2, noise_sigma=0.05,
+        ),
+    )
+
+
+# --- Item 7: Envelope-correlation gate calibration sweep + true sawtooth harmonic ---
+
+def tier4_envcorr_sweep() -> ScenarioConfig:
+    """QP60+QP120 pairs at Δ-centre = {0, 0.25σ, 0.5σ, σ}.
+
+    Calibration scenario: sweeps the time-offset between matched
+    co-occurring QP60 and QP120 packets so that the harmonic
+    suppressor's envelope-correlation gate is exercised across the
+    ambiguity boundary (env_corr ≈ 0.95). Reports the gate as a
+    ROC-style sweep, not a single point.
+    """
+    dataset_id = "tier4_envcorr_sweep"
+    rng = _scenario_rng(dataset_id)
+    duration_days = 18
+    # Four offsets × 3 pairs each, evenly spaced, with σ derived from
+    # QP60 5-cycle envelope: σ_60 ≈ 5·60min/4 = 75 min ≈ 1.25 h.
+    sigma_h = 1.25
+    offsets = [0.0, 0.25, 0.5, 1.0]
+    n_pairs_per_offset = 3
+    centers = _centers(
+        len(offsets) * n_pairs_per_offset, duration_days,
+        margin_h=24, jitter_frac=0.2,
+    )
+    specs: list[EventSpec] = []
+    idx = 0
+    for off in offsets:
+        for _ in range(n_pairs_per_offset):
+            c = centers[idx]
+            idx += 1
+            p60 = float(_sample_periods_in_band("QP60", 1, rng)[0])
+            p120 = 2.0 * p60  # exact 2:1 to challenge the gate
+            decay_h = 5.0 * p60 / (4.0 * 3600.0)
+            # QP60 at c; QP120 at c + off·σ
+            specs.append(EventSpec(
+                band="QP60", period_sec_override=p60,
+                amplitude=1.6, center_hours=c,
+                decay_hours=decay_h, difficulty="extreme",
+                event_type="envcorr_sweep",
+            ))
+            specs.append(EventSpec(
+                band="QP120", period_sec_override=p120,
+                amplitude=1.6, center_hours=c + off * sigma_h,
+                decay_hours=decay_h * 2.0,  # QP120 packet roughly 2× longer
+                difficulty="extreme",
+                event_type="envcorr_sweep",
+            ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description=(
+            "Calibration: matched QP60+QP120 pairs at Δ=0, 0.25σ, 0.5σ, σ — "
+            "exposes env-corr gate as ROC, not a single threshold"
+        ),
+        duration_days=duration_days, noise_alpha=1.3, noise_sigma=0.05,
+        background_trend=True, difficulty_tier="tier4",
+        event_specs=specs,
+    )
+
+
+def tier4_phase_locked_sawtooth() -> ScenarioConfig:
+    """8 QP60 packets steepened to sawtooth shape via Fourier truncation.
+
+    Uses ``harmonic_model='sawtooth_truncated'`` with
+    ``harmonic_content=0.6`` so the second harmonic is phase-locked
+    to the fundamental — the *real* steepened-wave behaviour the
+    harmonic suppressor is meant to detect, vs. the random-phase
+    nuisance harmonic of the existing ``tier4_harmonic_pairs``
+    scenario. Detector should keep all QP60 fundamentals and reject
+    the QP30 ‘children’ at 2f.
+    """
+    dataset_id = "tier4_phase_locked_sawtooth"
+    centers = _centers(8, 10)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="8 QP60 packets with phase-locked sawtooth harmonics (true MHD steepening)",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
+        background_trend=True, difficulty_tier="tier4",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.8, n_cycles=5.0,
+            difficulty="extreme", noise_alpha=1.2, noise_sigma=0.05,
+            harmonic_content=0.6,
+            harmonic_model="sawtooth_truncated",
+        ),
+    )
+
+
+# --- Item 10: Empty-null specificity scenarios ---
+
+def decoy_null_alpha_white() -> ScenarioConfig:
+    """10-day pure colored background at α=0.8 with no injections."""
+    return ScenarioConfig(
+        dataset_id="decoy_null_alpha_white",
+        description="Pure α=0.8 background, 10 d, no injections (FP/day measure)",
+        duration_days=10, noise_alpha=0.8, noise_sigma=0.06,
+        background_trend=False, ppo_amplitude=0.0,
+        difficulty_tier="decoy", event_specs=[],
+    )
+
+
+def decoy_null_alpha_pink() -> ScenarioConfig:
+    """10-day pure colored background at α=1.2 (Cassini median) with no injections."""
+    return ScenarioConfig(
+        dataset_id="decoy_null_alpha_pink",
+        description="Pure α=1.2 background + PPO, 10 d, no injections",
+        duration_days=10, noise_alpha=1.2, noise_sigma=0.06,
+        background_trend=True, ppo_amplitude=0.5,
+        difficulty_tier="decoy", event_specs=[],
+    )
+
+
+def decoy_null_alpha_steep() -> ScenarioConfig:
+    """10-day pure colored background at α=1.7 (steep / Kolmogorov-ish)."""
+    return ScenarioConfig(
+        dataset_id="decoy_null_alpha_steep",
+        description="Pure α=1.7 background, 10 d, no injections (worst-case red noise)",
+        duration_days=10, noise_alpha=1.7, noise_sigma=0.06,
+        background_trend=False, ppo_amplitude=0.4,
+        difficulty_tier="decoy", event_specs=[],
+    )
+
+
+# --- Item 12: Out-of-distribution holdout family ---
+
+def holdout_unseen_regime() -> ScenarioConfig:
+    """Held-out: 4-cycle, ellipticity ∈ [-0.3, 0.3], α=0.5, lognormal env.
+
+    Combination of parameters that no tuning scenario exposes the
+    detector to. If composite is stable when this scenario is
+    included, the detector generalises beyond the calibration set.
+    """
+    dataset_id = "holdout_unseen_regime"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(8, 12)
+    bands = _balanced_band_assignment(8, rng)
+    specs: list[EventSpec] = []
+    for c, b in zip(centers, bands):
+        p_sec = float(_sample_periods_in_band(b, 1, rng)[0])
+        decay_h = 4.0 * p_sec / (4.0 * 3600.0)  # exactly 4 cycles
+        ell = float(rng.uniform(-0.3, 0.3))
+        specs.append(EventSpec(
+            band=b, period_sec_override=p_sec,
+            amplitude=1.7, center_hours=c, decay_hours=decay_h,
+            difficulty="hard", ellipticity=ell,
+            polarization="elliptical",
+            envelope_shape="lognormal",
+            event_type="holdout",
+        ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Holdout: 4-cycle, near-linear pol, α=0.5 noise, lognormal env",
+        duration_days=12, noise_alpha=0.5, noise_sigma=0.06,
+        background_trend=False, ppo_amplitude=0.5,
+        difficulty_tier="holdout", event_specs=specs,
+    )
+
+
+def holdout_band_edges() -> ScenarioConfig:
+    """Held-out: events at QP-band edges with mixed harmonic models."""
+    dataset_id = "holdout_band_edges"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(9, 14)
+    # Three events per band, periods near band edges
+    period_picks: list[tuple[str, float]] = []
+    for band_name in ("QP30", "QP60", "QP120"):
+        b = QP_BANDS[band_name]
+        for f in (0.05, 0.5, 0.95):
+            p = math.exp(
+                math.log(b.period_min_sec) +
+                f * (math.log(b.period_max_sec) - math.log(b.period_min_sec))
+            )
+            period_picks.append((band_name, p))
+    rng.shuffle(period_picks)
+    specs: list[EventSpec] = []
+    for c, (band_name, p_sec) in zip(centers, period_picks):
+        decay_h = 5.0 * p_sec / (4.0 * 3600.0)
+        # Mix harmonic models — half phase-locked steepening, half random
+        harm_model = "sawtooth_truncated" if rng.uniform() < 0.5 else "linear_2f"
+        specs.append(EventSpec(
+            band=band_name, period_sec_override=p_sec,
+            amplitude=1.6, center_hours=c, decay_hours=decay_h,
+            difficulty="hard",
+            harmonic_content=float(rng.uniform(0.0, 0.4)),
+            harmonic_model=harm_model,
+            envelope_shape="rayleigh",
+            event_type="holdout",
+        ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Holdout: band-edge periods, mixed harmonic models, Rayleigh envelopes",
+        duration_days=14, noise_alpha=1.4, noise_sigma=0.06,
+        background_trend=True, difficulty_tier="holdout", event_specs=specs,
+    )
+
+
+def holdout_realistic_ppo_packets() -> ScenarioConfig:
+    """Held-out: catalog-amplitude packets atop realistic PPO + heavy-tailed noise."""
+    dataset_id = "holdout_realistic_ppo_packets"
+    centers = _centers(10, 16)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description=(
+            "Holdout: catalog-amplitude multiband packets atop realistic PPO + "
+            "Student-t (df=6) heavy-tailed noise"
+        ),
+        duration_days=16, noise_alpha=1.4, noise_sigma=0.05,
+        background_trend=True, ppo_amplitude=0.7,
+        realistic_ppo=True, noise_tail_df=6.0,
+        difficulty_tier="holdout",
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.5, n_cycles=5.0,
+            n_cycles_sigma=0.35,
+            difficulty="hard", noise_alpha=1.4, noise_sigma=0.05,
+        ),
+    )
+
+
+# ======================================================================
 # Diagnostic scenarios — reported separately, NOT in composite score
 # ======================================================================
 
@@ -1820,6 +2225,23 @@ ALL_SCENARIOS: dict[str, callable] = {
     "diag_null_pure_noise": diag_null_pure_noise,
     "diag_uniform_period_sweep": diag_uniform_period_sweep,
     "diag_non_canonical_clusters": diag_non_canonical_clusters,
+    # v5 hardening (round-3 statistical review) — included in composite
+    "tier3_isotropic_noise": tier3_isotropic_noise,
+    "tier3_extreme_anisotropy": tier3_extreme_anisotropy,
+    "tier3_lognormal_envelope": tier3_lognormal_envelope,
+    "tier3_rayleigh_envelope": tier3_rayleigh_envelope,
+    "tier3_heavy_tail_noise": tier3_heavy_tail_noise,
+    "tier3_regime_switching_noise": tier3_regime_switching_noise,
+    "tier3_realistic_ppo": tier3_realistic_ppo,
+    "tier4_envcorr_sweep": tier4_envcorr_sweep,
+    "tier4_phase_locked_sawtooth": tier4_phase_locked_sawtooth,
+    "decoy_null_alpha_white": decoy_null_alpha_white,
+    "decoy_null_alpha_pink": decoy_null_alpha_pink,
+    "decoy_null_alpha_steep": decoy_null_alpha_steep,
+    # v5 holdout — excluded from composite by default (see HOLDOUT_SCENARIOS)
+    "holdout_unseen_regime": holdout_unseen_regime,
+    "holdout_band_edges": holdout_band_edges,
+    "holdout_realistic_ppo_packets": holdout_realistic_ppo_packets,
 }
 
 #: Diagnostic scenarios are excluded from the composite score.
@@ -1832,11 +2254,23 @@ DIAGNOSTIC_SCENARIOS: frozenset[str] = frozenset({
     "diag_non_canonical_clusters",
 })
 
+#: Holdout scenarios are also excluded from the default composite —
+#: they exist to verify generalisation. The intended workflow is:
+#: tune the detector on the main 40+ scenario set, then check the
+#: holdout suite separately. Including them in the headline number
+#: contaminates that test.
+HOLDOUT_SCENARIOS: frozenset[str] = frozenset({
+    "holdout_unseen_regime",
+    "holdout_band_edges",
+    "holdout_realistic_ppo_packets",
+})
+
 TIER_SCENARIOS: dict[str, list[str]] = {
     "tier1": [k for k in ALL_SCENARIOS if k.startswith("tier1")],
     "tier2": [k for k in ALL_SCENARIOS if k.startswith("tier2")],
     "tier3": [k for k in ALL_SCENARIOS if k.startswith("tier3")],
     "tier4": [k for k in ALL_SCENARIOS if k.startswith("tier4")],
     "decoy": [k for k in ALL_SCENARIOS if k.startswith("decoy")],
+    "holdout": sorted(HOLDOUT_SCENARIOS),
     "diagnostic": sorted(DIAGNOSTIC_SCENARIOS),
 }

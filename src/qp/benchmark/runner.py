@@ -310,3 +310,139 @@ def run_tier(tier: str, **kwargs) -> SuiteScore:
             f"Unknown tier: {tier!r}. Known: {sorted(TIER_SCENARIOS)}"
         )
     return run_benchmark(scenario_ids=ids, **kwargs)
+
+
+# ------------------------------------------------------------------
+# Multi-seed sweep — paper-grade reporting
+# ------------------------------------------------------------------
+
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class SeedSweepResult:
+    """Aggregate of a multi-seed run.
+
+    The point estimate ``mean`` is the same one a single-seed run
+    would report; ``std`` is the standard deviation across seeds.
+    Without ``std``, a single number is not paper-defensible —
+    referees will (rightly) ask whether the headline depends on a
+    lucky seed. Aim for ``std/mean`` < 5 % on the composite.
+    """
+
+    composite_mean: float
+    composite_std: float
+    composite_per_seed: list[float]
+    per_metric_mean: dict[str, float]
+    per_metric_std: dict[str, float]
+    suites: list[SuiteScore]
+    seeds: list[int]
+
+
+def run_benchmark_multi_seed(
+    scenario_ids: list[str] | None = None,
+    seeds: list[int] | None = None,
+    n_seeds: int = 10,
+    base_seed_offset: int = 0,
+    **kwargs,
+) -> SeedSweepResult:
+    """Run the suite at multiple seeds and report mean ± std.
+
+    Each seed regenerates the canonical datasets to a fresh per-seed
+    output directory (``data_dir / f"seed_{seed:04d}"``) so seeds
+    are fully independent. To save disk, leave ``data_dir`` unset
+    and the runner will write under the default ``Output/benchmark/``
+    namespace; pass an explicit ``data_dir`` per-seed if you want
+    parallel runs or want to keep historical seeds.
+
+    Parameters
+    ----------
+    scenario_ids : list of str, optional
+        Which scenarios to run. ``None`` = all.
+    seeds : list of int, optional
+        Explicit per-seed offsets added to ``BASE_SEED``. Overrides
+        ``n_seeds`` and ``base_seed_offset`` when given.
+    n_seeds : int
+        Number of seeds to run when ``seeds`` is None. Default 10
+        (one decade of independent realisations — matches GW /
+        biosignal benchmark conventions).
+    base_seed_offset : int
+        Starting offset added to ``BASE_SEED`` for the first seed
+        when ``seeds`` is None. Sweeps run as
+        ``BASE_SEED + base_seed_offset + i``.
+    **kwargs
+        Passed through to :func:`run_benchmark`. Note: the per-seed
+        runner forces ``regenerate=True`` so each seed gets fresh
+        data; pass ``data_dir`` to control where it lives.
+    """
+    from qp.benchmark.scoring import composite_detection_score
+
+    if seeds is None:
+        seeds = list(range(base_seed_offset, base_seed_offset + n_seeds))
+
+    base_data_dir = kwargs.pop("data_dir", None)
+
+    suites: list[SuiteScore] = []
+    composites: list[float] = []
+    metric_lists: dict[str, list[float]] = {
+        "f1": [],
+        "band_macro": [],
+        "decoy": [],
+        "iou": [],
+        "precision": [],
+        "recall": [],
+    }
+
+    # Temporarily override BASE_SEED so that scenario-index seeding
+    # picks up our seed offset. The simpler path is to dispatch with
+    # a per-seed data_dir — generate_canonical_datasets uses
+    # ``BASE_SEED + idx``, so to vary across seeds we monkey-patch
+    # the module global for the duration of each call.
+    import qp.benchmark.runner as _runner
+
+    original_base = _runner.BASE_SEED
+    try:
+        for s in seeds:
+            _runner.BASE_SEED = original_base + s
+            seed_data_dir = (
+                (base_data_dir / f"seed_{s:04d}")
+                if base_data_dir is not None else None
+            )
+            suite = run_benchmark(
+                scenario_ids=scenario_ids,
+                data_dir=seed_data_dir,
+                regenerate=True,
+                **kwargs,
+            )
+            suites.append(suite)
+            composites.append(composite_detection_score(suite))
+            metric_lists["f1"].append(suite.overall_f1)
+            metric_lists["band_macro"].append(suite.band_accuracy_macro)
+            metric_lists["decoy"].append(suite.decoy_rejection_rate)
+            metric_lists["precision"].append(suite.overall_precision)
+            metric_lists["recall"].append(suite.overall_recall)
+            mean_iou_seed = float(np.mean([
+                s.mean_iou for s in suite.dataset_scores if s.mean_iou > 0
+            ])) if any(
+                s.mean_iou > 0 for s in suite.dataset_scores
+            ) else 0.0
+            metric_lists["iou"].append(mean_iou_seed)
+    finally:
+        _runner.BASE_SEED = original_base
+
+    arr = np.asarray(composites)
+    return SeedSweepResult(
+        composite_mean=float(arr.mean()),
+        composite_std=float(arr.std(ddof=1)) if arr.size > 1 else 0.0,
+        composite_per_seed=composites,
+        per_metric_mean={
+            k: float(np.mean(v)) for k, v in metric_lists.items()
+        },
+        per_metric_std={
+            k: float(np.std(v, ddof=1)) if len(v) > 1 else 0.0
+            for k, v in metric_lists.items()
+        },
+        suites=suites,
+        seeds=seeds,
+    )

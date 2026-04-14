@@ -696,12 +696,14 @@ def filter_detections(
             if out_pow > spectral_concentration * in_pow:
                 continue
 
-        # Trim ridge extent to the peak-row "±3 σ" envelope: the
-        # σ-mask ridges straggle past the wave's physical envelope.
-        # 1 % of Gaussian peak power corresponds to ±3 σ — the same
-        # envelope window the ground-truth manifest uses for
-        # start_sec/end_sec. This aligns detection boundaries with
-        # the convention used for IoU scoring.
+        # Trim ridge extent to the peak-row ±2 σ envelope: σ-mask
+        # ridges straggle past the wave's physical envelope. The
+        # Gaussian power envelope exp(-t²/σ²) reaches 0.02 of its
+        # peak at t ≈ 1.98 σ, so thresholding at ``0.02 × peak``
+        # gives the same window the benchmark's ground-truth manifest
+        # writes to ``start_sec`` / ``end_sec`` (± 2 σ, 95.4 % energy).
+        # Aligning these conventions removes a ~5 % systematic IoU
+        # underestimate that used to penalise perfect detections.
         if peak.period_sec and peak.period_sec > 0:
             pf_idx = int(np.argmin(np.abs(periods - peak.period_sec)))
             row = perp_power[pf_idx, i0 : i1 + 1]

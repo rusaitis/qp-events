@@ -142,3 +142,18 @@ class WaveTemplate:
     amplitude_jitter: float = 0.0  # fractional RMS jitter per cycle (0.3 = ±30%)
     sawtooth_width: float = 0.8  # scipy sawtooth width (0=falling, 1=rising)
     harmonic_content: float = 0.0  # fraction of amplitude in 2nd harmonic
+    # Envelope shape — Gaussian by default. ``"lognormal"`` rises
+    # rapidly and decays slowly with a heavy tail (better match to
+    # transient packets that grow from a noise floor); ``"rayleigh"``
+    # has a sharper rise and a slower fall than Gaussian. All shapes
+    # are normalised to peak amplitude 1 at the time of maximum.
+    envelope_shape: str = "gaussian"  # 'gaussian', 'lognormal', 'rayleigh'
+    # Harmonic generation model. ``"linear_2f"`` (default) injects a
+    # single 2f sine with random phase scaled by ``harmonic_content``
+    # — a phenomenological nuisance harmonic. ``"sawtooth_truncated"``
+    # constructs harmonics from the analytic Fourier coefficients of
+    # a sawtooth wave truncated at 10 harmonics, with phases tied to
+    # the fundamental — physically consistent with nonlinear wave
+    # steepening. ``harmonic_content`` then sets the steepening
+    # strength (0 → pure sine, 1 → fully steepened sawtooth shape).
+    harmonic_model: str = "linear_2f"  # 'linear_2f' or 'sawtooth_truncated'
