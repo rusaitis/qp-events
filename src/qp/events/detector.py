@@ -744,16 +744,19 @@ def filter_detections(
             # many cycles → coh_glob < 0.95.
             #
             # Skip when one transverse component is much weaker than
-            # the other (power ratio > 10×): that is the signature of
+            # the other (power ratio ≥ 20×): that is the signature of
             # linear polarization (b_perp2 ≈ 0), and any coherence test
             # would compare signal against component-wise noise and
-            # always fail.
+            # always fail. 20× corresponds roughly to SNR ≈ 6 in a
+            # purely linearly polarized wave embedded in isotropic
+            # noise; tighter than that starts leaking decoy bursts
+            # that happen to have one randomly-weaker component.
             if c1.size > 3:
                 s11_g = np.mean(np.abs(c1) ** 2)
                 s22_g = np.mean(np.abs(c2) ** 2)
                 pmax = max(s11_g, s22_g)
                 pmin = min(s11_g, s22_g)
-                if pmin > 0 and pmax / pmin < 10.0:
+                if pmin > 0 and pmax / pmin < 20.0:
                     s12_g = np.mean(c1 * np.conj(c2))
                     den_g = s11_g * s22_g
                     if den_g > 0:
