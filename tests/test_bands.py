@@ -66,18 +66,24 @@ class TestGetBand:
 
 
 class TestIsInBand:
+    """Bands are contiguous half-octave windows (v4):
+    QP30 [21.21, 42.43), QP60 [42.43, 84.85), QP120 [84.85, 169.71) min.
+    """
     @pytest.mark.parametrize(
         "period_min,band,expected",
         [
             (30.0, "QP30", True),
             (60.0, "QP60", True),
             (120.0, "QP120", True),
-            (60.0, "QP30", False),
-            (45.0, "QP30", False),  # 45 min belongs to QP60
-            (45.0, "QP60", True),
-            (90.0, "QP120", True),
-            (89.99, "QP120", False),
-            (40.0, "QP30", False),  # half-open at upper edge
+            (50.0, "QP30", False),  # 50 min belongs to QP60
+            (42.43, "QP30", False),  # half-open at upper edge
+            (42.43, "QP60", True),
+            (84.0, "QP60", True),
+            (85.0, "QP120", True),
+            (21.0, "QP30", False),  # below QP30 lower (21.21)
+            (22.0, "QP30", True),
+            (169.0, "QP120", True),
+            (170.0, "QP120", False),  # above QP120 upper (169.71)
         ],
     )
     def test_membership(self, period_min, band, expected):
@@ -101,10 +107,16 @@ class TestClassifyPeriod:
         assert classify_period(60 * 60) == "QP60"
         assert classify_period(120 * 60) == "QP120"
 
-    def test_outside_returns_none(self):
-        assert classify_period(5 * 60) is None  # rejected HF
-        assert classify_period(15 * 3600) is None  # rejected LF
-        assert classify_period(42 * 60) is None  # gap between QP30 and QP60
+    def test_gap_labels_inside_search(self):
+        # Below QP30 but within [15, 180] → sub_qp30
+        assert classify_period(17 * 60) == "sub_qp30"
+        # Above QP120 but within [15, 180] → super_qp120
+        assert classify_period(175 * 60) == "super_qp120"
+
+    def test_outside_search_returns_none(self):
+        assert classify_period(5 * 60) is None     # below 15 min
+        assert classify_period(200 * 60) is None   # above 180 min
+        assert classify_period(15 * 3600) is None  # 15 hours
 
 
 class TestSearchBand:

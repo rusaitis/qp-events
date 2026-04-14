@@ -365,20 +365,44 @@ def detect_wave_packets_multi(
 
     min_duration_sec = min_duration_hours * 3600.0
 
-    packets: list[WavePacketPeak] = []
-    for b in bands:
-        ridges = extract_ridges(
+    # Band-agnostic ridge extraction over the search window,
+    # partitioned into ~half-octave slices. Slicing prevents
+    # mega-ridges that would otherwise connect temporally-adjacent
+    # wave packets at different periods via Morlet smearing. The
+    # `bands` argument is kept for signature back-compat but is
+    # ignored — ridges are labelled post-hoc by classify_period.
+    from qp.events.bands import SEARCH_BAND, classify_period
+    _ = list(bands)
+
+    # Log-uniform slicing into ~half-octave windows (factor sqrt(2)).
+    p_lo = math.log(SEARCH_BAND.period_min_sec)
+    p_hi = math.log(SEARCH_BAND.period_max_sec)
+    n_slices = max(1, int(round((p_hi - p_lo) / math.log(math.sqrt(2.0)))))
+    edges = np.linspace(p_lo, p_hi, n_slices + 1)
+    # Slight overlap (10 % of slice width) so wave packets straddling
+    # a boundary aren't split by the partition.
+    overlap = 0.1 * (edges[1] - edges[0])
+    ridges = []
+    for i in range(n_slices):
+        lo = math.exp(edges[i] - overlap) if i > 0 else math.exp(edges[i])
+        hi = (
+            math.exp(edges[i + 1] + overlap)
+            if i < n_slices - 1 else math.exp(edges[i + 1])
+        )
+        ridges.extend(extract_ridges(
             cwt_power,
             freq,
-            band=b,
+            period_range_sec=(lo, hi),
             threshold_mask=threshold_mask,
             dt=dt,
             min_duration_sec=min_duration_sec,
             min_pixels=min_pixels,
             coi_factor=coi_factor,
-        )
-        for ridge in ridges:
-            packets.append(_ridge_to_packet(ridge, times_list, n_time))
+        ))
+    packets: list[WavePacketPeak] = [
+        _ridge_to_packet(ridge, times_list, n_time, classify_period)
+        for ridge in ridges
+    ]
 
     packets.sort(key=lambda p: p.peak_time)
     return packets
@@ -388,8 +412,13 @@ def _ridge_to_packet(
     ridge: Ridge,
     times: list[datetime.datetime],
     n_time: int,
+    classify_fn,
 ) -> WavePacketPeak:
-    """Convert a :class:`Ridge` to a :class:`WavePacketPeak`."""
+    """Convert a :class:`Ridge` to a :class:`WavePacketPeak`.
+
+    The ``band`` label is assigned post-hoc from the ridge's peak
+    period via ``classify_fn`` (usually ``classify_period``).
+    """
     t_start = times[max(0, ridge.t_start_idx)]
     t_end = times[min(n_time - 1, ridge.t_end_idx)]
     t_peak = times[ridge.peak_time_idx]
@@ -398,7 +427,7 @@ def _ridge_to_packet(
         prominence=float(ridge.peak_power),
         date_from=t_start,
         date_to=t_end,
-        band=ridge.band,
+        band=classify_fn(float(ridge.peak_period_sec)),
         period_sec=float(ridge.peak_period_sec),
     )
 
@@ -489,6 +518,7 @@ def detect_with_gate(
         spectral_concentration=gate.spectral_concentration,
         dedup_window_sec=gate.dedup_window_sec,
         min_coherence=gate.min_coherence,
+        max_fwhm_log_period=gate.max_fwhm_log_period,
         cwt_perp1_complex=cwt1,
         cwt_perp2_complex=cwt2,
     )
@@ -506,34 +536,67 @@ def filter_detections(
     epoch: datetime.datetime | None = None,
     min_oscillations: float = 3.0,
     transverse_ratio: float = 0.5,
-    spectral_concentration: float | None = 0.6,
+    spectral_concentration: float | None = None,
     dedup_window_sec: float = 10800.0,
-    max_within_band_fwhm_frac: float | None = 0.85,
+    max_fwhm_log_period: float | None = 0.3,
     min_coherence: float | None = None,
     cwt_perp1_complex: np.ndarray | None = None,
     cwt_perp2_complex: np.ndarray | None = None,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
 
-    Filters: (1) min oscillation count, (2) transverse/parallel CWT
-    power ratio (Alfvén waves are transverse), (3) spectral
-    concentration (reject broadband transients), (4) same-band dedup.
+    Band-agnostic. All spectral-shape checks operate on a ±half-octave
+    log-period window around each detection's peak period — not on a
+    pre-defined QP band. The ``band`` field is purely a post-hoc label.
+
+    Filters, in order:
+
+    1. **Min oscillations** — duration must span ≥ ``min_oscillations``
+       cycles at the detection period.
+    2. **Wavelet cross-coherence** (if complex CWTs provided) — b_perp1
+       and b_perp2 must share a stable phase relation.
+    3. **Spectral narrowness** — FWHM of the period marginal, measured
+       in log10(period) around the peak period, must not exceed
+       ``max_fwhm_log_period`` (default 0.3 ≈ one octave). Morlet's
+       fundamental resolution is ~0.035; broadband transients fill
+       much more than an octave.
+    4. **Search-range edge veto** — reject peaks within 5 % (log-period)
+       of the 15-min or 180-min search window edge: those are
+       architecturally likely to be spillover from outside the window.
+    5. **Transverse ratio** — Alfvén waves are transverse; parallel
+       power in a ±half-octave window around peak must be smaller than
+       the transverse power by the configured ratio.
+    6. **(Legacy) Spectral concentration** — disabled by default.
+    7. **Trim to 2 % peak-row envelope** — align ridge boundaries with
+       the ground-truth ±3 σ convention.
+    8. **Dedup by time + period proximity** — within
+       ``dedup_window_sec`` and |log10(p1/p2)| < 0.15, keep higher
+       prominence.
+    9. **Harmonic suppression** — 2:1 / 3:1 period ratios with
+       duration-match and power-ratio gating.
     """
-    from qp.events.bands import QP_BANDS
+    from qp.events.bands import SEARCH_BAND
 
     if epoch is None:
         epoch = datetime.datetime(2000, 1, 1)
 
     periods = 1.0 / cwt_freq
-    band_masks = {
-        name: (periods >= b.period_min_sec) & (periods < b.period_max_sec)
-        for name, b in QP_BANDS.items()
-    }
-    # Log-period band widths (used by within-band peakedness check).
-    band_log_widths = {
-        name: math.log10(b.period_max_sec / b.period_min_sec)
-        for name, b in QP_BANDS.items()
-    }
+    log_periods = np.log10(periods)
+    # Search-window edge positions in log10(period) for the edge veto.
+    log_p_search_lo = math.log10(SEARCH_BAND.period_min_sec)
+    log_p_search_hi = math.log10(SEARCH_BAND.period_max_sec)
+    search_log_width = log_p_search_hi - log_p_search_lo
+    edge_guard = 0.02 * search_log_width  # 2 % of search range
+
+    def _window_mask(
+        peak_period_sec: float, half_width_octaves: float = 0.5,
+    ) -> np.ndarray:
+        """±N-octave mask around peak period (in CWT rows)."""
+        log_center = math.log10(peak_period_sec)
+        return (
+            np.abs(log_periods - log_center)
+            <= half_width_octaves * math.log10(2.0)
+        )
 
     # Make times relative to segment start for index lookup
     t_origin = t[0]
@@ -548,30 +611,24 @@ def filter_detections(
         if i1 <= i0:
             continue
 
-        # 1. Min oscillations
-        if peak.period_sec and peak.period_sec > 0:
-            if (to_rel - from_rel) / peak.period_sec < min_oscillations:
-                continue
+        if not peak.period_sec or peak.period_sec <= 0:
+            continue
 
-        # 1b. Wavelet cross-coherence between transverse components.
-        # Real Alfvén waves have a stable b_perp1↔b_perp2 phase
-        # relation (linear, circular, or elliptical polarisation).
-        # Incoherent noise bursts yield coherence ≈ 0. Coherence is
-        # smoothed by a short boxcar (≈ one cycle) before averaging,
-        # per standard time-frequency coherence estimators.
+        # 1. Min oscillations
+        if (to_rel - from_rel) / peak.period_sec < min_oscillations:
+            continue
+
+        # 2. Wavelet cross-coherence between transverse components.
         if (
             min_coherence is not None
             and cwt_perp1_complex is not None
             and cwt_perp2_complex is not None
-            and peak.period_sec
-            and peak.period_sec > 0
         ):
             pf_idx = int(
                 np.argmin(np.abs(1.0 / cwt_freq - peak.period_sec))
             )
             c1 = cwt_perp1_complex[pf_idx, i0 : i1 + 1]
             c2 = cwt_perp2_complex[pf_idx, i0 : i1 + 1]
-            # Smooth complex cross-spectrum over ~1 cycle
             win = max(
                 3,
                 int(round(peak.period_sec / (t_rel[1] - t_rel[0])))
@@ -586,60 +643,58 @@ def filter_detections(
             coh2 = np.where(
                 denom > 0, np.abs(s12) ** 2 / denom, 0.0
             )
-            coh_mean = float(coh2.mean())
-            if coh_mean < min_coherence:
+            if float(coh2.mean()) < min_coherence:
                 continue
 
-        bm = band_masks.get(peak.band or "")
-        if bm is not None and bm.any():
-            # 2. Within-band spectral peakedness — QP waves are
-            # narrowband (Morlet FWHM ≈ 0.17·P, much less than an
-            # octave). Broadband transients (compressional bursts,
-            # step-like roll artifacts) fill the entire band. Reject
-            # when the FWHM of the period marginal spans more than
-            # a fraction of the band's log-width.
-            if max_within_band_fwhm_frac is not None:
-                band_col = perp_power[bm, i0:i1].mean(axis=1)
-                if band_col.size > 2 and band_col.max() > 0:
-                    above_half = band_col > 0.5 * band_col.max()
-                    peak_local = int(band_col.argmax())
-                    # Edge-of-band veto: a ridge whose peak sits at the
-                    # first or last band row is almost always spillover
-                    # from a strong out-of-band feature (broadband burst,
-                    # adjacent band) rather than an in-band wave.
-                    n_band = int(band_col.size)
-                    if n_band >= 5 and (
-                        peak_local <= 0 or peak_local >= n_band - 1
-                    ):
+        # 3. Spectral narrowness around the detection peak period.
+        # A Morlet CWT of a pure sine has FWHM ≈ 0.035 in log10(P)
+        # (σ_freq / freq ≈ 1/omega0). Broadband transients smear
+        # well above that. Measure the FWHM on a ±1-octave window
+        # (wider than the threshold) so genuine broadband bursts
+        # can register FWHM > max_fwhm_log_period.
+        win_mask_fwhm = _window_mask(peak.period_sec, half_width_octaves=1.0)
+        if (
+            max_fwhm_log_period is not None
+            and win_mask_fwhm.any()
+        ):
+            win_col = perp_power[win_mask_fwhm, i0:i1].mean(axis=1)
+            if win_col.max() > 0:
+                above_half = win_col > 0.5 * win_col.max()
+                if above_half.any():
+                    lp = log_periods[win_mask_fwhm][above_half]
+                    fwhm_log = float(lp.max() - lp.min())
+                    if fwhm_log > max_fwhm_log_period:
                         continue
-                    if above_half.any():
-                        band_periods = periods[bm]
-                        log_p = np.log10(band_periods[above_half])
-                        log_fwhm = float(log_p.max() - log_p.min())
-                        band_w = band_log_widths.get(peak.band or "", 0.25)
-                        if band_w > 0 and (
-                            log_fwhm / band_w > max_within_band_fwhm_frac
-                        ):
-                            continue
+        # Narrower ±half-octave window for transverse-ratio check.
+        win_mask = _window_mask(peak.period_sec, half_width_octaves=0.5)
 
-            # 3. Transverse ratio — Alfvén waves are transverse
-            if par_power is not None:
-                perp_bp = float(perp_power[bm, i0:i1].mean())
-                par_bp = float(par_power[bm, i0:i1].mean())
-                if par_bp > 0 and perp_bp / par_bp < transverse_ratio:
-                    continue
+        # 4. Search-range edge veto.
+        log_p_peak = math.log10(peak.period_sec)
+        if (
+            log_p_peak < log_p_search_lo + edge_guard
+            or log_p_peak > log_p_search_hi - edge_guard
+        ):
+            continue
 
-            # 3. Spectral concentration — reject broadband transients
-            if spectral_concentration is not None:
-                in_power = float(perp_power[bm, i0:i1].mean())
-                max_other = max(
-                    (float(perp_power[om, i0:i1].mean())
-                     for ob, om in band_masks.items()
-                     if ob != peak.band and om.any()),
-                    default=0.0,
-                )
-                if max_other > spectral_concentration * in_power:
-                    continue
+        # 5. Transverse ratio (Alfvén check): perp/parallel in the
+        # ±half-octave window around the peak period.
+        if par_power is not None and win_mask.any():
+            perp_w = float(perp_power[win_mask, i0:i1].mean())
+            par_w = float(par_power[win_mask, i0:i1].mean())
+            if par_w > 0 and perp_w / par_w < transverse_ratio:
+                continue
+
+        # 6. Legacy spectral concentration (disabled by default).
+        # Kept for back-compat with older calibration studies.
+        if spectral_concentration is not None and win_mask.any():
+            in_pow = float(perp_power[win_mask, i0:i1].mean())
+            out_mask = ~win_mask
+            out_pow = (
+                float(perp_power[out_mask, i0:i1].mean())
+                if out_mask.any() else 0.0
+            )
+            if out_pow > spectral_concentration * in_pow:
+                continue
 
         # Trim ridge extent to the peak-row "±3 σ" envelope: the
         # σ-mask ridges straggle past the wave's physical envelope.
@@ -671,19 +726,33 @@ def filter_detections(
 
         filtered.append(peak)
 
-    # 4. Deduplicate: within same band, keep higher-power peak
+    # 8. Dedup by time + period proximity.
+    # Two detections whose peak times are within dedup_window_sec
+    # AND whose periods match within a third-octave (|log10 ratio| <
+    # 0.15) are the same physical wave packet, possibly split by a
+    # noise dip. Keep the higher-prominence one.
     filtered.sort(key=lambda p: p.peak_time)
     merged: list[WavePacketPeak] = []
     for peak in filtered:
-        if merged and peak.band == merged[-1].band:
+        was_merged = False
+        for existing in merged:
             sep = abs(
-                (peak.peak_time - merged[-1].peak_time).total_seconds()
+                (peak.peak_time - existing.peak_time).total_seconds()
             )
-            if sep < dedup_window_sec:
-                if peak.prominence > merged[-1].prominence:
-                    merged[-1] = peak
+            if sep >= dedup_window_sec:
                 continue
-        merged.append(peak)
+            if not existing.period_sec or not peak.period_sec:
+                continue
+            log_ratio = abs(
+                math.log10(peak.period_sec / existing.period_sec)
+            )
+            if log_ratio < 0.25:
+                if peak.prominence > existing.prominence:
+                    merged[merged.index(existing)] = peak
+                was_merged = True
+                break
+        if not was_merged:
+            merged.append(peak)
 
     # 5. Harmonic suppression — a non-sinusoidal QP wave (sawtooth,
     # square, asymmetric envelope, or explicit harmonic content) has

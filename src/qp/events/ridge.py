@@ -22,7 +22,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy import ndimage
 
-from qp.events.bands import Band, freq_to_period, get_band
+from qp.events.bands import Band, SEARCH_BAND, freq_to_period, get_band
 
 
 # Default cone-of-influence factor for the Morlet wavelet with omega0=10.
@@ -35,10 +35,12 @@ DEFAULT_COI_FACTOR: float = 1.0
 class Ridge:
     r"""A connected (time, period) region of elevated CWT power.
 
+    Ridges are band-agnostic: each one describes a wave packet at an
+    arbitrary period inside the search window. Assign a canonical
+    band label post-hoc via :func:`qp.events.bands.classify_period`.
+
     Attributes
     ----------
-    band : str
-        The QP band this ridge sits in (e.g. ``"QP60"``).
     t_start_idx, t_end_idx : int
         Inclusive sample indices marking the time extent.
     p_min_idx, p_max_idx : int
@@ -57,7 +59,6 @@ class Ridge:
         Number of pixels in the connected blob.
     """
 
-    band: str
     t_start_idx: int
     t_end_idx: int
     p_min_idx: int
@@ -100,23 +101,21 @@ def _coi_mask(
     return mask
 
 
-def _band_row_indices(
+def _period_row_indices(
     cwt_freq: NDArray[np.floating],
-    band: Band,
+    period_range_sec: tuple[float, float],
 ) -> NDArray[np.intp]:
-    r"""Return the indices of CWT rows whose period lies inside ``band``."""
+    r"""Return indices of CWT rows whose period is inside the range."""
+    p_lo, p_hi = period_range_sec
     periods_sec = freq_to_period(cwt_freq)
-    in_band = (
-        (periods_sec >= band.period_min_sec)
-        & (periods_sec < band.period_max_sec)
-    )
-    return np.flatnonzero(in_band)
+    in_range = (periods_sec >= p_lo) & (periods_sec < p_hi)
+    return np.flatnonzero(in_range)
 
 
 def extract_ridges(
     cwt_power: ArrayLike,
     cwt_freq: ArrayLike,
-    band: str | Band,
+    period_range_sec: tuple[float, float] | None = None,
     threshold_mask: ArrayLike | None = None,
     *,
     dt: float = 60.0,
@@ -124,7 +123,7 @@ def extract_ridges(
     min_pixels: int = 50,
     coi_factor: float = DEFAULT_COI_FACTOR,
 ) -> list[Ridge]:
-    r"""Extract connected ridges in one period band.
+    r"""Extract connected ridges inside a period range (band-agnostic).
 
     Parameters
     ----------
@@ -132,8 +131,10 @@ def extract_ridges(
         CWT power (``|cwt|^2`` or ``|cwt|``).
     cwt_freq : array_like, shape (n_freq,)
         Wavelet frequency axis in Hz.
-    band : str or Band
-        Which QP band to scan.
+    period_range_sec : (float, float), optional
+        Inclusive lower and exclusive upper period bound (seconds).
+        Defaults to :data:`qp.events.bands.SEARCH_BAND`'s 15-180 min
+        search window.
     threshold_mask : array_like, optional
         Boolean mask the same shape as ``cwt_power``. ``True`` means
         the cell is above the detection threshold. If ``None`` the
@@ -152,14 +153,18 @@ def extract_ridges(
     Returns
     -------
     list[Ridge]
-        Sorted by ``peak_time_idx``.
+        Sorted by ``peak_time_idx``. Ridges carry ``peak_period_sec``
+        only — band classification is applied post-hoc by the caller.
     """
     cwt_power = np.asarray(cwt_power, dtype=float)
     cwt_freq = np.asarray(cwt_freq, dtype=float)
     _n_freq, n_time = cwt_power.shape
 
-    band_obj = get_band(band)
-    row_idx = _band_row_indices(cwt_freq, band_obj)
+    if period_range_sec is None:
+        period_range_sec = (
+            SEARCH_BAND.period_min_sec, SEARCH_BAND.period_max_sec,
+        )
+    row_idx = _period_row_indices(cwt_freq, period_range_sec)
     if row_idx.size == 0:
         return []
 
@@ -244,7 +249,6 @@ def extract_ridges(
 
         ridges.append(
             Ridge(
-                band=band_obj.name,
                 t_start_idx=t_start_idx,
                 t_end_idx=t_end_idx,
                 p_min_idx=p_min_idx,

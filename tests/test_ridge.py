@@ -42,49 +42,30 @@ def _make_signal(period_min: float, amplitude: float = 1.5,
 
 
 class TestRidgeExtractionPerBand:
+    """v4: ridges are band-agnostic. We inject a wave at a canonical
+    period and check the peak period lands in the correct band
+    post-hoc via classify_period()."""
+
     @pytest.mark.parametrize(
         "band_name,period_min",
         [("QP30", 30), ("QP60", 60), ("QP120", 120)],
     )
     def test_ridge_lands_in_correct_band(self, band_name, period_min):
+        from qp.events.bands import classify_period
         signal = _make_signal(period_min=period_min, amplitude=2.0)
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band=band_name,
+            power, freq,
             min_duration_sec=1 * 3600,
             min_pixels=20,
         )
         assert len(ridges) >= 1, f"no ridge found for {band_name}"
-        # Peak period should land inside the band
+        # Peak period should classify back to the expected band
         band = QP_BANDS[band_name]
         for r in ridges:
-            assert band.period_min_sec <= r.peak_period_sec < band.period_max_sec
-
-    @pytest.mark.parametrize(
-        "true_band,wrong_band",
-        [
-            ("QP30", "QP60"),
-            ("QP30", "QP120"),
-            ("QP60", "QP30"),
-            ("QP60", "QP120"),
-            ("QP120", "QP30"),
-            ("QP120", "QP60"),
-        ],
-    )
-    def test_no_cross_band_leakage(self, true_band, wrong_band):
-        period_min = QP_BANDS[true_band].period_centroid_minutes
-        signal = _make_signal(period_min=period_min, amplitude=2.0)
-        freq, power = _cwt_for(signal)
-        ridges = extract_ridges(
-            power, freq, band=wrong_band,
-            min_duration_sec=2 * 3600,
-            min_pixels=80,
-        )
-        # Cross-band ridges should be very weak/absent. Allow at most one
-        # tiny ridge below 10% of the global power maximum.
-        max_power = power.max()
-        strong = [r for r in ridges if r.peak_power > 0.1 * max_power]
-        assert len(strong) == 0
+            if r.peak_power > 0.2 * power.max():
+                # Strongest ridge(s): must land in the target band
+                assert classify_period(r.peak_period_sec) == band_name
 
 
 class TestRidgeDuration:
@@ -95,7 +76,7 @@ class TestRidgeDuration:
                               decay_hours=decay_hours)
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band="QP60",
+            power, freq,
             min_duration_sec=2 * 3600,
             min_pixels=20,
         )
@@ -111,7 +92,7 @@ class TestRidgeDuration:
 class TestRidgeCOI:
     def test_packets_at_segment_edge_are_clipped(self):
         # Inject a Gaussian packet right at t=0 -- should be killed by
-        # the COI mask for the QP60 band (period 60 min ~ 1h edge).
+        # the COI mask.
         wave = WaveTemplate(
             period=60 * 60,
             amplitude=2.0,
@@ -123,7 +104,7 @@ class TestRidgeCOI:
         )
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band="QP60",
+            power, freq,
             min_duration_sec=2 * 3600,
             min_pixels=30,
             coi_factor=2.0,  # very strict
@@ -137,6 +118,6 @@ class TestRidgeShape:
     def test_returns_list(self):
         signal = _make_signal(period_min=60, amplitude=2.0)
         freq, power = _cwt_for(signal)
-        out = extract_ridges(power, freq, band="QP60")
+        out = extract_ridges(power, freq)
         assert isinstance(out, list)
         assert all(isinstance(r, Ridge) for r in out)

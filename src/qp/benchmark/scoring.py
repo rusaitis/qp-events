@@ -278,7 +278,16 @@ def score_dataset(
 
 
 def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
-    """Aggregate scores across the entire benchmark suite."""
+    """Aggregate scores across the entire benchmark suite.
+
+    Diagnostic scenarios (prefix ``diag_``) are excluded from the
+    aggregate metrics but kept in the returned ``dataset_scores`` so
+    they can be inspected per-scenario.
+    """
+    all_scores = scores  # keep full list, including diag_*
+    # Only aggregate non-diagnostic scenarios.
+    scores = [s for s in all_scores if not s.dataset_id.startswith("diag_")]
+
     total_tp = sum(s.n_true_positives for s in scores)
     total_fp = sum(s.n_false_positives for s in scores)
     total_fn = sum(s.n_false_negatives for s in scores)
@@ -347,26 +356,38 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         decoy_rejection_rate=decoy_rej,
         summary_score=summary,
         overall_f1_at_iou=overall_f1_at_iou,
-        dataset_scores=scores,
+        dataset_scores=all_scores,
     )
+
+
+def _non_diagnostic_scores(
+    suite: SuiteScore,
+) -> list[BenchmarkScore]:
+    """Return dataset scores excluding diagnostic (``diag_*``) scenarios."""
+    return [
+        s for s in suite.dataset_scores
+        if not s.dataset_id.startswith("diag_")
+    ]
 
 
 def composite_detection_score(suite: SuiteScore) -> float:
     r"""Weighted harmonic mean of detection capabilities.
 
-    Weights reflect scientific priorities: detection (F1) first,
-    then frequency accuracy (band + period), then localization
-    and specificity (IoU, decoy rejection).
+    Diagnostic scenarios (``diag_*``) are excluded — they only
+    contribute to the per-scenario breakdown. Weights reflect
+    scientific priorities: detection (F1) first, then frequency
+    accuracy (band + period), then localization and specificity.
 
     $$\text{score} = \frac{\sum w_i}
     {\sum w_i / \max(c_i, \epsilon)}$$
     """
+    dataset_scores = _non_diagnostic_scores(suite)
     # Clamp period error to [0, 100] then convert to accuracy
-    total_matched = sum(len(s.matches) for s in suite.dataset_scores)
+    total_matched = sum(len(s.matches) for s in dataset_scores)
     if total_matched > 0:
         mean_period_err = float(np.mean([
             m.period_error_pct
-            for s in suite.dataset_scores
+            for s in dataset_scores
             for m in s.matches
         ]))
     else:
@@ -374,8 +395,8 @@ def composite_detection_score(suite: SuiteScore) -> float:
     period_acc = max(0.0, 1.0 - mean_period_err / 100.0)
 
     mean_iou = float(np.mean([
-        s.mean_iou for s in suite.dataset_scores if s.mean_iou > 0
-    ])) if any(s.mean_iou > 0 for s in suite.dataset_scores) else 0.0
+        s.mean_iou for s in dataset_scores if s.mean_iou > 0
+    ])) if any(s.mean_iou > 0 for s in dataset_scores) else 0.0
 
     components = [
         (0.35, suite.overall_f1),

@@ -261,23 +261,21 @@ class GateConfig:
     min_duration_hours: float = 2.0
     min_pixels: int = 80
     # Quasi-periodic identification convention: ≥3 full cycles.
-    # (Cassini QP packets typically 4–6 h; 5-cycle rule over-prunes
-    # QP60/QP120 on real data — 3 cycles is the standard literature
-    # threshold for quasi-periodic identification.)
     min_oscillations: float = 3.0
     coi_factor: float = 1.0
     # Alfvén waves are transverse: reject if parallel CWT power exceeds
     # this fraction of transverse in-band power.
     transverse_ratio: float = 0.5
-    # Reject broadband transients: if another band has more than this
-    # fraction of the detection band's power. Disabled (None) by default
-    # for real data where QP bands naturally overlap; 0.6 for benchmarks.
+    # Legacy cross-band broadband rejection. Replaced by the ridge-local
+    # FWHM check (max_fwhm_log_period) in the band-agnostic pipeline.
     spectral_concentration: float | None = None
     dedup_window_sec: float = 10800.0
-    # Wavelet cross-coherence between b_perp1 and b_perp2. Real Alfvén
-    # waves have stable polarisation → coherence ≈ 1. Noise bursts
-    # yield coherence < 0.9.
+    # Wavelet cross-coherence between b_perp1 and b_perp2.
     min_coherence: float | None = 0.9
+    # Max FWHM in log10(period) of the ridge's spectral profile,
+    # measured on a ±half-octave window around the peak. Morlet's
+    # fundamental FWHM is ~0.035; broadband transients >>0.3.
+    max_fwhm_log_period: float | None = 0.3
 
 
 DEFAULT_GATE: GateConfig = GateConfig()
