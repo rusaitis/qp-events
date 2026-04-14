@@ -674,10 +674,15 @@ def filter_detections(
         # 3. Spectral narrowness around the detection peak period.
         # A Morlet CWT of a pure sine has FWHM ≈ 0.035 in log10(P)
         # (σ_freq / freq ≈ 1/omega0). Broadband transients smear
-        # well above that. Measure the FWHM on a ±1-octave window
-        # (wider than the threshold) so genuine broadband bursts
-        # can register FWHM > max_fwhm_log_period.
-        win_mask_fwhm = _window_mask(peak.period_sec, half_width_octaves=1.0)
+        # well above that. Measure the FWHM on a ±0.75-octave window:
+        # this stays just short of the 1-octave spacing between
+        # adjacent QP band centroids (QP30→QP60→QP120), so a
+        # co-occurring neighbour's narrow ridge cannot leak into the
+        # peak profile and produce a spurious broadband FWHM for a
+        # legitimate co-occurrence event. A truly broadband burst
+        # still fills the full ±0.75-octave window → FWHM ≈ 0.45 >
+        # max_fwhm_log_period and is rejected.
+        win_mask_fwhm = _window_mask(peak.period_sec, half_width_octaves=0.75)
         if (
             max_fwhm_log_period is not None
             and win_mask_fwhm.any()
