@@ -668,12 +668,14 @@ def filter_detections(
         # Narrower ±half-octave window for transverse-ratio check.
         win_mask = _window_mask(peak.period_sec, half_width_octaves=0.5)
 
-        # 4. Search-range edge veto.
+        # 4. Lower-edge veto only. The search window's upper bound is
+        # an arbitrary cut, not a physical limit — Morlet resolution is
+        # excellent at long periods and there is no aliasing from
+        # ultra-long oscillations. The lower edge (near 15 min) does
+        # need a guard: Morlet sidelobes at periods just above the
+        # Nyquist guard pull in power from shorter-period transients.
         log_p_peak = math.log10(peak.period_sec)
-        if (
-            log_p_peak < log_p_search_lo + edge_guard
-            or log_p_peak > log_p_search_hi - edge_guard
-        ):
+        if log_p_peak < log_p_search_lo + edge_guard:
             continue
 
         # 5. Transverse ratio (Alfvén check): perp/parallel in the

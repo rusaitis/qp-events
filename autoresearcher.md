@@ -6,11 +6,41 @@ Autonomous research loop for improving the QP wave event detection pipeline.
 
 **Improve the composite detection score on a realistic 64-scenario benchmark** while keeping the detection method physically motivated, general, and defensible in a paper. The benchmark (v3 hardened) includes multi-band co-occurrence, realistic noise (alpha=1.2, PPO modulation), broadband decoys, log-uniform-jittered periods within each QP band, 2–4.5-cycle short packets that stress `min_oscillations`, continuous-spectrum population tests, and out-of-band decoy waves (15–19, 80–90, 155–180 min) that stress the edge veto.
 
-**Current score: ~0.937.** The main bottlenecks are:
-- **tier3_continuous_spectrum decoys (6/8 leak)** — coherent waves at inter-band periods trigger band-edge detections
-- **Short packets below 3 cycles** — correctly rejected by `min_oscillations=3` but contribute to apparent recall loss in `tier4_minimal_cycles_multiband` (graceful, expected)
-- **Tier 1 clean QP120 jittered** — 2/8 events at near-edge periods (close to 90 or 150 min) miss due to edge veto
-- **Decoy rejection (~87%)** — leaks are mostly from the new continuous-spectrum scenario's inter-band waves
+**Current score: 0.791** (composite, default weights) on the post-round-4 hardened
+benchmark — see "Post-hardening baseline" below. The pre-hardening score on the
+older v3 benchmark was ~0.937; the drop reflects a strictly harder benchmark
+(real-data-calibrated FGM decoys, regime-switching / heavy-tailed noise, OOD
+holdout family, phase-locked sawtooth harmonics), not a detector regression.
+
+The main bottlenecks now are:
+- **Decoy rejection (0.828)** — the FGM-artifact decoys (impulsive spikes, range-change steps, SCAS plateaus) and the broadband-burst / PPO-only scenarios still leak
+- **OOD holdout precision** — `holdout_band_edges` F1 = 0.67, `holdout_unseen_regime` F1 = 0.76 (recall is 1.00 in both — extra detections, not misses)
+- **tier2 F1 = 0.895** — co-occurrence recall (0.820) still the weakest QP tier
+- **Macro band accuracy = 0.699** — one band drags the macro-mean below the micro-mean (0.902)
+
+### Post-hardening baseline (2026-04-14, commit `ae8dd3b`)
+
+After four rounds of synthetic hardening (`b6e1417 → 80dd385 → 70bc35e → e3742bd → ae8dd3b`):
+
+| metric | value |
+|---|---|
+| Composite (default) | **0.791** |
+| F1 | 0.907 |
+| Precision / Recall | 0.908 / 0.906 |
+| Band accuracy (micro / macro) | 0.902 / 0.699 |
+| Decoy rejection | 0.828 |
+| Wall time (cached datasets) | ~60 s |
+
+| tier | recall | F1 |
+|---|---|---|
+| tier1 | 0.915 | 0.925 |
+| tier2 | 0.820 | 0.895 |
+| tier3 | 0.958 | 0.935 |
+| tier4 | 0.887 | 0.893 |
+
+This is the new floor. Further detector work should be measured against this
+number, not the historical 0.937 / 0.889 baselines that were on the older
+synthetic suite.
 
 ## Philosophy
 
@@ -162,11 +192,10 @@ The composite score is a weighted harmonic mean:
 - 0.15 x decoy_rejection_rate (false positive suppression)
 - 0.15 x mean_iou (temporal localization)
 
-Current bottlenecks (from 0.889 baseline):
-- F1 = 0.898 (limited by 84% tier2 recall from co-occurrence)
-- Band accuracy = 1.000 (perfect — not a bottleneck)
-- Period error = 0.32% (excellent — not a bottleneck)
-- Decoy rejection = 0.711 (worst component — broadband bursts leak)
-- Mean IoU = 0.863 (good — minor improvement possible)
+Current bottlenecks (post-hardening 0.791 baseline, 2026-04-14):
+- F1 = 0.907 (tier2 recall = 0.820 still co-occurrence-limited)
+- Band accuracy micro = 0.902, macro = 0.699 (one band underperforms)
+- Decoy rejection = 0.828 (FGM-artifact + broadband-burst leakage)
+- OOD holdout precision drag — `holdout_band_edges` F1 = 0.67, `holdout_unseen_regime` F1 = 0.76 (over-detection, not misses)
 
-**Biggest gains available: decoy rejection (0.71 -> 0.90+) and co-occurrence recall (50% -> 80%+).**
+**Biggest gains available: decoy rejection (0.83 → 0.95+) and OOD precision (cut spurious detections in `holdout_*`).**
