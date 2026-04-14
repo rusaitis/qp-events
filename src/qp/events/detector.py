@@ -22,6 +22,7 @@ to work; new code should call ``detect_wave_packets_multi``.
 from __future__ import annotations
 
 import datetime
+import math
 from typing import Iterable
 
 import numpy as np
@@ -504,6 +505,7 @@ def filter_detections(
     transverse_ratio: float = 0.5,
     spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,
+    max_within_band_fwhm_frac: float | None = 0.7,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
 
@@ -519,6 +521,11 @@ def filter_detections(
     periods = 1.0 / cwt_freq
     band_masks = {
         name: (periods >= b.period_min_sec) & (periods < b.period_max_sec)
+        for name, b in QP_BANDS.items()
+    }
+    # Log-period band widths (used by within-band peakedness check).
+    band_log_widths = {
+        name: math.log10(b.period_max_sec / b.period_min_sec)
         for name, b in QP_BANDS.items()
     }
 
@@ -542,7 +549,27 @@ def filter_detections(
 
         bm = band_masks.get(peak.band or "")
         if bm is not None and bm.any():
-            # 2. Transverse ratio — Alfvén waves are transverse
+            # 2. Within-band spectral peakedness — QP waves are
+            # narrowband (Morlet FWHM ≈ 0.17·P, much less than an
+            # octave). Broadband transients (compressional bursts,
+            # step-like roll artifacts) fill the entire band. Reject
+            # when the FWHM of the period marginal spans more than
+            # a fraction of the band's log-width.
+            if max_within_band_fwhm_frac is not None:
+                band_col = perp_power[bm, i0:i1].mean(axis=1)
+                if band_col.size > 2 and band_col.max() > 0:
+                    above_half = band_col > 0.5 * band_col.max()
+                    if above_half.any():
+                        band_periods = periods[bm]
+                        log_p = np.log10(band_periods[above_half])
+                        log_fwhm = float(log_p.max() - log_p.min())
+                        band_w = band_log_widths.get(peak.band or "", 0.25)
+                        if band_w > 0 and (
+                            log_fwhm / band_w > max_within_band_fwhm_frac
+                        ):
+                            continue
+
+            # 3. Transverse ratio — Alfvén waves are transverse
             if par_power is not None:
                 perp_bp = float(perp_power[bm, i0:i1].mean())
                 par_bp = float(par_power[bm, i0:i1].mean())
