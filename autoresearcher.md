@@ -88,7 +88,7 @@ This loads the canonical datasets from `Output/benchmark/`, runs detection, scor
 
 ## The experiment loop
 
-**Max iterations: 100.**
+**Max iterations: 20.**
 
 For each iteration:
 
