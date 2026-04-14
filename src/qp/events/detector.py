@@ -645,6 +645,16 @@ def filter_detections(
                 or short.date_to <= long.date_from
             ):
                 continue
+            # Duration match: a harmonic inherits the fundamental's
+            # envelope, so their ridge durations match within ~15 %.
+            # Independent co-occurring waves have decay widths that
+            # differ by more than that (QP30 ≠ QP60 ≠ QP120 decay).
+            dur_s = (short.date_to - short.date_from).total_seconds()
+            dur_l = (long.date_to - long.date_from).total_seconds()
+            if max(dur_s, dur_l) > 0:
+                dur_ratio = min(dur_s, dur_l) / max(dur_s, dur_l)
+                if dur_ratio < 0.75:
+                    continue
             # Harmonic amplitude bounded by waveform Fourier coefficients;
             # co-occurring independent waves typically >50 % of each other.
             if short.prominence < HARMONIC_POWER_RATIO * long.prominence:
