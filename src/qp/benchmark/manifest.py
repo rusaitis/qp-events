@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from dataclasses import asdict, dataclass, field, fields as dc_fields
 from pathlib import Path
 
@@ -41,10 +42,13 @@ class InjectedEvent:
     amplitude_jitter: float
     harmonic_content: float
     snr_injected: float  # amplitude / broadband noise RMS
-    snr_in_band: float  # amplitude / in-band noise RMS
+    snr_in_band: float  # amplitude / in-band noise RMS (analytic)
     start_2sigma_sec: float  # ±2σ boundary (95.4% energy)
     end_2sigma_sec: float
     difficulty: str  # "easy", "moderate", "hard", "extreme"
+    # Empirical in-band SNR measured from the realised noise array.
+    # NaN means not computed (older manifests or back-compat construction).
+    snr_in_band_empirical: float = math.nan
 
 
 @dataclass
@@ -111,8 +115,12 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            # Convert types from strings
-            row["should_detect"] = row["should_detect"].lower() in ("true", "1")
+            # Convert types from strings. Optional fields (those with
+            # defaults on InjectedEvent) may be missing in older CSVs.
+            typed: dict[str, object] = dict(row)
+            typed["should_detect"] = (
+                str(row["should_detect"]).lower() in ("true", "1")
+            )
             for key in (
                 "period_sec", "amplitude_nT", "start_sec", "end_sec",
                 "center_sec", "duration_sec", "n_oscillations", "ellipticity",
@@ -120,6 +128,10 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
                 "amplitude_jitter", "harmonic_content", "snr_injected",
                 "snr_in_band", "start_2sigma_sec", "end_2sigma_sec",
             ):
-                row[key] = float(row[key])
-            events.append(InjectedEvent(**row))
+                typed[key] = float(row[key])
+            if "snr_in_band_empirical" in row and row["snr_in_band_empirical"]:
+                typed["snr_in_band_empirical"] = float(
+                    row["snr_in_band_empirical"]
+                )
+            events.append(InjectedEvent(**typed))  # type: ignore[arg-type]
     return events

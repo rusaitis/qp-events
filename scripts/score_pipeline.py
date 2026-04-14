@@ -195,7 +195,15 @@ def main():
     print(f"  F1:               {suite.overall_f1:.4f}")
     print(f"  Precision:        {suite.overall_precision:.4f}")
     print(f"  Recall:           {suite.overall_recall:.4f}")
-    print(f"  Band accuracy:    {suite.band_accuracy:.4f}")
+    print(
+        f"  Band accuracy:    {suite.band_accuracy:.4f} "
+        f"(TP-cond) / {suite.band_accuracy_macro:.4f} (macro)"
+    )
+    if suite.per_band_accuracy:
+        per_band_str = " ".join(
+            f"{b}={v:.2f}" for b, v in sorted(suite.per_band_accuracy.items())
+        )
+        print(f"  Per-band:         {per_band_str}")
     print(f"  Period error:     {mean_period_err:.2f}%")
     print(f"  Mean IoU:         {mean_iou:.4f}")
     print(f"  Decoy rejection:  {suite.decoy_rejection_rate:.4f}")

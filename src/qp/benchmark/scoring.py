@@ -26,6 +26,7 @@ class MatchResult:
     period_error_pct: float
     band_correct: bool
     detection_latency_sec: float = 0.0  # peak_time − gt center
+    gt_band: str | None = None  # band label of the ground truth event
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,10 @@ class BenchmarkScore:
     median_period_error_pct: float
     f1_at_iou: dict[float, float] = field(default_factory=dict)
     matches: list[MatchResult] = field(default_factory=list)
+    # Per-band GT counts and band-correct TP counts (unconditional
+    # band accuracy, used for the macro-averaged suite metric).
+    per_band_gt: dict[str, int] = field(default_factory=dict)
+    per_band_correct: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +74,13 @@ class SuiteScore:
     summary_score: float  # harmonic mean of (F1, band_accuracy, decoy_rejection)
     overall_f1_at_iou: dict[float, float] = field(default_factory=dict)
     dataset_scores: list[BenchmarkScore] = field(default_factory=list)
+    # Macro-averaged band accuracy across {QP30, QP60, QP120}, where
+    # each band's score is (band-correct TPs) / (injected detectable GT
+    # events in that band). Unlike ``band_accuracy`` (which is TP-
+    # conditional), this penalizes missed events against band quality.
+    band_accuracy_macro: float = 1.0
+    # Per-band recall (band-correct TPs / GT events in that band).
+    per_band_accuracy: dict[str, float] = field(default_factory=dict)
 
 
 def _time_iou(
@@ -170,6 +182,7 @@ def score_dataset(
                     period_error_pct=period_err,
                     band_correct=band_ok,
                     detection_latency_sec=latency,
+                    gt_band=gt_ev.band,
                 ))
                 matched_det.add(di)
                 matched_gt.add(gi)
@@ -231,7 +244,15 @@ def score_dataset(
         )
         recall_by_diff[diff] = matched_diff / len(gt_diff)
 
-    # Decoy rejection: count how many decoys were falsely detected
+    # Decoy rejection: count how many decoys were falsely detected.
+    #
+    # Two regimes:
+    #   * Explicit decoys (gt_decoys non-empty): count IoU-matched FPs.
+    #   * Pure-noise decoy scenarios (no injected events at all, e.g.
+    #     ``decoy_red_noise_qp120``, ``decoy_ppo_harmonic``,
+    #     ``decoy_roll_artifacts``): treat *any* detection as a
+    #     rejection failure. Without this, these scenarios auto-score
+    #     1.0 regardless of detector behaviour.
     n_decoy = len(gt_decoys)
     decoy_detected = 0
     if n_decoy > 0 and n_det > 0:
@@ -245,12 +266,33 @@ def score_dataset(
                     decoy.start_sec, decoy.end_sec,
                     det_start, det_end,
                 )
-                if iou_d > 0.1:
+                if iou_d >= iou_threshold:
                     decoy_detected += 1
                     break
-    decoy_rejection = (
-        1.0 - decoy_detected / n_decoy if n_decoy > 0 else 1.0
-    )
+        decoy_rejection = 1.0 - decoy_detected / n_decoy
+    elif n_gt == 0 and manifest.difficulty_tier == "decoy":
+        # Pure-noise decoy scenario: any detection is a false positive.
+        # Convert FP count to a bounded rate: 0 FPs → 1.0, ≥ 4 FPs → 0.0.
+        # Matches the order-of-magnitude of typical scenario event counts.
+        decoy_detected = n_det
+        decoy_rejection = max(0.0, 1.0 - n_det / 4.0)
+        # n_decoy stays 0 (no injected decoys), but we report n_det via
+        # n_decoy_detected so the scoreboard sees the penalty.
+    else:
+        decoy_rejection = 1.0
+
+    # Per-band GT counts (for macro-averaged band accuracy downstream).
+    per_band_gt: dict[str, int] = {}
+    per_band_correct: dict[str, int] = {}
+    for ev in gt_detectable:
+        if ev.band is None:
+            continue
+        per_band_gt[ev.band] = per_band_gt.get(ev.band, 0) + 1
+    for m in matches:
+        if m.band_correct and m.gt_band is not None:
+            per_band_correct[m.gt_band] = (
+                per_band_correct.get(m.gt_band, 0) + 1
+            )
 
     return BenchmarkScore(
         dataset_id=manifest.dataset_id,
@@ -272,6 +314,8 @@ def score_dataset(
         decoy_rejection_rate=decoy_rejection,
         mean_detection_latency_sec=mean_latency,
         median_period_error_pct=median_period_err,
+        per_band_gt=per_band_gt,
+        per_band_correct=per_band_correct,
         f1_at_iou=f1_at_iou,
         matches=matches,
     )
@@ -309,9 +353,29 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         tier_gt = sum(s.n_detectable for s in tier_scores)
         per_tier[tier] = tier_tp / tier_gt if tier_gt > 0 else 0.0
 
-    per_band: dict[str, float] = {}  # TODO: aggregate GT band info
+    # Unconditional per-band accuracy:
+    #   (band-correct TPs in band b) / (injected GT in band b)
+    # Missed events count against the band — unlike the TP-conditional
+    # ``band_accuracy`` below, which only sees detected events.
+    per_band_gt_total: dict[str, int] = {}
+    per_band_correct_total: dict[str, int] = {}
+    for s in scores:
+        for band, n in s.per_band_gt.items():
+            per_band_gt_total[band] = per_band_gt_total.get(band, 0) + n
+        for band, n in s.per_band_correct.items():
+            per_band_correct_total[band] = (
+                per_band_correct_total.get(band, 0) + n
+            )
+    per_band: dict[str, float] = {
+        band: per_band_correct_total.get(band, 0) / n
+        for band, n in per_band_gt_total.items()
+        if n > 0
+    }
+    band_accuracy_macro = (
+        float(np.mean(list(per_band.values()))) if per_band else 1.0
+    )
 
-    # Band accuracy
+    # TP-conditional band accuracy (kept for back-compat).
     total_matched = sum(len(s.matches) for s in scores)
     band_acc = (
         sum(sum(1 for m in s.matches if m.band_correct) for s in scores)
@@ -320,10 +384,16 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         else 1.0
     )
 
-    # Decoy rejection
-    total_decoy = sum(s.n_decoy_events for s in scores)
-    total_decoy_det = sum(s.n_decoy_detected for s in scores)
-    decoy_rej = 1.0 - total_decoy_det / total_decoy if total_decoy > 0 else 1.0
+    # Decoy rejection — macro-average across decoy datasets so that
+    # pure-noise scenarios (n_decoy_events == 0 but decoy_rejection_rate
+    # penalized for FPs) contribute on equal footing with explicit-decoy
+    # scenarios. Falls back to 1.0 if no decoy datasets were scored.
+    decoy_scores = [s for s in scores if s.dataset_id.startswith("decoy")]
+    decoy_rej = (
+        float(np.mean([s.decoy_rejection_rate for s in decoy_scores]))
+        if decoy_scores
+        else 1.0
+    )
 
     # Summary: harmonic mean of F1, band_accuracy, decoy_rejection
     components = [x for x in (f1, band_acc, decoy_rej) if x > 0]
@@ -357,6 +427,8 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         summary_score=summary,
         overall_f1_at_iou=overall_f1_at_iou,
         dataset_scores=all_scores,
+        band_accuracy_macro=band_accuracy_macro,
+        per_band_accuracy=per_band,
     )
 
 
@@ -398,9 +470,12 @@ def composite_detection_score(suite: SuiteScore) -> float:
         s.mean_iou for s in dataset_scores if s.mean_iou > 0
     ])) if any(s.mean_iou > 0 for s in dataset_scores) else 0.0
 
+    # Band component is the macro-averaged, unconditional accuracy —
+    # missed events count against their band, preventing a detector
+    # from inflating the score by dropping low-confidence detections.
     components = [
         (0.35, suite.overall_f1),
-        (0.20, suite.band_accuracy),
+        (0.20, suite.band_accuracy_macro),
         (0.15, period_acc),
         (0.15, suite.decoy_rejection_rate),
         (0.15, mean_iou),

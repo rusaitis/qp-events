@@ -22,6 +22,24 @@ from scipy.signal import sawtooth, square
 from qp.events.catalog import WaveTemplate
 
 
+def _bandlimit(signal: np.ndarray, dt: float, fc: float) -> np.ndarray:
+    r"""Zero-phase low-pass via rfft amplitude mask at cutoff ``fc``.
+
+    Sharp non-sine waveforms (sawtooth, square) contain power at all
+    harmonics of the fundamental; at dt=60 s these alias across the
+    full Nyquist band. We truncate the spectrum above ``fc`` so the
+    waveform keeps its character (fundamental + a few harmonics) but
+    does not inject broadband power into the detector's search range.
+    """
+    n = signal.size
+    if n < 4 or fc <= 0:
+        return signal
+    freqs = np.fft.rfftfreq(n, d=dt)
+    spec = np.fft.rfft(signal)
+    spec[freqs > fc] = 0.0
+    return np.fft.irfft(spec, n=n)
+
+
 def _generate_waveform(
     t: np.ndarray,
     wave: WaveTemplate,
@@ -61,18 +79,39 @@ def _generate_waveform(
         case _:
             raise ValueError(f"Unknown waveform type: {wave.waveform!r}")
 
-    # Add 2nd harmonic content
-    if wave.harmonic_content > 0:
-        y += wave.harmonic_content * np.sin(2 * phase_arg)
+    # Anti-alias non-sine waveforms: keep the fundamental plus the first
+    # ~10 harmonics and drop the infinite high-frequency tail that would
+    # otherwise alias into the QP detector's band at 1-min cadence.
+    if wave.waveform in ("sawtooth", "square") and len(t) > 1:
+        dt_sample = float(t[1] - t[0])
+        f0 = 1.0 / wave.period
+        y = _bandlimit(y, dt_sample, fc=10.0 * f0)
 
-    # Envelope (symmetric or asymmetric Gaussian)
+    # Add 2nd harmonic content with a random phase so the fundamental
+    # and harmonic are not perfectly phase-locked (real nonlinear
+    # steepening produces harmonics with a Hilbert-phase lag). Phase
+    # comes from the same rng as amplitude jitter for reproducibility.
+    if wave.harmonic_content > 0:
+        if rng is not None:
+            harm_phase = float(rng.uniform(-np.pi, np.pi))
+        else:
+            harm_phase = 0.0
+        y += wave.harmonic_content * np.sin(2 * phase_arg + harm_phase)
+
+    # Envelope (symmetric or asymmetric Gaussian). For asymmetric
+    # packets, blend the left and right sigmas with a smooth erf switch
+    # so σ(t) is C^∞ at t=0 — the old ``np.where`` switch had a
+    # derivative kink that injected a broadband spike at the event
+    # centre, right where the detector looks for onset features.
     if wave.decay_width is not None:
         if wave.asymmetry != 0.5:
-            # asymmetry < 0.5 → fast rise (small sigma_left), slow fall
-            # asymmetry > 0.5 → slow rise, fast fall
+            from scipy.special import erf
             sigma_left = wave.decay_width * (0.5 + wave.asymmetry)
             sigma_right = wave.decay_width * (1.5 - wave.asymmetry)
-            sigma = np.where(time < 0, sigma_left, sigma_right)
+            # Transition scale: a small fraction of the smaller sigma.
+            tau = 0.05 * min(sigma_left, sigma_right)
+            w = 0.5 * (1.0 + erf(time / max(tau, 1e-9)))
+            sigma = (1.0 - w) * sigma_left + w * sigma_right
             envelope = np.exp(-0.5 * (time / sigma) ** 2)
         else:
             envelope = np.exp(-0.5 * (time / wave.decay_width) ** 2)

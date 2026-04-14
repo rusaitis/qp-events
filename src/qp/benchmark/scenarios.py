@@ -15,6 +15,7 @@ Scenario counts:
 
 from __future__ import annotations
 
+import hashlib
 import math
 
 import numpy as np
@@ -41,19 +42,43 @@ _SCENARIO_SEED_BASE: int = 0x5CE_A10
 # ======================================================================
 
 def _centers(
-    n_events: int, duration_days: float, margin_h: float = 12.0,
+    n_events: int,
+    duration_days: float,
+    margin_h: float = 12.0,
+    *,
+    jitter_frac: float = 0.4,
+    rng_seed: str | None = None,
 ) -> list[float]:
-    """Return n_events center times (hours) evenly spaced with margin from edges."""
+    r"""Return ``n_events`` center times (hours) across the dataset.
+
+    Events are evenly spaced with ``margin_h`` buffer from the edges,
+    then perturbed by a uniform jitter of ±``jitter_frac·spacing/2`` so
+    the pattern is not strictly periodic. The jitter is seeded from
+    ``(n_events, duration_days, margin_h)`` by default — deterministic
+    across runs — or from the explicit ``rng_seed`` when provided.
+    Pass ``jitter_frac=0`` to recover the old exact-grid behaviour.
+    """
     total_h = duration_days * 24
     usable = total_h - 2 * margin_h
     spacing = usable / max(n_events, 1)
-    return [margin_h + i * spacing + spacing / 2 for i in range(n_events)]
+    base = [margin_h + i * spacing + spacing / 2 for i in range(n_events)]
+    if jitter_frac <= 0:
+        return base
+    key = rng_seed or f"_centers::{n_events}::{duration_days}::{margin_h}"
+    rng = _scenario_rng(key)
+    amp = jitter_frac * spacing / 2.0
+    return [float(c + rng.uniform(-amp, amp)) for c in base]
 
 
 def _scenario_rng(dataset_id: str) -> np.random.Generator:
-    """Deterministic RNG seeded from the scenario ID (stable across runs)."""
-    # Hash the id into a 64-bit int then fold with the base seed.
-    seed = _SCENARIO_SEED_BASE ^ (hash(dataset_id) & 0xFFFF_FFFF)
+    """Deterministic RNG seeded from the scenario ID (stable across runs).
+
+    Uses SHA-1 over the id so the seed is reproducible across Python
+    processes — `hash()` would be PYTHONHASHSEED-randomized.
+    """
+    digest = hashlib.sha1(dataset_id.encode("utf-8")).digest()[:8]
+    id_hash = int.from_bytes(digest, "big") & 0xFFFF_FFFF
+    seed = _SCENARIO_SEED_BASE ^ id_hash
     return np.random.default_rng(seed)
 
 
@@ -72,6 +97,40 @@ def _sample_periods_in_band(
     return [float(math.exp(x)) for x in rng.uniform(log_lo, log_hi, n)]
 
 
+def _amplitude_for_target_snr(
+    band_name: str,
+    target_snr: float,
+    noise_alpha: float,
+    noise_sigma: float,
+    dt: float = 60.0,
+) -> float:
+    r"""Solve for the amplitude that yields ``target_snr`` in band.
+
+    Uses the analytic power-law integral to estimate the in-band noise
+    RMS for a given (alpha, sigma) background and returns the amplitude
+    such that ``A / noise_rms_in_band = target_snr``. This neutralises
+    the band-width bias: with constant ``noise_sigma``, QP120 has less
+    in-band noise than QP30 at α=1.2, so an amplitude-matched test is
+    a difficulty-biased test. This helper lets scenarios request equal
+    in-band difficulty across bands.
+    """
+    from qp.benchmark.generator import _in_band_snr
+
+    # The analytic SNR is linear in amplitude, so A_target = target_snr
+    # divided by the per-unit-amplitude analytic SNR.
+    snr_per_unit = _in_band_snr(
+        amplitude=1.0,
+        noise_sigma=noise_sigma,
+        noise_alpha=noise_alpha,
+        period_sec=QP_BANDS[band_name].period_centroid_sec,
+        dt=dt,
+        band_name=band_name,
+    )
+    if snr_per_unit <= 0:
+        return target_snr  # fallback
+    return float(target_snr / snr_per_unit)
+
+
 def _balanced_band_assignment(n: int, rng: np.random.Generator) -> list[str]:
     r"""Assign ``n`` events to QP30/QP60/QP120 as evenly as possible.
 
@@ -85,6 +144,37 @@ def _balanced_band_assignment(n: int, rng: np.random.Generator) -> list[str]:
     return bands
 
 
+def _band_snr_scale(
+    band_name: str,
+    noise_alpha: float,
+    noise_sigma: float,
+    dt: float = 60.0,
+    reference_band: str = "QP60",
+) -> float:
+    r"""Amplitude multiplier to match in-band SNR of ``reference_band``.
+
+    With constant broadband ``noise_sigma``, QP120 carries less in-band
+    noise power than QP30 (different bandwidths × different power-law
+    density). An event injected at the same amplitude into different
+    bands therefore has different in-band SNR. This helper returns a
+    multiplier so that ``A * scale`` matches the SNR the amplitude
+    would have in ``reference_band``.
+    """
+    from qp.benchmark.generator import _in_band_snr
+
+    ref = _in_band_snr(
+        1.0, noise_sigma, noise_alpha,
+        QP_BANDS[reference_band].period_centroid_sec, dt, reference_band,
+    )
+    this = _in_band_snr(
+        1.0, noise_sigma, noise_alpha,
+        QP_BANDS[band_name].period_centroid_sec, dt, band_name,
+    )
+    if this <= 0:
+        return 1.0
+    return float(ref / this)
+
+
 def _multiband_specs(
     dataset_id: str,
     centers: list[float],
@@ -92,6 +182,11 @@ def _multiband_specs(
     amplitude: float | list[float] = 1.0,
     n_cycles: float = 5.0,
     difficulty: str = "moderate",
+    equalize_band_snr: bool = True,
+    noise_alpha: float | None = None,
+    noise_sigma: float | None = None,
+    amp_jitter_sigma: float = 0.0,
+    dt: float = 60.0,
     **extra,
 ) -> list[EventSpec]:
     r"""Build ``len(centers)`` EventSpecs distributed evenly across bands.
@@ -100,14 +195,40 @@ def _multiband_specs(
     band, and ``decay_hours`` is set to ``n_cycles * P / 4`` so every
     packet spans roughly the same number of cycles across bands.
     ``extra`` is passed through to :class:`EventSpec` unchanged.
+
+    Parameters
+    ----------
+    amplitude : float or list[float]
+        Reference amplitude (interpreted as QP60-band amplitude when
+        ``equalize_band_snr`` is True).
+    equalize_band_snr : bool
+        If True (default), scale each event's amplitude so its analytic
+        in-band SNR matches what ``amplitude`` would produce at QP60.
+        Removes the bandwidth-driven difficulty bias (QP120 easier,
+        QP30 harder) when ``noise_sigma`` is constant. Needs
+        ``noise_alpha`` and ``noise_sigma``; silently falls back to
+        raw ``amplitude`` if either is ``None``.
+    amp_jitter_sigma : float
+        If > 0, multiplies every amplitude by ``exp(sigma * N(0,1))``
+        (log-normal jitter) so the distribution is continuous.
     """
     rng = _scenario_rng(dataset_id)
     bands = _balanced_band_assignment(len(centers), rng)
-    amps = (
+    raw_amps = (
         list(amplitude)
         if isinstance(amplitude, (list, tuple))
         else [float(amplitude)] * len(centers)
     )
+    if equalize_band_snr and noise_alpha is not None and noise_sigma is not None:
+        amps = [
+            a * _band_snr_scale(b, noise_alpha, noise_sigma, dt)
+            for a, b in zip(raw_amps, bands)
+        ]
+    else:
+        amps = raw_amps
+    if amp_jitter_sigma > 0:
+        jitter = rng.lognormal(mean=0.0, sigma=amp_jitter_sigma, size=len(amps))
+        amps = [float(a * j) for a, j in zip(amps, jitter)]
     specs: list[EventSpec] = []
     for c, b, a in zip(centers, bands, amps):
         p_sec = _sample_periods_in_band(b, 1, rng)[0]
@@ -238,6 +359,8 @@ def tier2_colored_noise() -> ScenarioConfig:
         event_specs=_multiband_specs(
             dataset_id, centers, amplitude=1.0, n_cycles=5.0,
             difficulty="moderate",
+            noise_alpha=1.2, noise_sigma=0.07,
+            amp_jitter_sigma=0.25,
         ),
     )
 
@@ -253,6 +376,8 @@ def tier2_low_amplitude() -> ScenarioConfig:
         event_specs=_multiband_specs(
             dataset_id, centers, amplitude=0.3, n_cycles=5.0,
             difficulty="moderate",
+            noise_alpha=1.2, noise_sigma=0.07,
+            amp_jitter_sigma=0.25,
         ),
     )
 
@@ -289,6 +414,8 @@ def tier2_linear_pol() -> ScenarioConfig:
             dataset_id, centers, amplitude=1.0, n_cycles=6.0,
             difficulty="moderate",
             polarization="linear", ellipticity=0.0,
+            noise_alpha=1.2, noise_sigma=0.07,
+            amp_jitter_sigma=0.25,
         ),
     )
 
@@ -304,6 +431,8 @@ def tier2_short_packets() -> ScenarioConfig:
         event_specs=_multiband_specs(
             dataset_id, centers, amplitude=1.0, n_cycles=4.0,
             difficulty="moderate",
+            noise_alpha=1.2, noise_sigma=0.07,
+            amp_jitter_sigma=0.25,
         ),
     )
 
@@ -319,6 +448,8 @@ def tier2_ppo_background() -> ScenarioConfig:
         event_specs=_multiband_specs(
             dataset_id, centers, amplitude=1.5, n_cycles=5.0,
             difficulty="moderate",
+            noise_alpha=1.2, noise_sigma=0.07,
+            amp_jitter_sigma=0.25,
         ),
     )
 

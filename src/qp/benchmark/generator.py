@@ -113,11 +113,56 @@ def _resolve_period(spec: EventSpec) -> float:
 
 
 def _power_law_integral(f_lo: float, f_hi: float, alpha: float) -> float:
-    r"""Evaluate $\int_{f_1}^{f_2} f^{-\alpha}\,df$ analytically."""
-    if abs(alpha - 1.0) < 0.01:
+    r"""Evaluate $\int_{f_1}^{f_2} f^{-\alpha}\,df$ analytically.
+
+    Linearly blends the log and power branches over ``|α-1| < 0.05``
+    so the integral is continuous in α (the ad-hoc switch at 0.01
+    produced a visible kink near α=1).
+    """
+    delta = alpha - 1.0
+    if abs(delta) < 1e-9:
         return math.log(f_hi / f_lo)
+    if abs(delta) < 0.05:
+        # Blend to avoid numerical instability at alpha==1.
+        w = abs(delta) / 0.05
+        exp = 1.0 - alpha
+        power = (f_hi**exp - f_lo**exp) / exp
+        logv = math.log(f_hi / f_lo)
+        return w * power + (1.0 - w) * logv
     exp = 1.0 - alpha
     return (f_hi**exp - f_lo**exp) / exp
+
+
+def _empirical_band_rms(
+    noise: np.ndarray,
+    dt: float,
+    f_lo: float,
+    f_hi: float,
+) -> float:
+    r"""Empirical RMS of ``noise`` bandpassed to ``[f_lo, f_hi]``.
+
+    Uses a single-sided power spectrum (rfft) and Parseval normalization,
+    so the return value is in the same units as ``noise``. Unlike the
+    analytic ``_in_band_snr``, this captures the spectral shape of the
+    *realized* noise after sample-RMS renormalization in
+    :func:`qp.signal.noise.power_law_noise`.
+    """
+    n = noise.size
+    if n < 4:
+        return 0.0
+    spec = np.fft.rfft(noise)
+    freqs = np.fft.rfftfreq(n, d=dt)
+    # One-sided PSD (V^2/Hz): |X|^2 / (n * fs); multiply by 2 except DC/Nyquist.
+    fs = 1.0 / dt
+    psd = (np.abs(spec) ** 2) / (n * fs)
+    if n > 1:
+        psd[1:-1] *= 2.0
+    mask = (freqs >= f_lo) & (freqs <= f_hi)
+    if not np.any(mask):
+        return 0.0
+    df = freqs[1] - freqs[0] if len(freqs) > 1 else fs / n
+    band_power = float(np.sum(psd[mask]) * df)
+    return math.sqrt(max(band_power, 0.0))
 
 
 def _in_band_snr(
@@ -177,7 +222,14 @@ def _inject_roll_artifact(
     b_perp1: np.ndarray, b_perp2: np.ndarray,
     t: np.ndarray, spec: RollArtifactSpec,
 ) -> None:
-    """Inject a smooth spacecraft roll artifact into transverse components."""
+    r"""Inject a smooth spacecraft roll artifact into transverse components.
+
+    A real roll maneuver is not a perfect unitary rotation: FGM gain and
+    zero-level mismatches introduce a small magnitude perturbation in
+    the transverse plane (~few percent of field magnitude). Without
+    this, the decoy is invisible to any detector operating on power or
+    magnitude, making decoy_roll_artifacts a free rejection credit.
+    """
     center = spec.center_hours * 3600.0
     half_dur = spec.duration_hours * 3600.0 / 2
     mask = (t >= center - half_dur) & (t <= center + half_dur)
@@ -190,8 +242,16 @@ def _inject_roll_artifact(
     sin_a = np.sin(angle_rad)
     p1 = b_perp1[mask].copy()
     p2 = b_perp2[mask].copy()
-    b_perp1[mask] = cos_a * p1 - sin_a * p2
-    b_perp2[mask] = sin_a * p1 + cos_a * p2
+    # Non-unitary gain/offset: small per-component scaling modulated by
+    # the same raised-cosine envelope so |B_perp| changes slightly over
+    # the roll interval. Keep the perturbation small (≲ 3 %) — a real
+    # detector should still see the DC-like artifact rather than a
+    # QP-band signal.
+    gain_env = 0.5 * (1 + np.cos(np.pi * local_t))
+    gain1 = 1.0 + 0.025 * gain_env
+    gain2 = 1.0 - 0.018 * gain_env
+    b_perp1[mask] = gain1 * (cos_a * p1 - sin_a * p2)
+    b_perp2[mask] = gain2 * (sin_a * p1 + cos_a * p2)
 
 
 def generate_benchmark_dataset(
@@ -250,6 +310,13 @@ def generate_benchmark_dataset(
     b_par = bg[:, 0].copy()
     b_perp1 = bg[:, 1].copy()
     b_perp2 = bg[:, 2].copy()
+
+    # Snapshot of the transverse-component noise (pre-injection) so we
+    # can compute empirical in-band SNR per event. Stored once for the
+    # whole dataset — the noise floor is stationary by construction
+    # (non-stationary bursts are applied before this snapshot).
+    noise_perp1 = b_perp1.copy()
+    noise_perp2 = b_perp2.copy()
 
     # Inject events
     injected_events: list[InjectedEvent] = []
@@ -333,11 +400,26 @@ def generate_benchmark_dataset(
 
         band_label = spec.band if spec.should_detect else None
 
-        # In-band SNR
+        # In-band SNR — analytic estimate.
         snr_bb = spec.amplitude / max(scenario.noise_sigma, 1e-30)
         snr_ib = _in_band_snr(
             spec.amplitude, scenario.noise_sigma, scenario.noise_alpha,
             period_sec, scenario.dt, band_label,
+        )
+        # Empirical SNR from the realised noise: measure perp1/perp2
+        # band RMS over the target band and average. NaN for decoys
+        # without an assigned band.
+        if band_label and band_label.upper() in QP_BANDS:
+            band_obj = QP_BANDS[band_label.upper()]
+            f1_emp, f2_emp = band_obj.freq_min_hz, band_obj.freq_max_hz
+        else:
+            f0 = 1.0 / period_sec
+            f1_emp, f2_emp = 0.7 * f0, 1.3 * f0
+        rms1 = _empirical_band_rms(noise_perp1, scenario.dt, f1_emp, f2_emp)
+        rms2 = _empirical_band_rms(noise_perp2, scenario.dt, f1_emp, f2_emp)
+        rms_mean = math.sqrt(max((rms1 * rms1 + rms2 * rms2) / 2.0, 0.0))
+        snr_ib_emp = (
+            spec.amplitude / rms_mean if rms_mean > 0 else math.nan
         )
 
         injected_events.append(InjectedEvent(
@@ -368,6 +450,7 @@ def generate_benchmark_dataset(
             start_2sigma_sec=start_2s,
             end_2sigma_sec=end_2s,
             difficulty=spec.difficulty,
+            snr_in_band_empirical=snr_ib_emp,
         ))
 
     # Roll artifacts (decoy transverse perturbations)

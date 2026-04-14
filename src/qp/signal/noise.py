@@ -317,9 +317,14 @@ def bandlimited_noise_burst(
     envelope = np.exp(-0.5 * ((t - center_sec) / decay_sec) ** 2)
     noise *= envelope
 
-    # Scale to target amplitude
-    peak = np.max(np.abs(noise))
-    if peak > 0:
-        noise *= amplitude / peak
+    # Normalize by the RMS *inside* the envelope, so the burst's
+    # in-band power is controlled by ``amplitude`` regardless of
+    # packet duration. Peak-normalization (the old behaviour) scaled
+    # with √(log N) and made long bursts spuriously weaker.
+    mask = envelope > 0.1 * envelope.max()
+    if mask.any():
+        rms = float(np.sqrt(np.mean(noise[mask] ** 2)))
+        if rms > 0:
+            noise *= amplitude / rms
 
     return noise
