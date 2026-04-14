@@ -505,7 +505,7 @@ def filter_detections(
     transverse_ratio: float = 0.5,
     spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,
-    max_within_band_fwhm_frac: float | None = 0.7,
+    max_within_band_fwhm_frac: float | None = 0.85,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
 
