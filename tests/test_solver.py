@@ -117,18 +117,24 @@ class TestSolveEigenfrequenciesDipole:
 
     @pytest.mark.slow
     def test_higher_l_shell_lower_frequencies(self):
-        """Longer field lines (higher L) should have lower eigenfrequencies."""
+        """Longer field lines (higher L) should have lower eigenfrequencies.
+
+        The lower search bound is kept below the L=10 fundamental
+        (≈ 8×10⁻⁵ rad/s with Bagenal density at Saturn): using
+        ``freq_range[0]=1e-4`` would clip the true mode 1 at L=10 and
+        make the solver return mode 2, inverting the trend.
+        """
         config_6 = WavesolverConfig(
             l_shell=6.0,
             n_modes=1,
-            freq_range=(1e-4, 0.01),
-            resolution=80,
+            freq_range=(1e-5, 0.01),
+            resolution=120,
         )
         config_10 = WavesolverConfig(
             l_shell=10.0,
             n_modes=1,
-            freq_range=(1e-4, 0.005),
-            resolution=80,
+            freq_range=(1e-5, 0.005),
+            resolution=120,
         )
         result_6 = solve_eigenfrequencies(config_6)
         result_10 = solve_eigenfrequencies(config_10)
