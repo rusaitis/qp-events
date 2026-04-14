@@ -6,9 +6,9 @@ dwell zarr, but uses quality-weighted contributions:
     numerator cell = sum(quality_i * duration_i) in minutes
 
 Three grids are written side by side for comparison:
-- ``event_time_grid_v3_unweighted.zarr`` — unweighted (same as v2)
-- ``event_time_grid_v3_weighted.zarr``   — quality-weighted (q × Δt)
-- ``event_time_grid_v3_q03.zarr``        — hard quality > 0.3 cut, unweighted
+- ``event_time_grid_v6_unweighted.zarr`` — unweighted (same as v2)
+- ``event_time_grid_v6_weighted.zarr``   — quality-weighted (q × Δt)
+- ``event_time_grid_v6_q03.zarr``        — hard quality > 0.3 cut, unweighted
 
 Also writes a 2D (inv_lat, LT) grid using ``|dipole_inv_lat|`` folded onto
 the positive hemisphere axis, for Fig 8b.
@@ -118,10 +118,10 @@ def _bin_inv_lat_lt(
 
 
 def main() -> None:
-    cat_v3 = _PROJECT_ROOT / "Output" / "events_qp_v3.parquet"
+    cat_v3 = _PROJECT_ROOT / "Output" / "events_qp_v6.parquet"
     if not cat_v3.exists():
-        cat_v3 = _PROJECT_ROOT / "Output" / "events_qp_v2.parquet"
-        print(f"Using v2 catalog: {cat_v3}")
+        cat_v3 = _PROJECT_ROOT / "Output" / "events_qp_v3.parquet"
+        print(f"Using v3 catalog: {cat_v3}")
 
     print(f"Loading catalog: {cat_v3}")
     df = pd.read_parquet(cat_v3)
@@ -136,7 +136,7 @@ def main() -> None:
     grids_uw, stats_uw = bin_events_peak_position(events_all, config)
     print(f"  binned {stats_uw.n_binned}/{stats_uw.n_total} events")
 
-    out_uw = _PROJECT_ROOT / "Output" / "event_time_grid_v3_unweighted.zarr"
+    out_uw = _PROJECT_ROOT / "Output" / "event_time_grid_v6_unweighted.zarr"
     save_event_time_zarr(grids_uw, config, out_uw,
                           title="QP event time v3 (unweighted)",
                           extra_attrs={"quality_col": quality_col})
@@ -148,7 +148,7 @@ def main() -> None:
         events_all, config,
         quality_weighted=True, quality_col="quality",
     )
-    out_w = _PROJECT_ROOT / "Output" / "event_time_grid_v3_weighted.zarr"
+    out_w = _PROJECT_ROOT / "Output" / "event_time_grid_v6_weighted.zarr"
     save_event_time_zarr(grids_w, config, out_w,
                           title="QP event time v3 (quality-weighted)",
                           extra_attrs={"quality_col": quality_col,
@@ -162,7 +162,7 @@ def main() -> None:
     events_q03 = _df_to_events(df_q03, quality_col=quality_col)
     grids_q03, stats_q03 = bin_events_peak_position(events_q03, config)
 
-    out_q03 = _PROJECT_ROOT / "Output" / "event_time_grid_v3_q03.zarr"
+    out_q03 = _PROJECT_ROOT / "Output" / "event_time_grid_v6_q03.zarr"
     save_event_time_zarr(grids_q03, config, out_q03,
                           title="QP event time v3 (q > 0.3)",
                           extra_attrs={"quality_col": quality_col,

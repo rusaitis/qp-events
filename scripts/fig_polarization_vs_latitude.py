@@ -32,9 +32,9 @@ BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
 
 
 def main() -> None:
-    cat_path = _PROJECT_ROOT / "Output" / "events_qp_v4.parquet"
+    cat_path = _PROJECT_ROOT / "Output" / "events_qp_v6_enriched.parquet"
     if not cat_path.exists():
-        cat_path = _PROJECT_ROOT / "Output" / "events_qp_v3.parquet"
+        cat_path = _PROJECT_ROOT / "Output" / "events_qp_v4.parquet"
     df = pd.read_parquet(cat_path)
     quality_col = "quality_v3" if "quality_v3" in df.columns else "quality"
     print(f"Loaded {len(df)} events")
@@ -46,9 +46,14 @@ def main() -> None:
     lat_centers = 0.5 * (lat_edges[:-1] + lat_edges[1:])
 
     for ax, band in zip(axes, ["QP30", "QP60", "QP120"]):
+        q_mask = (
+            df[quality_col].fillna(0).gt(0.3)
+            if df[quality_col].notna().any()
+            else True
+        )
         sub = df[
             (df.band == band)
-            & df[quality_col].fillna(0).gt(0.3)
+            & q_mask
             & df["ellipticity"].notna()
             & df["mag_lat"].notna()
         ]

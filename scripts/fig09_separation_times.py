@@ -58,7 +58,7 @@ def load_qp60_separations(catalog_path: Path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path,
-                        default=_project_root / "Output" / "events_qp_v5.parquet")
+                        default=_project_root / "Output" / "events_qp_v6.parquet")
     parser.add_argument("--output", type=Path,
                         default=_project_root / "Output" / "figures" / "figure9_separation_times.png")
     args = parser.parse_args()

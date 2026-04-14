@@ -58,9 +58,9 @@ def _rayleigh_test(phases_deg: np.ndarray) -> tuple[float, float]:
 
 
 def main() -> None:
-    cat_path = _PROJECT_ROOT / "Output" / "events_qp_v4.parquet"
+    cat_path = _PROJECT_ROOT / "Output" / "events_qp_v6_enriched.parquet"
     if not cat_path.exists():
-        print(f"v4 catalog not found at {cat_path}")
+        print(f"v6 enriched catalog not found at {cat_path}")
         return
     df = pd.read_parquet(cat_path)
     quality_col = "quality_v3" if "quality_v3" in df.columns else "quality"
