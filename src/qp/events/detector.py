@@ -670,6 +670,23 @@ def filter_detections(
             )
             if float(coh2.mean()) < min_coherence:
                 continue
+            # Global phase coherence between components (no smoothing)
+            # over the full ridge window: real waves (any deterministic
+            # polarization) maintain a constant phase relation across
+            # the whole packet, so |<c1 c2*>|² / (<|c1|²><|c2|²>) → 1.
+            # Bandpass-filtered noise bursts injected with independent
+            # seeds (the broadband-decoy family) average phase to ~0
+            # over many cycles → coh_glob < 0.95. Cleanly rejects the
+            # broadband burst decoys without touching real waves.
+            if c1.size > 3:
+                s12_g = np.mean(c1 * np.conj(c2))
+                s11_g = np.mean(np.abs(c1) ** 2)
+                s22_g = np.mean(np.abs(c2) ** 2)
+                den_g = s11_g * s22_g
+                if den_g > 0:
+                    coh_glob = float(np.abs(s12_g) ** 2 / den_g)
+                    if coh_glob < 0.95:
+                        continue
 
         # 3. Spectral narrowness around the detection peak period.
         # A Morlet CWT of a pure sine has FWHM ≈ 0.035 in log10(P)
@@ -743,7 +760,7 @@ def filter_detections(
             row = perp_power[pf_idx, i0 : i1 + 1]
             if row.size > 3 and row.max() > 0:
                 pk_local = int(row.argmax())
-                thr = 0.4 * row[pk_local]
+                thr = 0.35 * row[pk_local]
                 left = pk_local
                 while left > 0 and row[left - 1] > thr:
                     left -= 1
@@ -875,7 +892,7 @@ def filter_detections(
             # with a strict power-ratio cut: genuine harmonic Fourier
             # coefficients are bounded (<0.5 typical), while
             # independent co-occurring waves can reach ratio 1.0.
-            if env_corr < 0.95:
+            if env_corr < 0.80:
                 continue
             # Harmonic amplitude bounded by waveform Fourier coefficients;
             # co-occurring independent waves typically >50 % of each other.
