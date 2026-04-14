@@ -506,6 +506,9 @@ def filter_detections(
     spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,
     max_within_band_fwhm_frac: float | None = 0.85,
+    min_coherence: float | None = None,
+    cwt_perp1_complex: np.ndarray | None = None,
+    cwt_perp2_complex: np.ndarray | None = None,
 ) -> list[WavePacketPeak]:
     r"""Apply physical post-filters and deduplication to detected peaks.
 
@@ -545,6 +548,43 @@ def filter_detections(
         # 1. Min oscillations
         if peak.period_sec and peak.period_sec > 0:
             if (to_rel - from_rel) / peak.period_sec < min_oscillations:
+                continue
+
+        # 1b. Wavelet cross-coherence between transverse components.
+        # Real Alfvén waves have a stable b_perp1↔b_perp2 phase
+        # relation (linear, circular, or elliptical polarisation).
+        # Incoherent noise bursts yield coherence ≈ 0. Coherence is
+        # smoothed by a short boxcar (≈ one cycle) before averaging,
+        # per standard time-frequency coherence estimators.
+        if (
+            min_coherence is not None
+            and cwt_perp1_complex is not None
+            and cwt_perp2_complex is not None
+            and peak.period_sec
+            and peak.period_sec > 0
+        ):
+            pf_idx = int(
+                np.argmin(np.abs(1.0 / cwt_freq - peak.period_sec))
+            )
+            c1 = cwt_perp1_complex[pf_idx, i0 : i1 + 1]
+            c2 = cwt_perp2_complex[pf_idx, i0 : i1 + 1]
+            # Smooth complex cross-spectrum over ~1 cycle
+            win = max(
+                3,
+                int(round(peak.period_sec / (t_rel[1] - t_rel[0])))
+                if len(t_rel) > 1 else 3,
+            )
+            win = min(win, max(3, c1.size // 3))
+            kernel = np.ones(win) / win
+            s12 = np.convolve(c1 * np.conj(c2), kernel, mode="same")
+            s11 = np.convolve(np.abs(c1) ** 2, kernel, mode="same")
+            s22 = np.convolve(np.abs(c2) ** 2, kernel, mode="same")
+            denom = s11 * s22
+            coh2 = np.where(
+                denom > 0, np.abs(s12) ** 2 / denom, 0.0
+            )
+            coh_mean = float(coh2.mean())
+            if coh_mean < min_coherence:
                 continue
 
         bm = band_masks.get(peak.band or "")
