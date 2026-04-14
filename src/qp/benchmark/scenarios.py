@@ -759,7 +759,8 @@ def tier4_harmonic_contamination() -> ScenarioConfig:
             band=b, period_sec_override=p_sec,
             amplitude=0.8, center_hours=c,
             decay_hours=5.0 * p_sec / (4.0 * 3600.0),  # ~5 cycles
-            harmonic_content=0.4, difficulty="extreme",
+            harmonic_content=0.4, harmonic_model="linear_2f",
+            difficulty="extreme",
         ))
     return ScenarioConfig(
         dataset_id=dataset_id,
@@ -892,11 +893,13 @@ def decoy_range_change_steps() -> ScenarioConfig:
     """Piecewise-constant DC jumps mimicking FGM range reconfigurations.
 
     ``RANGE_CHANGES.ASC`` documents 8295 legitimate range transitions
-    across the mission; each produces a small DC-like step in all
-    three components when gain and offset are re-applied. A detector
-    that flags these as QP waves is overfitting to aperiodic
-    transients. We inject ~30 random-signed steps in a 10-day window
-    (≈1 per 8 h, Cassini-realistic cadence).
+    across the mission (≈1 per 14 h mission-averaged); each produces
+    a small DC-like step in all three components when gain and offset
+    are re-applied. A detector that flags these as QP waves is
+    overfitting to aperiodic transients. We inject ~30 random-signed
+    steps in a 10-day window (≈1 per 8 h, ~1.7× denser than the real
+    cadence so the rejection test has statistical weight on a short
+    synthetic).
     """
     rng = _scenario_rng("decoy_range_change_steps")
     n_steps = 30
@@ -931,9 +934,10 @@ def decoy_scas_calibration() -> ScenarioConfig:
     duration (~68 min typical), then steps back down at the end. The
     vector components remain near their nominal values throughout —
     the PDS Bt column carries the calibration-corrupted total. We
-    inject 3 plateaus per 10-day synthetic (realistic SCAS cadence
-    in Saturn orbit) with ``btot_excess_nT`` ∈ [8, 20] reflecting the
-    observed range across the 2007 calibration events.
+    inject 3 plateaus per 10-day synthetic (≈1 per 80 h, which
+    matches the 1667-entry ``SCAS_TIMES.ASC`` mission rate of ≈1 per
+    68 h) with ``btot_excess_nT`` ∈ [8, 20] reflecting the observed
+    range across the 2007 calibration events.
     """
     rng = _scenario_rng("decoy_scas_calibration")
     plateaus = [
@@ -1400,6 +1404,11 @@ def tier4_harmonic_pairs() -> ScenarioConfig:
     Harmonic-to-fundamental CWT prominence ratio is ~= harmonic_content
     (linear in amplitude). At h=0.2 the harmonic should be suppressed;
     at h=0.6 it's a borderline case; at h=0.4 it's the design target.
+
+    Pins ``harmonic_model="linear_2f"`` (random-phase 2f nuisance) so
+    the suppression filter is exercised against the harder, less
+    structured harmonic — the phase-locked sawtooth case lives in
+    ``tier4_phase_locked_sawtooth``.
     """
     dataset_id = "tier4_harmonic_pairs"
     rng = _scenario_rng(dataset_id)
@@ -1416,6 +1425,7 @@ def tier4_harmonic_pairs() -> ScenarioConfig:
             amplitude=1.0, center_hours=c,
             decay_hours=5.0 * p_sec / (4.0 * 3600.0),  # ~5 cycles
             harmonic_content=float(h),
+            harmonic_model="linear_2f",
             difficulty="extreme",
         ))
     return ScenarioConfig(
@@ -1441,7 +1451,10 @@ def tier4_harmonic_noncanonical() -> ScenarioConfig:
       145 min → 2f at 72.5 min (QP60)
 
     If the harmonic suppression is truly period-ratio-based (not
-    band-pair-based) it should handle all these.
+    band-pair-based) it should handle all these. Pins ``"linear_2f"``
+    to keep the random-phase nuisance harmonic across non-canonical
+    fundamentals; the phase-locked physics case lives in
+    ``tier4_phase_locked_sawtooth``.
     """
     dataset_id = "tier4_harmonic_noncanonical"
     rng = _scenario_rng(dataset_id)
@@ -1458,6 +1471,7 @@ def tier4_harmonic_noncanonical() -> ScenarioConfig:
             amplitude=float(a), center_hours=c,
             decay_hours=5.0 * p_sec / (4.0 * 3600.0),
             harmonic_content=0.4,
+            harmonic_model="linear_2f",
             difficulty="extreme",
         ))
     return ScenarioConfig(

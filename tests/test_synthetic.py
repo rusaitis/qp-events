@@ -7,7 +7,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from qp.events.catalog import WaveTemplate
-from qp.signal.synthetic import simulate_signal
+from qp.signal.synthetic import simulate_signal, simulate_wave_physics
 
 
 class TestSimulateSignal:
@@ -187,3 +187,89 @@ class TestRound3Hardening:
         y2 = _generate_waveform(t, wave, rng=np.random.default_rng(2))
         # Different RNGs → different waveforms (random harmonic phase).
         assert not np.allclose(y1, y2)
+
+
+class TestSimulateWavePhysics:
+    """Tests for simulate_wave_physics() — 3-component field generator."""
+
+    @staticmethod
+    def _bare_sine() -> WaveTemplate:
+        # Continuous sine: no envelope, no jitter, no harmonics — so the
+        # phase relationship between B_perp1 and B_perp2 is exact.
+        return WaveTemplate(
+            period=3600.0,
+            amplitude=1.0,
+            harmonic_content=0.0,
+            amplitude_jitter=0.0,
+        )
+
+    def test_circular_polarization_phase_lag(self):
+        """B_perp2 leads B_perp1 by π/2 (i.e. perp2 = cos when perp1 = sin)."""
+        wave = self._bare_sine()
+        _, fields = simulate_wave_physics(
+            n_samples=2160, dt=60.0, waves=[wave],
+            mode="alfvenic", polarization="circular",
+            par_leakage=0.0, seed=0,
+        )
+        b_perp1, b_perp2 = fields[:, 1], fields[:, 2]
+        # Inner product over many cycles: <sin·sin> ≈ 0.5, <sin·cos> ≈ 0.
+        n = len(b_perp1)
+        assert abs(np.dot(b_perp1, b_perp2) / n) < 0.02
+        # Auto-power equal to within sampling noise.
+        p1 = np.dot(b_perp1, b_perp1) / n
+        p2 = np.dot(b_perp2, b_perp2) / n
+        assert_allclose(p1, p2, rtol=0.02)
+
+    def test_linear_polarization_zero_perp2(self):
+        """B_perp2 is identically zero under linear polarization."""
+        wave = self._bare_sine()
+        _, fields = simulate_wave_physics(
+            n_samples=1000, dt=60.0, waves=[wave],
+            mode="alfvenic", polarization="linear",
+            par_leakage=0.0, seed=0,
+        )
+        assert_allclose(fields[:, 2], 0.0)
+        assert np.max(np.abs(fields[:, 1])) > 0.5
+
+    def test_elliptical_negative_is_left_handed(self):
+        """ellipticity=-1 produces the negative of the circular B_perp2."""
+        wave = self._bare_sine()
+        _, fields_r = simulate_wave_physics(
+            n_samples=1000, dt=60.0, waves=[wave],
+            mode="alfvenic", polarization="circular",
+            par_leakage=0.0, seed=0,
+        )
+        _, fields_l = simulate_wave_physics(
+            n_samples=1000, dt=60.0, waves=[wave],
+            mode="alfvenic", polarization="elliptical", ellipticity=-1.0,
+            par_leakage=0.0, seed=0,
+        )
+        # B_perp1 identical, B_perp2 sign-flipped.
+        assert_allclose(fields_l[:, 1], fields_r[:, 1])
+        assert_allclose(fields_l[:, 2], -fields_r[:, 2])
+
+    def test_compressional_concentrates_power_in_bpar(self):
+        """Compressional mode places ≥90% of perturbation power in B_par."""
+        wave = self._bare_sine()
+        _, fields = simulate_wave_physics(
+            n_samples=2160, dt=60.0, waves=[wave],
+            mode="compressional", polarization="circular",
+            par_leakage=0.05, seed=0,
+        )
+        p_par = float(np.var(fields[:, 0]))
+        p_perp = float(np.var(fields[:, 1]) + np.var(fields[:, 2]))
+        # leakage=0.05 ⇒ perp power ≈ 2·leakage²·par power ≈ 0.5%
+        assert p_par / (p_par + p_perp) > 0.90
+
+    def test_par_leakage_scalar_is_deterministic(self):
+        """A scalar par_leakage applies the same fraction to every event."""
+        wave = self._bare_sine()
+        _, fields = simulate_wave_physics(
+            n_samples=2160, dt=60.0, waves=[wave],
+            mode="alfvenic", polarization="linear",
+            par_leakage=0.05, seed=0,
+        )
+        # Linear ⇒ B_perp1 = w1, B_par = 0.05·w1 ⇒ peak ratio = 0.05.
+        peak_perp = float(np.max(np.abs(fields[:, 1])))
+        peak_par = float(np.max(np.abs(fields[:, 0])))
+        assert_allclose(peak_par / peak_perp, 0.05, rtol=1e-6)

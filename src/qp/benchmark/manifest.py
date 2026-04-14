@@ -49,8 +49,14 @@ class InjectedEvent:
     # Empirical in-band SNR measured from the realised noise array.
     # NaN means not computed (older manifests or back-compat construction).
     snr_in_band_empirical: float = math.nan
+    # Integrated-energy in-band SNR: transverse-component RMS of the
+    # injected signal over the event window divided by the same in-band
+    # noise RMS as ``snr_in_band_empirical``. Differs from the peak-based
+    # SNR for non-Gaussian envelopes (lognormal / rayleigh carry less
+    # integrated energy at the same peak amplitude). NaN if not computed.
+    snr_in_band_energy: float = math.nan
     envelope_shape: str = "gaussian"  # 'gaussian', 'lognormal', 'rayleigh'
-    harmonic_model: str = "linear_2f"  # 'linear_2f' or 'sawtooth_truncated'
+    harmonic_model: str = "sawtooth_truncated"  # 'sawtooth_truncated' or 'linear_2f'
 
 
 @dataclass
@@ -134,6 +140,10 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
             if "snr_in_band_empirical" in row and row["snr_in_band_empirical"]:
                 typed["snr_in_band_empirical"] = float(
                     row["snr_in_band_empirical"]
+                )
+            if "snr_in_band_energy" in row and row["snr_in_band_energy"]:
+                typed["snr_in_band_energy"] = float(
+                    row["snr_in_band_energy"]
                 )
             # ``envelope_shape`` and ``harmonic_model`` default on
             # InjectedEvent, so older CSVs without those columns still

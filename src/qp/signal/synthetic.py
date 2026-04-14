@@ -334,9 +334,11 @@ def simulate_wave_physics(
         that appears on the secondary axis (B_par for Alfvénic, B_perp
         for compressional). A scalar is applied deterministically to
         every event; a ``(lo, hi)`` tuple draws ``U(lo, hi)`` per event,
-        which is the published default ``(0.0, 0.10)`` — it reflects
-        MFA rotation uncertainty rather than assuming a single magic
-        value. Set to ``0.0`` to switch leakage off.
+        which is the published default ``(0.0, 0.10)``. The 10% upper
+        bound is the worst-case rotation error of an MFA frame estimated
+        from a 36-h running mean over 1-min Cassini MAG data — sufficient
+        to capture realistic frame mis-alignment without smearing the
+        polarization signature. Set to ``0.0`` to switch leakage off.
     seed : int or None
         RNG seed for jitter.
 

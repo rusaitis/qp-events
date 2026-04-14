@@ -129,7 +129,7 @@ class EventSpec:
     sawtooth_width: float = 0.8
     harmonic_content: float = 0.0
     envelope_shape: str = "gaussian"  # 'gaussian', 'lognormal', 'rayleigh'
-    harmonic_model: str = "linear_2f"  # 'linear_2f' or 'sawtooth_truncated'
+    harmonic_model: str = "sawtooth_truncated"  # 'sawtooth_truncated' or 'linear_2f'
     should_detect: bool = True
     difficulty: str = "easy"
     event_type: str = "qp_wave"
@@ -612,6 +612,11 @@ def generate_benchmark_dataset(
         center_sec = spec.center_hours * 3600.0
         decay_sec = spec.decay_hours * 3600.0
 
+        # Per-event clean-signal arrays (no noise) so we can compute
+        # the integrated-energy SNR independently of the peak-based one.
+        sig_perp1 = np.zeros(n_samples)
+        sig_perp2 = np.zeros(n_samples)
+
         if spec.injection_type == "noise_burst":
             # Bandlimited noise burst (broadband decoy)
             if spec.burst_freq_lo is not None and spec.burst_freq_hi is not None:
@@ -643,6 +648,8 @@ def generate_benchmark_dataset(
             )
             b_perp1 += burst1
             b_perp2 += burst2
+            sig_perp1 = burst1
+            sig_perp2 = burst2
         else:
             wave = WaveTemplate(
                 period=period_sec,
@@ -670,6 +677,8 @@ def generate_benchmark_dataset(
             b_par += wave_fields[:, 0]
             b_perp1 += wave_fields[:, 1]
             b_perp2 += wave_fields[:, 2]
+            sig_perp1 = wave_fields[:, 1]
+            sig_perp2 = wave_fields[:, 2]
 
         # Compute event boundaries. The primary boundary is ±2σ
         # (95.4 % energy) so that the ground-truth interval aligns
@@ -722,6 +731,20 @@ def generate_benchmark_dataset(
         snr_ib_emp = (
             spec.amplitude / rms_mean if rms_mean > 0 else math.nan
         )
+        # Integrated-energy SNR. Take the transverse-component RMS of
+        # the *injected* signal over the ±2σ window and divide by the
+        # in-band noise RMS. For Gaussian envelopes this is ≈0.47×
+        # the peak-based SNR; for lognormal / rayleigh envelopes it
+        # is smaller still, exposing the energy deficit hidden by the
+        # peak normalisation.
+        i_lo = max(0, int(start_sec / scenario.dt))
+        i_hi = min(n_samples, int(end_sec / scenario.dt))
+        if i_hi > i_lo and rms_mean > 0:
+            sig_window = sig_perp1[i_lo:i_hi] ** 2 + sig_perp2[i_lo:i_hi] ** 2
+            sig_rms = math.sqrt(float(np.mean(sig_window)) / 2.0)
+            snr_ib_energy = sig_rms / rms_mean
+        else:
+            snr_ib_energy = math.nan
 
         injected_events.append(InjectedEvent(
             event_id=f"{scenario.dataset_id}-{i:03d}",
@@ -752,6 +775,7 @@ def generate_benchmark_dataset(
             end_2sigma_sec=end_2s,
             difficulty=spec.difficulty,
             snr_in_band_empirical=snr_ib_emp,
+            snr_in_band_energy=snr_ib_energy,
             envelope_shape=spec.envelope_shape,
             harmonic_model=spec.harmonic_model,
         ))

@@ -148,12 +148,13 @@ class WaveTemplate:
     # has a sharper rise and a slower fall than Gaussian. All shapes
     # are normalised to peak amplitude 1 at the time of maximum.
     envelope_shape: str = "gaussian"  # 'gaussian', 'lognormal', 'rayleigh'
-    # Harmonic generation model. ``"linear_2f"`` (default) injects a
-    # single 2f sine with random phase scaled by ``harmonic_content``
-    # — a phenomenological nuisance harmonic. ``"sawtooth_truncated"``
-    # constructs harmonics from the analytic Fourier coefficients of
-    # a sawtooth wave truncated at 10 harmonics, with phases tied to
-    # the fundamental — physically consistent with nonlinear wave
-    # steepening. ``harmonic_content`` then sets the steepening
-    # strength (0 → pure sine, 1 → fully steepened sawtooth shape).
-    harmonic_model: str = "linear_2f"  # 'linear_2f' or 'sawtooth_truncated'
+    # Harmonic generation model. ``"sawtooth_truncated"`` (default)
+    # constructs harmonics from the analytic Fourier coefficients of a
+    # sawtooth wave truncated at 10 harmonics, with phases tied to the
+    # fundamental — physically consistent with nonlinear MHD wave
+    # steepening. ``harmonic_content`` then sets the steepening strength
+    # (0 → pure sine, 1 → fully steepened sawtooth shape). The
+    # alternative ``"linear_2f"`` injects a single 2f sine with random
+    # Hilbert phase per call — a phenomenological nuisance harmonic
+    # used by the dedicated harmonic-suppression stress scenarios.
+    harmonic_model: str = "sawtooth_truncated"
