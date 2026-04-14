@@ -537,7 +537,7 @@ def filter_detections(
     min_oscillations: float = 3.0,
     transverse_ratio: float = 0.5,
     spectral_concentration: float | None = None,
-    dedup_window_sec: float = 10800.0,
+    dedup_window_sec: float = 21600.0,
     max_fwhm_log_period: float | None = 0.3,
     min_coherence: float | None = None,
     cwt_perp1_complex: np.ndarray | None = None,
