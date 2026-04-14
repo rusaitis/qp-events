@@ -691,7 +691,7 @@ def filter_detections(
     # Reject a short-period candidate if a temporally overlapping
     # long-period one carries ≥2 × its power and the period ratio is
     # near 2:1 or 3:1 (±15 %).
-    HARMONIC_POWER_RATIO = 0.55  # harmonic must be <55 % of fundamental
+    HARMONIC_POWER_RATIO = 0.65  # harmonic must be <65 % of fundamental
     keep: list[bool] = [True] * len(merged)
     for i, short in enumerate(merged):
         if not keep[i] or not short.period_sec:
