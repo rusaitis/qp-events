@@ -72,6 +72,56 @@ def _sample_periods_in_band(
     return [float(math.exp(x)) for x in rng.uniform(log_lo, log_hi, n)]
 
 
+def _balanced_band_assignment(n: int, rng: np.random.Generator) -> list[str]:
+    r"""Assign ``n`` events to QP30/QP60/QP120 as evenly as possible.
+
+    Guarantees per-band counts differ by at most 1 and shuffles the
+    order so the assignment is not correlated with center_hours.
+    """
+    bands: list[str] = []
+    for i in range(n):
+        bands.append(("QP30", "QP60", "QP120")[i % 3])
+    rng.shuffle(bands)
+    return bands
+
+
+def _multiband_specs(
+    dataset_id: str,
+    centers: list[float],
+    *,
+    amplitude: float | list[float] = 1.0,
+    n_cycles: float = 10.0,
+    difficulty: str = "moderate",
+    **extra,
+) -> list[EventSpec]:
+    r"""Build ``len(centers)`` EventSpecs distributed evenly across bands.
+
+    Each event's period is log-uniform sampled within its assigned
+    band, and ``decay_hours`` is set to ``n_cycles * P / 4`` so every
+    packet spans roughly the same number of cycles across bands.
+    ``extra`` is passed through to :class:`EventSpec` unchanged.
+    """
+    rng = _scenario_rng(dataset_id)
+    bands = _balanced_band_assignment(len(centers), rng)
+    amps = (
+        list(amplitude)
+        if isinstance(amplitude, (list, tuple))
+        else [float(amplitude)] * len(centers)
+    )
+    specs: list[EventSpec] = []
+    for c, b, a in zip(centers, bands, amps):
+        p_sec = _sample_periods_in_band(b, 1, rng)[0]
+        # ±2σ envelope encloses ~n_cycles full cycles → σ = n·P/4.
+        decay_h = n_cycles * p_sec / (4.0 * 3600.0)
+        specs.append(EventSpec(
+            band=b, period_sec_override=p_sec,
+            amplitude=float(a), center_hours=c,
+            decay_hours=decay_h, difficulty=difficulty,
+            **extra,
+        ))
+    return specs
+
+
 # ======================================================================
 # TIER 1: Easy (target ≥95% recall)
 # ======================================================================
@@ -178,32 +228,32 @@ def tier1_full_spectrum() -> ScenarioConfig:
 # ======================================================================
 
 def tier2_colored_noise() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier2_colored_noise"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier2_colored_noise",
-        description="QP60 in realistic colored noise (alpha=1.2)",
+        dataset_id=dataset_id,
+        description="QP30/60/120 in realistic colored noise (alpha=1.2)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="moderate")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="moderate",
+        ),
     )
 
 
 def tier2_low_amplitude() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier2_low_amplitude"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier2_low_amplitude",
-        description="QP60 at 0.3 nT in realistic noise",
+        dataset_id=dataset_id,
+        description="Low-amplitude (0.3 nT) waves across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.3, center_hours=c,
-                      decay_hours=4.0, difficulty="moderate")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.3, n_cycles=8.0,
+            difficulty="moderate",
+        ),
     )
 
 
@@ -228,48 +278,48 @@ def tier2_sawtooth_shapes() -> ScenarioConfig:
 
 
 def tier2_linear_pol() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier2_linear_pol"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier2_linear_pol",
-        description="QP60 with linear polarization in realistic noise",
+        dataset_id=dataset_id,
+        description="Linear-polarization waves across all bands, realistic noise",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=3.0, polarization="linear",
-                      ellipticity=0.0, difficulty="moderate")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=6.0,
+            difficulty="moderate",
+            polarization="linear", ellipticity=0.0,
+        ),
     )
 
 
 def tier2_short_packets() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier2_short_packets"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier2_short_packets",
-        description="QP60 with short duration (~3-4 oscillations) in realistic noise",
+        dataset_id=dataset_id,
+        description="Short packets (~4 oscillations) across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=1.5, difficulty="moderate")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=4.0,
+            difficulty="moderate",
+        ),
     )
 
 
 def tier2_ppo_background() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier2_ppo_background"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier2_ppo_background",
-        description="QP60 with full magnetospheric background (PPO + trend)",
+        dataset_id=dataset_id,
+        description="Waves across bands with full magnetospheric background",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=True, difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.5, center_hours=c,
-                      decay_hours=4.0, difficulty="moderate")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.5, n_cycles=8.0,
+            difficulty="moderate",
+        ),
     )
 
 
@@ -295,98 +345,134 @@ def tier3_overlapping_bands() -> ScenarioConfig:
 
 
 def tier3_frequency_drift() -> ScenarioConfig:
-    centers = _centers(6, 10)
-    chirps = [2e-9, -2e-9, 5e-9, -5e-9, 3e-9, -3e-9]
+    dataset_id = "tier3_frequency_drift"
+    centers = _centers(9, 10)
+    # chirp_rate in Hz/s; scaled per-band below via _multiband_specs so
+    # each band gets comparable fractional frequency drift.
+    rng = _scenario_rng(dataset_id + "_chirp")
+    chirps = rng.choice([2e-9, -2e-9, 5e-9, -5e-9, 3e-9, -3e-9], 9).tolist()
+    specs = []
+    base = _multiband_specs(
+        dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+        difficulty="hard", asymmetry=0.3, propagation="travelling",
+    )
+    for s, cr in zip(base, chirps):
+        # Re-create with chirp_rate (EventSpec is a dataclass, simpler to rebuild)
+        specs.append(EventSpec(
+            band=s.band, period_sec_override=s.period_sec_override,
+            amplitude=s.amplitude, center_hours=s.center_hours,
+            decay_hours=s.decay_hours, difficulty=s.difficulty,
+            asymmetry=s.asymmetry, propagation=s.propagation,
+            chirp_rate=float(cr),
+        ))
     return ScenarioConfig(
-        dataset_id="tier3_frequency_drift",
-        description="QP60 with frequency chirp (travelling wave signature)",
+        dataset_id=dataset_id,
+        description="Chirped waves across all bands (travelling signature)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, chirp_rate=cr, propagation="travelling",
-                      asymmetry=0.3, difficulty="hard")
-            for c, cr in zip(centers, chirps)
-        ],
+        event_specs=specs,
     )
 
 
 def tier3_asymmetric_envelope() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    asym = [0.15, 0.2, 0.25, 0.3, 0.7, 0.75, 0.8, 0.85]
+    dataset_id = "tier3_asymmetric_envelope"
+    centers = _centers(9, 10)
+    rng = _scenario_rng(dataset_id + "_asym")
+    asym = rng.choice(
+        [0.15, 0.2, 0.25, 0.3, 0.7, 0.75, 0.8, 0.85], 9,
+    ).tolist()
+    base = _multiband_specs(
+        dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+        difficulty="hard",
+    )
+    specs = [
+        EventSpec(
+            band=s.band, period_sec_override=s.period_sec_override,
+            amplitude=s.amplitude, center_hours=s.center_hours,
+            decay_hours=s.decay_hours, difficulty=s.difficulty,
+            asymmetry=float(a),
+        )
+        for s, a in zip(base, asym)
+    ]
     return ScenarioConfig(
-        dataset_id="tier3_asymmetric_envelope",
-        description="QP60 with asymmetric envelopes (fast rise or fast fall)",
+        dataset_id=dataset_id,
+        description="Asymmetric envelopes across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, asymmetry=a, difficulty="hard")
-            for c, a in zip(centers, asym)
-        ],
+        event_specs=specs,
     )
 
 
 def tier3_amplitude_jitter() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier3_amplitude_jitter"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier3_amplitude_jitter",
-        description="QP60 with 30% per-cycle amplitude jitter",
+        dataset_id=dataset_id,
+        description="30 % per-cycle amplitude jitter across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, amplitude_jitter=0.3, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard", amplitude_jitter=0.3,
+        ),
     )
 
 
 def tier3_near_threshold() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier3_near_threshold"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier3_near_threshold",
-        description="QP60 at 0.15 nT with colored noise (SNR ~3)",
+        dataset_id=dataset_id,
+        description="SNR~3 threshold test across all bands (0.15 nT)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.15, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.15, n_cycles=8.0,
+            difficulty="hard",
+        ),
     )
 
 
 def tier3_mixed_waveforms() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    waveforms = ["sine", "sawtooth", "square", "sine",
-                 "sawtooth", "sine", "square", "sawtooth"]
+    dataset_id = "tier3_mixed_waveforms"
+    centers = _centers(9, 10)
+    rng = _scenario_rng(dataset_id + "_wf")
+    waveforms = rng.choice(["sine", "sawtooth", "square"], 9).tolist()
+    base = _multiband_specs(
+        dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+        difficulty="hard",
+    )
+    specs = [
+        EventSpec(
+            band=s.band, period_sec_override=s.period_sec_override,
+            amplitude=s.amplitude, center_hours=s.center_hours,
+            decay_hours=s.decay_hours, difficulty=s.difficulty,
+            waveform=str(wf),
+        )
+        for s, wf in zip(base, waveforms)
+    ]
     return ScenarioConfig(
-        dataset_id="tier3_mixed_waveforms",
-        description="Mixed sine/sawtooth/square in same dataset",
+        dataset_id=dataset_id,
+        description="Mixed sine/sawtooth/square across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, waveform=wf, difficulty="hard")
-            for c, wf in zip(centers, waveforms)
-        ],
+        event_specs=specs,
     )
 
 
 def tier3_travelling_waves() -> ScenarioConfig:
-    centers = _centers(6, 10)
+    dataset_id = "tier3_travelling_waves"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier3_travelling_waves",
-        description="Travelling Alfvén wave packets (chirp + asymmetric envelope)",
+        dataset_id=dataset_id,
+        description="Travelling Alfvén wave packets across all bands",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, chirp_rate=3e-9, asymmetry=0.3,
-                      propagation="travelling", difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+            chirp_rate=3e-9, asymmetry=0.3, propagation="travelling",
+        ),
     )
 
 
@@ -395,17 +481,17 @@ def tier3_travelling_waves() -> ScenarioConfig:
 # ======================================================================
 
 def tier4_buried_in_noise() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier4_buried_in_noise"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier4_buried_in_noise",
-        description="QP60 at SNR < 1.5 (nearly indistinguishable from noise)",
+        dataset_id=dataset_id,
+        description="SNR < 1.5 across all bands (nearly indistinguishable)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=True, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.07, center_hours=c,
-                      decay_hours=4.0, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.07, n_cycles=8.0,
+            difficulty="extreme",
+        ),
     )
 
 
@@ -476,17 +562,17 @@ def tier4_decaying() -> ScenarioConfig:
 
 
 def tier4_incoherent() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    dataset_id = "tier4_incoherent"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier4_incoherent",
-        description="QP60 with 50% per-cycle jitter (very low coherence)",
+        dataset_id=dataset_id,
+        description="50 % per-cycle jitter across all bands (low coherence)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.5, center_hours=c,
-                      decay_hours=4.0, amplitude_jitter=0.5, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.5, n_cycles=8.0,
+            difficulty="extreme", amplitude_jitter=0.5,
+        ),
     )
 
 
@@ -506,19 +592,31 @@ def tier4_harmonic_contamination() -> ScenarioConfig:
 
 
 def tier4_elliptical_pol() -> ScenarioConfig:
-    centers = _centers(6, 10)
-    ellipticities = [0.3, -0.3, 0.4, -0.4, 0.5, -0.5]
+    dataset_id = "tier4_elliptical_pol"
+    centers = _centers(9, 10)
+    rng = _scenario_rng(dataset_id + "_ell")
+    ellipticities = rng.choice(
+        [0.3, -0.3, 0.4, -0.4, 0.5, -0.5], 9,
+    ).tolist()
+    base = _multiband_specs(
+        dataset_id, centers, amplitude=0.8, n_cycles=8.0,
+        difficulty="extreme", polarization="elliptical",
+    )
+    specs = [
+        EventSpec(
+            band=s.band, period_sec_override=s.period_sec_override,
+            amplitude=s.amplitude, center_hours=s.center_hours,
+            decay_hours=s.decay_hours, difficulty=s.difficulty,
+            polarization=s.polarization, ellipticity=float(e),
+        )
+        for s, e in zip(base, ellipticities)
+    ]
     return ScenarioConfig(
-        dataset_id="tier4_elliptical_pol",
-        description="QP60 with ambiguous elliptical polarization",
+        dataset_id=dataset_id,
+        description="Elliptical-polarization waves across all bands",
         duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=4.0, polarization="elliptical",
-                      ellipticity=e, difficulty="extreme")
-            for c, e in zip(centers, ellipticities)
-        ],
+        event_specs=specs,
     )
 
 
@@ -625,152 +723,150 @@ def decoy_ppo_only() -> ScenarioConfig:
 
 
 def tier3_gaps_at_onset() -> ScenarioConfig:
-    """Data gaps at the rising edge of QP60 events."""
-    centers = _centers(6, 10)
-    # Place 10-min gap 1h before each event center (rising edge)
+    """Data gaps at the rising edge of events across all bands."""
+    dataset_id = "tier3_gaps_at_onset"
+    centers = _centers(9, 10)
     gaps = [GapSpec(center_hours=c - 1.0, duration_minutes=10) for c in centers]
     return ScenarioConfig(
-        dataset_id="tier3_gaps_at_onset",
-        description="QP60 with 10-min gaps at event onset",
+        dataset_id=dataset_id,
+        description="Events across bands with 10-min gaps at onset",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+        ),
         gaps=gaps,
     )
 
 
 def tier3_gaps_midpacket() -> ScenarioConfig:
-    """Data gaps in the middle of QP60 events."""
-    centers = _centers(6, 10)
+    """Data gaps in the middle of events across all bands."""
+    dataset_id = "tier3_gaps_midpacket"
+    centers = _centers(9, 10)
     gaps = [GapSpec(center_hours=c, duration_minutes=8) for c in centers]
     return ScenarioConfig(
-        dataset_id="tier3_gaps_midpacket",
-        description="QP60 with 8-min gaps at event midpoint",
+        dataset_id=dataset_id,
+        description="Events across bands with 8-min gaps at midpoint",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+        ),
         gaps=gaps,
     )
 
 
 def tier4_heavy_gaps() -> ScenarioConfig:
     """Frequent data gaps (~every 2h, 5–15 min each)."""
+    dataset_id = "tier4_heavy_gaps"
     gaps = [
         GapSpec(center_hours=h, duration_minutes=5 + (h % 3) * 5)
         for h in range(12, 228, 2)  # every 2h across 10 days
     ]
-    centers = _centers(8, 10)
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier4_heavy_gaps",
-        description="QP60 with frequent gaps (every ~2h, 5-15 min)",
+        dataset_id=dataset_id,
+        description="Waves across bands with frequent gaps (every ~2h, 5-15 min)",
         duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=4.0, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.8, n_cycles=8.0,
+            difficulty="extreme",
+        ),
         gaps=gaps,
     )
 
 
 def tier3_steep_noise() -> ScenarioConfig:
-    """QP60 in steep α = 1.5 noise (von Papen et al. 2014)."""
-    centers = _centers(8, 10)
+    """Steep α = 1.5 noise across all bands (von Papen et al. 2014)."""
+    dataset_id = "tier3_steep_noise"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier3_steep_noise",
-        description="QP60 in steep colored noise (alpha=1.5)",
+        dataset_id=dataset_id,
+        description="Waves across bands in steep colored noise (alpha=1.5)",
         duration_days=10, noise_alpha=1.5, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+        ),
     )
 
 
 def tier4_kolmogorov_noise() -> ScenarioConfig:
-    """QP60 in Kolmogorov α ≈ 5/3 ≈ 1.7 noise (Xu et al. 2023)."""
-    centers = _centers(8, 10)
+    """Waves across bands in Kolmogorov α ≈ 5/3 ≈ 1.7 noise (Xu et al. 2023)."""
+    dataset_id = "tier4_kolmogorov_noise"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier4_kolmogorov_noise",
-        description="QP60 in Kolmogorov turbulence (alpha=1.7)",
+        dataset_id=dataset_id,
+        description="Waves across bands in Kolmogorov turbulence (alpha=1.7)",
         duration_days=10, noise_alpha=1.7, noise_sigma=0.05,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=4.0, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.8, n_cycles=8.0,
+            difficulty="extreme",
+        ),
     )
 
 
 def tier3_ppo_beat() -> ScenarioConfig:
-    """QP60 with dual-PPO beat constructively enhancing transverse power."""
-    centers = _centers(8, 10)
+    """Dual-PPO beat constructively enhancing transverse power."""
+    dataset_id = "tier3_ppo_beat"
+    centers = _centers(9, 10)
     return ScenarioConfig(
-        dataset_id="tier3_ppo_beat",
-        description="QP60 with dual N/S PPO beat modulation",
+        dataset_id=dataset_id,
+        description="Waves across bands with dual N/S PPO beat modulation",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.05,
         background_trend=True, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+        ),
     )
 
 
 def tier3_plasma_sheet() -> ScenarioConfig:
-    """QP60 with localized noise bursts (plasma sheet crossings)."""
-    centers = _centers(6, 10)
+    """Waves across bands with localized noise bursts (plasma sheet)."""
+    dataset_id = "tier3_plasma_sheet"
+    centers = _centers(9, 10)
     bursts = [
         NoiseBurstSpec(center_hours=c, duration_hours=3.0,
                        sigma_multiplier=5.0)
         for c in centers[:3]
     ]
     return ScenarioConfig(
-        dataset_id="tier3_plasma_sheet",
-        description="QP60 overlapping 5x noise bursts (plasma sheet)",
+        dataset_id=dataset_id,
+        description="Waves across bands overlapping 5x noise bursts (plasma sheet)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=4.0, difficulty="hard")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=1.0, n_cycles=8.0,
+            difficulty="hard",
+        ),
         noise_bursts=bursts,
     )
 
 
 def tier4_nonstationary() -> ScenarioConfig:
-    """QP60 with continuously varying background noise level."""
-    centers = _centers(8, 10)
-    # Many overlapping noise bursts create non-stationary background
+    """Waves across bands in continuously varying background noise."""
+    dataset_id = "tier4_nonstationary"
+    centers = _centers(9, 10)
     bursts = [
         NoiseBurstSpec(center_hours=h, duration_hours=5.0,
                        sigma_multiplier=3.0 + (h % 7))
         for h in range(24, 216, 18)
     ]
     return ScenarioConfig(
-        dataset_id="tier4_nonstationary",
-        description="QP60 in non-stationary noise (varying σ)",
+        dataset_id=dataset_id,
+        description="Waves across bands in non-stationary noise (varying σ)",
         duration_days=10, noise_alpha=1.2, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=4.0, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=_multiband_specs(
+            dataset_id, centers, amplitude=0.8, n_cycles=8.0,
+            difficulty="extreme",
+        ),
         noise_bursts=bursts,
     )
 
