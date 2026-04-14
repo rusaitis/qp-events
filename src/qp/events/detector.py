@@ -671,22 +671,30 @@ def filter_detections(
             if float(coh2.mean()) < min_coherence:
                 continue
             # Global phase coherence between components (no smoothing)
-            # over the full ridge window: real waves (any deterministic
-            # polarization) maintain a constant phase relation across
-            # the whole packet, so |<c1 c2*>|² / (<|c1|²><|c2|²>) → 1.
-            # Bandpass-filtered noise bursts injected with independent
-            # seeds (the broadband-decoy family) average phase to ~0
-            # over many cycles → coh_glob < 0.95. Cleanly rejects the
-            # broadband burst decoys without touching real waves.
+            # over the full ridge window: waves with balanced circular
+            # or elliptical polarization keep a constant phase relation
+            # across the packet, so |<c1 c2*>|² / (<|c1|²><|c2|²>) → 1.
+            # Bandpass-filtered noise bursts with independent seeds
+            # (the broadband-decoy family) average phase to ~0 over
+            # many cycles → coh_glob < 0.95.
+            #
+            # Skip when one transverse component is much weaker than
+            # the other (power ratio > 10×): that is the signature of
+            # linear polarization (b_perp2 ≈ 0), and any coherence test
+            # would compare signal against component-wise noise and
+            # always fail.
             if c1.size > 3:
-                s12_g = np.mean(c1 * np.conj(c2))
                 s11_g = np.mean(np.abs(c1) ** 2)
                 s22_g = np.mean(np.abs(c2) ** 2)
-                den_g = s11_g * s22_g
-                if den_g > 0:
-                    coh_glob = float(np.abs(s12_g) ** 2 / den_g)
-                    if coh_glob < 0.95:
-                        continue
+                pmax = max(s11_g, s22_g)
+                pmin = min(s11_g, s22_g)
+                if pmin > 0 and pmax / pmin < 10.0:
+                    s12_g = np.mean(c1 * np.conj(c2))
+                    den_g = s11_g * s22_g
+                    if den_g > 0:
+                        coh_glob = float(np.abs(s12_g) ** 2 / den_g)
+                        if coh_glob < 0.95:
+                            continue
 
         # 3. Spectral narrowness around the detection peak period.
         # A Morlet CWT of a pure sine has FWHM ≈ 0.035 in log10(P)
