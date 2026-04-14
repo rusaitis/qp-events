@@ -85,7 +85,7 @@ def _detect_events_in_dataset(
     # floor across all bands, so the previous 4.5σ cut was catching
     # spurious low-level features. 6σ is the empirical IoU/precision
     # optimum; 5 and 7 both regress (slightly different trade-offs).
-    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=6.0)
+    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=5.5)
 
     # CWT of parallel component for in-band transverse ratio checks
     _, _, cwt_par = morlet_cwt(
