@@ -152,13 +152,26 @@ def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
     """
     periods_sec = freq_to_period(cwt_freq)
     keep = np.ones_like(cwt_freq, dtype=bool)
-    # exclude QP bands
+    # Exclude QP bands and the super_qp120 gap ([QP120.period_max, 180) min).
+    # Rows inside super_qp120 are signal-bearing in the band-agnostic
+    # pipeline (scenarios inject events at 170-180 min). Including them
+    # in the noise model inflates the local MAD by the signal itself:
+    # tier4_super_qp120 fills ~50 % of the time axis with genuine wave
+    # power, driving the threshold above the signal max. Excluding
+    # super_qp120 lets the threshold at 170-180 min be extrapolated
+    # from genuinely-noise rows just above 180 min.
     for band in QP_BANDS.values():
         in_band = (
             (periods_sec >= band.period_min_sec)
             & (periods_sec < band.period_max_sec)
         )
         keep &= ~in_band
+    qp120 = QP_BANDS["QP120"]
+    super_qp120_mask = (
+        (periods_sec >= qp120.period_max_sec)
+        & (periods_sec < 180.0 * 60.0)
+    )
+    keep &= ~super_qp120_mask
     # exclude rejection guards
     keep &= periods_sec >= REJECT_BAND_HF.period_max_sec
     keep &= periods_sec < REJECT_BAND_LF.period_min_sec
