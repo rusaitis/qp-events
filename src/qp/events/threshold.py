@@ -166,10 +166,15 @@ def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
             & (periods_sec < band.period_max_sec)
         )
         keep &= ~in_band
+    # Extend the super_qp120 exclusion to cover the wavelet smearing
+    # band above the canonical 180-min cut: a signal at 175 min has
+    # non-negligible CWT skirt up to ~200 min (Morlet half-width ≈
+    # period / pi), so rows at 180–200 min are still partly signal-
+    # contaminated for the tier4_super_qp120 scenario.
     qp120 = QP_BANDS["QP120"]
     super_qp120_mask = (
         (periods_sec >= qp120.period_max_sec)
-        & (periods_sec < 180.0 * 60.0)
+        & (periods_sec < 210.0 * 60.0)
     )
     keep &= ~super_qp120_mask
     # exclude rejection guards
