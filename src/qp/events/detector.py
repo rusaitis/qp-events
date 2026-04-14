@@ -436,10 +436,10 @@ def _split_ridge_by_peaks(
     row = cwt_power[ridge.peak_period_idx, i0 : i1 + 1]
     if row.size < 6 or row.max() <= 0:
         return [ridge]
-    # Peaks ≥ 50% of the ridge max, prominence ≥ 20% of max
+    # Peaks ≥ 30% of the ridge max, prominence ≥ 10% of max
     from scipy.signal import find_peaks
     peaks_rel, _ = find_peaks(
-        row, height=0.5 * row.max(), prominence=0.2 * row.max(),
+        row, height=0.3 * row.max(), prominence=0.1 * row.max(),
     )
     if peaks_rel.size < 2:
         return [ridge]
