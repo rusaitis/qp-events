@@ -613,6 +613,44 @@ def filter_detections(
                     merged[-1] = peak
                 continue
         merged.append(peak)
+
+    # 5. Harmonic suppression — a non-sinusoidal QP wave (sawtooth,
+    # square, asymmetric envelope, or explicit harmonic content) has
+    # CWT power at 2f and 3f. The harmonic's amplitude is bounded by
+    # the Fourier decomposition of the waveform: a 20 % sawtooth has
+    # ~4 % harmonic power; 40 % explicit content gives ~16 %. Real
+    # co-occurring QP waves have comparable amplitudes in each band.
+    # Reject a short-period candidate if a temporally overlapping
+    # long-period one carries ≥2 × its power and the period ratio is
+    # near 2:1 or 3:1 (±15 %).
+    HARMONIC_POWER_RATIO = 0.35  # harmonic must be <35 % of fundamental
+    keep: list[bool] = [True] * len(merged)
+    for i, short in enumerate(merged):
+        if not keep[i] or not short.period_sec:
+            continue
+        for j, long in enumerate(merged):
+            if (
+                i == j or not keep[j] or not long.period_sec
+                or long.period_sec <= short.period_sec
+            ):
+                continue
+            ratio = long.period_sec / short.period_sec
+            near_harmonic = any(
+                abs(ratio - n) / n < 0.15 for n in (2, 3)
+            )
+            if not near_harmonic:
+                continue
+            if (
+                short.date_from >= long.date_to
+                or short.date_to <= long.date_from
+            ):
+                continue
+            # Harmonic amplitude bounded by waveform Fourier coefficients;
+            # co-occurring independent waves typically >50 % of each other.
+            if short.prominence < HARMONIC_POWER_RATIO * long.prominence:
+                keep[i] = False
+                break
+    merged = [p for p, k in zip(merged, keep) if k]
     return merged
 
 
