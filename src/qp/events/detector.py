@@ -488,6 +488,9 @@ def detect_with_gate(
         transverse_ratio=gate.transverse_ratio,
         spectral_concentration=gate.spectral_concentration,
         dedup_window_sec=gate.dedup_window_sec,
+        min_coherence=gate.min_coherence,
+        cwt_perp1_complex=cwt1,
+        cwt_perp2_complex=cwt2,
     )
 
     return packets
@@ -501,7 +504,7 @@ def filter_detections(
     par_power: np.ndarray | None = None,
     *,
     epoch: datetime.datetime | None = None,
-    min_oscillations: float = 5.0,
+    min_oscillations: float = 3.0,
     transverse_ratio: float = 0.5,
     spectral_concentration: float | None = 0.6,
     dedup_window_sec: float = 10800.0,

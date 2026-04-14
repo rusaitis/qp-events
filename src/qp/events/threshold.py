@@ -260,7 +260,11 @@ class GateConfig:
     n_sigma: float = 3.5
     min_duration_hours: float = 2.0
     min_pixels: int = 80
-    min_oscillations: float = 2.5
+    # Quasi-periodic identification convention: ≥3 full cycles.
+    # (Cassini QP packets typically 4–6 h; 5-cycle rule over-prunes
+    # QP60/QP120 on real data — 3 cycles is the standard literature
+    # threshold for quasi-periodic identification.)
+    min_oscillations: float = 3.0
     coi_factor: float = 1.0
     # Alfvén waves are transverse: reject if parallel CWT power exceeds
     # this fraction of transverse in-band power.
@@ -270,6 +274,10 @@ class GateConfig:
     # for real data where QP bands naturally overlap; 0.6 for benchmarks.
     spectral_concentration: float | None = None
     dedup_window_sec: float = 10800.0
+    # Wavelet cross-coherence between b_perp1 and b_perp2. Real Alfvén
+    # waves have stable polarisation → coherence ≈ 1. Noise bursts
+    # yield coherence < 0.9.
+    min_coherence: float | None = 0.9
 
 
 DEFAULT_GATE: GateConfig = GateConfig()
