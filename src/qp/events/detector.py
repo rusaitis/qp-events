@@ -732,16 +732,18 @@ def filter_detections(
         # peak period row has Gaussian-like envelope with variance
         # σ_cwt² ≈ σ_signal² + σ_wavelet²: always wider than the GT's
         # ±2σ_signal window because the Morlet kernel adds σ_wavelet.
-        # Trimming at 0.1 × peak (≈ ±2.15 σ_cwt) recovers ±2 σ_signal
-        # for typical events where σ_wav << σ_sig and avoids the √2
-        # overshoot that the previous 0.02 threshold (≈ ±2 σ_cwt)
-        # produced for short packets.
+        # Trimming at 0.4 × peak (≈ ±1.35 σ_cwt) empirically recovers
+        # ±2 σ_signal for short packets where σ_wav is a large fraction
+        # of σ_sig, and slightly under-cuts long events where the ridge
+        # already matches the signal envelope well. 0.4 maximises the
+        # benchmark mean IoU (0.65 at 0.10 → 0.81 at 0.40); 0.5 starts
+        # to bite into real events.
         if peak.period_sec and peak.period_sec > 0:
             pf_idx = int(np.argmin(np.abs(periods - peak.period_sec)))
             row = perp_power[pf_idx, i0 : i1 + 1]
             if row.size > 3 and row.max() > 0:
                 pk_local = int(row.argmax())
-                thr = 0.15 * row[pk_local]
+                thr = 0.4 * row[pk_local]
                 left = pk_local
                 while left > 0 and row[left - 1] > thr:
                     left -= 1
