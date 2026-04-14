@@ -17,9 +17,14 @@ Usage
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import sawtooth, square
+from scipy.signal import lfilter, sawtooth, square
 
 from qp.events.catalog import WaveTemplate
+
+# Fraction of Nyquist retained by the sharp-waveform anti-alias filter.
+# Set close-to-but-below 1 so the guard band sits in the stop-band
+# rolloff rather than the detector's analysis range.
+_ANTIALIAS_NYQUIST_FRACTION = 0.8
 
 
 def _bandlimit(signal: np.ndarray, dt: float, fc: float) -> np.ndarray:
@@ -28,8 +33,9 @@ def _bandlimit(signal: np.ndarray, dt: float, fc: float) -> np.ndarray:
     Sharp non-sine waveforms (sawtooth, square) contain power at all
     harmonics of the fundamental; at dt=60 s these alias across the
     full Nyquist band. We truncate the spectrum above ``fc`` so the
-    waveform keeps its character (fundamental + a few harmonics) but
-    does not inject broadband power into the detector's search range.
+    waveform drops the aliasing tail without biting into the detector
+    analysis band — the cutoff is set from the Nyquist frequency, not
+    from the wave fundamental, so it is band-agnostic.
     """
     n = signal.size
     if n < 4 or fc <= 0:
@@ -38,6 +44,30 @@ def _bandlimit(signal: np.ndarray, dt: float, fc: float) -> np.ndarray:
     spec = np.fft.rfft(signal)
     spec[freqs > fc] = 0.0
     return np.fft.irfft(spec, n=n)
+
+
+def _ou_log_jitter(
+    n: int, dt: float, tau: float, sigma: float, rng: np.random.Generator,
+) -> np.ndarray:
+    r"""Ornstein–Uhlenbeck multiplicative amplitude jitter.
+
+    Returns a length-``n`` positive multiplier with unit mean and
+    stationary log-variance ``sigma**2``. The log-amplitude follows a
+    discrete OU process with correlation time ``tau``; spectral content
+    rolls off above $f \sim 1/(2\pi\tau)$ so the jitter injects no
+    broadband power at integer-cycle boundaries (unlike the historical
+    per-cycle step multiplier).
+    """
+    if sigma <= 0 or n == 0:
+        return np.ones(n)
+    alpha = float(np.exp(-dt / tau))
+    drive = np.sqrt(1.0 - alpha * alpha) * rng.standard_normal(n)
+    # Warm-start from the stationary distribution so there is no
+    # transient at t=0.
+    drive[0] = rng.standard_normal()
+    x = lfilter([1.0], [1.0, -alpha], drive)
+    # Bias-correct the log-normal so E[multiplier] = 1 exactly.
+    return np.exp(sigma * x - 0.5 * sigma * sigma)
 
 
 def _generate_waveform(
@@ -79,13 +109,16 @@ def _generate_waveform(
         case _:
             raise ValueError(f"Unknown waveform type: {wave.waveform!r}")
 
-    # Anti-alias non-sine waveforms: keep the fundamental plus the first
-    # ~10 harmonics and drop the infinite high-frequency tail that would
-    # otherwise alias into the QP detector's band at 1-min cadence.
+    # Anti-alias non-sine waveforms. Cutoff is tied to the Nyquist
+    # frequency of the sample grid (``_ANTIALIAS_NYQUIST_FRACTION`` ×
+    # f_Nyq), not to the wave fundamental — this keeps the guard band
+    # inside the detector rolloff regardless of injection period and
+    # avoids the old ``10 × f0`` rule that landed inside the search
+    # band for QP120 and near Nyquist for QP30.
     if wave.waveform in ("sawtooth", "square") and len(t) > 1:
         dt_sample = float(t[1] - t[0])
-        f0 = 1.0 / wave.period
-        y = _bandlimit(y, dt_sample, fc=10.0 * f0)
+        f_nyq = 0.5 / dt_sample
+        y = _bandlimit(y, dt_sample, fc=_ANTIALIAS_NYQUIST_FRACTION * f_nyq)
 
     # Harmonic generation. Two models are supported:
     #   * ``"linear_2f"`` (default) — phenomenological nuisance
@@ -122,12 +155,13 @@ def _generate_waveform(
             # amplitude that a fully steepened wave would have, given
             # that the fundamental coefficient of a sawtooth is 2/π.
             y += wave.harmonic_content * (np.pi / 2.0) * harm_sum
-            # Anti-alias because high-n harmonics may sit above the
-            # detector's effective Nyquist.
+            # Anti-alias at the same Nyquist-fraction cutoff as above.
             if len(t) > 1:
                 dt_sample = float(t[1] - t[0])
-                f0 = 1.0 / wave.period
-                y = _bandlimit(y, dt_sample, fc=10.0 * f0)
+                f_nyq = 0.5 / dt_sample
+                y = _bandlimit(
+                    y, dt_sample, fc=_ANTIALIAS_NYQUIST_FRACTION * f_nyq
+                )
         else:
             raise ValueError(
                 f"Unknown harmonic_model: {wave.harmonic_model!r}"
@@ -187,13 +221,22 @@ def _generate_waveform(
             raise ValueError(f"Unknown envelope_shape: {shape!r}")
         y *= envelope
 
-    # Per-cycle amplitude jitter
-    if wave.amplitude_jitter > 0 and rng is not None:
-        samples_per_cycle = max(1, int(round(wave.period / (t[1] - t[0]))))
-        n_cycles = len(t) // samples_per_cycle + 1
-        jitter = 1.0 + wave.amplitude_jitter * rng.standard_normal(n_cycles)
-        jitter_expanded = np.repeat(jitter, samples_per_cycle)[: len(t)]
-        y *= jitter_expanded
+    # Amplitude jitter. Historical versions multiplied by a step
+    # function resampled once per cycle, which injects broadband
+    # spectral power at cycle boundaries that the detector can see as
+    # transient signal. Instead we use an Ornstein–Uhlenbeck-driven
+    # log-normal multiplier with correlation time equal to one period
+    # — stationary unit mean, log-variance ``amplitude_jitter**2``,
+    # smooth across cycle boundaries, and well-defined PSD rolloff.
+    if wave.amplitude_jitter > 0 and rng is not None and len(t) > 1:
+        dt_sample = float(t[1] - t[0])
+        y *= _ou_log_jitter(
+            n=len(t),
+            dt=dt_sample,
+            tau=wave.period,
+            sigma=wave.amplitude_jitter,
+            rng=rng,
+        )
 
     # Amplitude scaling
     y *= wave.amplitude
@@ -253,65 +296,6 @@ def simulate_signal(
     return t, y
 
 
-def simulate_multi_component(
-    n_samples: int = 2160,
-    dt: float = 60.0,
-    waves: list[WaveTemplate] | None = None,
-    noise_sigma: float = 0.0,
-    phase_offsets: tuple[float, float, float] = (0.0, np.pi / 4, np.pi / 2),
-    seed: int | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    r"""Generate synthetic 3-component field data (B_par, B_perp1, B_perp2).
-
-    Each component gets the same waves but with a phase offset, mimicking
-    the circularly polarized QP events observed at Saturn.
-
-    Replaces the multi-component logic in ``cassinilib.simulateSignal()``.
-
-    Parameters
-    ----------
-    n_samples : int
-        Number of time samples.
-    dt : float
-        Sampling interval in seconds.
-    waves : list[WaveTemplate], optional
-        Wave components to inject.
-    noise_sigma : float
-        Standard deviation of additive Gaussian noise per component.
-    phase_offsets : tuple[float, float, float]
-        Phase offsets for (par, perp1, perp2) components in radians.
-        Default (0, pi/4, pi/2) mimics circular polarization.
-    seed : int, optional
-        RNG seed for reproducible noise.
-
-    Returns
-    -------
-    time : ndarray, shape (n_samples,)
-        Time array in seconds from t=0.
-    fields : ndarray, shape (n_samples, 4)
-        Columns: [B_par, B_perp1, B_perp2, B_tot].
-    """
-    from copy import replace
-
-    rng = np.random.default_rng(seed)
-    t = np.arange(n_samples) * dt
-    components = np.zeros((n_samples, 3))
-
-    if waves is not None:
-        for i, offset in enumerate(phase_offsets):
-            for wave in waves:
-                shifted = replace(wave, phase=wave.phase + offset)
-                components[:, i] += _generate_waveform(t, shifted, rng)
-
-    if noise_sigma > 0:
-        components += rng.normal(0, noise_sigma, components.shape)
-
-    b_tot = np.linalg.norm(components, axis=1)
-    fields = np.column_stack([components, b_tot])
-
-    return t, fields
-
-
 def simulate_wave_physics(
     n_samples: int,
     dt: float,
@@ -319,14 +303,10 @@ def simulate_wave_physics(
     mode: str = "alfvenic",
     polarization: str = "circular",
     ellipticity: float = 1.0,
-    par_leakage: float = 0.05,
+    par_leakage: float | tuple[float, float] = (0.0, 0.10),
     seed: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     r"""Generate a 3-component field with physically motivated wave modes.
-
-    Unlike :func:`simulate_multi_component` which uses naive phase offsets,
-    this function models the physics of Alfvénic vs compressional modes
-    and circular vs linear polarization.
 
     Parameters
     ----------
@@ -349,10 +329,14 @@ def simulate_wave_physics(
         Minor/major axis ratio of the polarization ellipse, [-1, 1].
         Only used when ``polarization="elliptical"``.
         +1 = right-circular, -1 = left-circular, 0 = linear.
-    par_leakage : float
-        Fraction of transverse amplitude that leaks into B_par (Alfvénic)
-        or fraction of parallel amplitude leaking into B_perp (compressional).
-        Models imperfect MFA rotation. Default 0.05 (5%).
+    par_leakage : float or tuple[float, float]
+        MFA cross-axis leakage: fraction of the primary-axis amplitude
+        that appears on the secondary axis (B_par for Alfvénic, B_perp
+        for compressional). A scalar is applied deterministically to
+        every event; a ``(lo, hi)`` tuple draws ``U(lo, hi)`` per event,
+        which is the published default ``(0.0, 0.10)`` — it reflects
+        MFA rotation uncertainty rather than assuming a single magic
+        value. Set to ``0.0`` to switch leakage off.
     seed : int or None
         RNG seed for jitter.
 
@@ -370,7 +354,19 @@ def simulate_wave_physics(
     b_perp1 = np.zeros(n_samples)
     b_perp2 = np.zeros(n_samples)
 
+    if isinstance(par_leakage, tuple):
+        leakage_lo, leakage_hi = par_leakage
+        if leakage_lo < 0 or leakage_hi < leakage_lo:
+            raise ValueError(
+                f"par_leakage range must satisfy 0 ≤ lo ≤ hi; got {par_leakage!r}"
+            )
+    else:
+        leakage_lo = leakage_hi = float(par_leakage)
+
     for wave in waves:
+        leakage = float(rng.uniform(leakage_lo, leakage_hi)) \
+            if leakage_hi > leakage_lo else leakage_lo
+
         # Base waveform (B_perp1 axis)
         w1 = _generate_waveform(t, wave, rng)
 
@@ -395,11 +391,11 @@ def simulate_wave_physics(
             case "alfvenic":
                 b_perp1 += w1
                 b_perp2 += w2
-                b_par += par_leakage * w1  # small leakage
+                b_par += leakage * w1
             case "compressional":
                 b_par += w1
-                b_perp1 += par_leakage * w1  # small leakage
-                b_perp2 += par_leakage * w2 if np.any(w2) else np.zeros_like(w1)
+                b_perp1 += leakage * w1
+                b_perp2 += leakage * w2 if np.any(w2) else np.zeros_like(w1)
             case "mixed":
                 scale = 1.0 / np.sqrt(3)
                 b_par += w1 * scale
@@ -411,104 +407,3 @@ def simulate_wave_physics(
     b_tot = np.sqrt(b_par**2 + b_perp1**2 + b_perp2**2)
     fields = np.column_stack([b_par, b_perp1, b_perp2, b_tot])
     return t, fields
-
-
-def generate_long_signal(
-    duration_days: float = 10.0,
-    dt: float = 60.0,
-    seed: int = 42,
-) -> tuple[np.ndarray, np.ndarray]:
-    r"""Generate a long synthetic signal with realistic multi-scale wave content.
-
-    Includes:
-    - Long-period background trend (~200 days, large amplitude)
-    - PPO modulation (~10.7 hours)
-    - Sporadic QP60 wave packets (~60 min, scattered every ~55 hours)
-    - Sporadic QP30 wave packets (~30 min, scattered every ~72 hours)
-    - Random noise
-
-    This replaces ``cassinilib.generateLongSignal()`` for pipeline testing.
-
-    Parameters
-    ----------
-    duration_days : float
-        Total signal duration in days.
-    dt : float
-        Sampling interval in seconds.
-    seed : int
-        RNG seed for reproducibility.
-
-    Returns
-    -------
-    time : ndarray
-        Time array in seconds from t=0.
-    signal : ndarray
-        Synthetic signal.
-    """
-    hour = 3600.0
-    mins = 60.0
-    n_samples = int(duration_days * 86400 / dt)
-    rng = np.random.default_rng(seed)
-
-    # Collect wave packets
-    waves: list[WaveTemplate] = []
-
-    # Background trend (long period, large amplitude)
-    waves.append(
-        WaveTemplate(
-            period=200 * 24 * hour,
-            amplitude=1000.0,
-            phase=0.0,
-        )
-    )
-
-    # PPO modulation (~10.7 hours)
-    waves.append(
-        WaveTemplate(
-            period=10.7 * hour,
-            amplitude=2.0,
-            phase=0.0,
-        )
-    )
-
-    # Sporadic QP60 wave packets (every ~55 hours, Gaussian-enveloped)
-    total_sec = duration_days * 86400
-    shift = 0.0
-    while shift < total_sec:
-        shift += 55 * hour + rng.normal(0, 55 * hour / 2)
-        if shift >= total_sec:
-            break
-        waves.append(
-            WaveTemplate(
-                period=60 * mins + rng.normal(0, 6 * mins),
-                amplitude=0.02 + rng.normal(0, 0.01),
-                phase=rng.uniform(0, np.pi),
-                decay_width=3 * hour,
-                shift=shift,
-            )
-        )
-
-    # Sporadic QP30 wave packets (every ~72 hours)
-    shift = 0.0
-    while shift < total_sec:
-        shift += 72 * hour + rng.normal(0, 36 * hour)
-        if shift >= total_sec:
-            break
-        waves.append(
-            WaveTemplate(
-                period=30 * mins + rng.normal(0, 3 * mins),
-                amplitude=0.02 + rng.normal(0, 0.01),
-                phase=rng.uniform(0, np.pi),
-                decay_width=1 * hour,
-                shift=shift,
-            )
-        )
-
-    t, y = simulate_signal(
-        n_samples=n_samples,
-        dt=dt,
-        waves=waves,
-        noise_sigma=0.01,
-        seed=seed,
-    )
-    return t, y

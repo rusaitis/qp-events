@@ -193,12 +193,21 @@ def _in_band_snr(
     dt: float,
     band_name: str | None,
 ) -> float:
-    r"""Compute in-band SNR analytically.
+    r"""Compute analytic in-band signal-to-noise ratio.
 
-    $$\text{SNR}_{\text{in-band}} = \frac{A}{\sqrt{\int_{f_1}^{f_2}
+    $$\text{SNR}_{\text{in-band}} = \frac{A_{\text{peak}}}{\sqrt{\int_{f_1}^{f_2}
     C \cdot f^{-\alpha} \, df}}$$
 
-    where $C$ is set so that the total broadband RMS equals ``noise_sigma``.
+    where $C$ is set so the total broadband RMS equals ``noise_sigma``
+    and $A_{\text{peak}}$ is the **peak transverse wave amplitude** at
+    envelope maximum — this is the SNR definition used throughout the
+    benchmark manifest and scoring. Note that non-Gaussian envelopes
+    (``lognormal``, ``rayleigh``) are peak-normalised, not
+    energy-normalised, so they carry less integrated wave energy than
+    a Gaussian envelope at the same reported SNR. This is intentional:
+    it makes those scenarios harder for the detector without requiring
+    a second SNR definition. See also :func:`_empirical_band_rms` for
+    the realized-noise SNR used during scenario generation.
     """
     if noise_sigma <= 0 or noise_alpha <= 0:
         return amplitude / max(noise_sigma, 1e-30)

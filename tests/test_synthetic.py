@@ -7,11 +7,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from qp.events.catalog import WaveTemplate
-from qp.signal.synthetic import (
-    generate_long_signal,
-    simulate_multi_component,
-    simulate_signal,
-)
+from qp.signal.synthetic import simulate_signal
 
 
 class TestSimulateSignal:
@@ -120,66 +116,6 @@ class TestSimulateSignal:
         wave = WaveTemplate(period=600.0, waveform="chirp")
         with pytest.raises(ValueError, match="Unknown waveform"):
             simulate_signal(n_samples=100, dt=60.0, waves=[wave])
-
-
-class TestSimulateMultiComponent:
-    """Tests for simulate_multi_component()."""
-
-    def test_output_shape(self):
-        t, fields = simulate_multi_component(n_samples=500, dt=60.0)
-        assert t.shape == (500,)
-        assert fields.shape == (500, 4)
-
-    def test_btot_column(self):
-        """Fourth column should be the magnitude of the first three."""
-        wave = WaveTemplate(period=3600.0, amplitude=1.0)
-        t, fields = simulate_multi_component(
-            n_samples=500,
-            dt=60.0,
-            waves=[wave],
-        )
-        expected_btot = np.linalg.norm(fields[:, :3], axis=1)
-        assert_allclose(fields[:, 3], expected_btot)
-
-    def test_phase_offsets_applied(self):
-        """Different components should have different phases."""
-        wave = WaveTemplate(period=3600.0, amplitude=1.0, phase=0.0)
-        _, fields = simulate_multi_component(
-            n_samples=500,
-            dt=60.0,
-            waves=[wave],
-            phase_offsets=(0.0, np.pi / 4, np.pi / 2),
-        )
-        # Components should not be identical
-        assert not np.allclose(fields[:, 0], fields[:, 1])
-        assert not np.allclose(fields[:, 1], fields[:, 2])
-
-    def test_no_waves_no_noise_is_zero(self):
-        _, fields = simulate_multi_component(
-            n_samples=100,
-            dt=60.0,
-            noise_sigma=0.0,
-        )
-        assert_allclose(fields[:, :3], 0.0)
-
-
-class TestGenerateLongSignal:
-    """Tests for generate_long_signal()."""
-
-    def test_output_length(self):
-        t, y = generate_long_signal(duration_days=1.0, dt=60.0)
-        expected_n = int(1.0 * 86400 / 60)
-        assert len(t) == expected_n
-        assert len(y) == expected_n
-
-    def test_signal_not_zero(self):
-        _, y = generate_long_signal(duration_days=1.0, dt=60.0)
-        assert np.std(y) > 0
-
-    def test_reproducible(self):
-        _, y1 = generate_long_signal(duration_days=1.0, dt=60.0, seed=42)
-        _, y2 = generate_long_signal(duration_days=1.0, dt=60.0, seed=42)
-        assert_allclose(y1, y2)
 
 
 class TestRound3Hardening:

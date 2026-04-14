@@ -22,8 +22,4 @@ from qp.signal.timeseries import (
     detrend_for_fft,
 )
 from qp.signal.pipeline import SpectralResult, analyze_segment
-from qp.signal.synthetic import (
-    simulate_signal,
-    simulate_multi_component,
-    generate_long_signal,
-)
+from qp.signal.synthetic import simulate_signal, simulate_wave_physics
