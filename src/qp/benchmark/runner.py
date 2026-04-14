@@ -80,7 +80,12 @@ def _detect_events_in_dataset(
     joint_power = (np.abs(cwt1) + np.abs(cwt2)) / 2.0
     # σ-mask on total transverse power: elevated power in the
     # combined perpendicular field indicates wave activity.
-    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=4.5)
+    # Higher-than-default n_sigma: the combined bg-row exclusion above
+    # QP120 (super_qp120 + wavelet-smearing margin) dropped the noise
+    # floor across all bands, so the previous 4.5σ cut was catching
+    # spurious low-level features. 6σ is the empirical IoU/precision
+    # optimum; 5 and 7 both regress (slightly different trade-offs).
+    combined_mask = wavelet_sigma_mask(joint_power, freq, n_sigma=6.0)
 
     # CWT of parallel component for in-band transverse ratio checks
     _, _, cwt_par = morlet_cwt(
