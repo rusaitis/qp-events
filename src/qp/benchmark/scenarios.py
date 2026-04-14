@@ -583,17 +583,36 @@ def tier4_incoherent() -> ScenarioConfig:
 
 
 def tier4_harmonic_contamination() -> ScenarioConfig:
-    centers = _centers(8, 10)
+    """2f harmonic distortion across fundamentals from all three bands.
+
+    4 fundamentals per band (12 total), periods log-uniform within
+    their band. 2f harmonic lands at:
+      QP30 (21-42 min)  fundamentals → 2f at 10-21 min (sub_qp30/below)
+      QP60 (42-85 min)  fundamentals → 2f at 21-42 min (QP30)
+      QP120 (85-170 min) fundamentals → 2f at 42-85 min (QP60)
+
+    The harmonic suppression filter must handle all three cases, not
+    just the historical QP60→QP30 test.
+    """
+    dataset_id = "tier4_harmonic_contamination"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(12, 12)
+    bands = _balanced_band_assignment(12, rng)
+    specs = []
+    for c, b in zip(centers, bands):
+        p_sec = _sample_periods_in_band(b, 1, rng)[0]
+        specs.append(EventSpec(
+            band=b, period_sec_override=p_sec,
+            amplitude=0.8, center_hours=c,
+            decay_hours=5.0 * p_sec / (4.0 * 3600.0),  # ~5 cycles
+            harmonic_content=0.4, difficulty="extreme",
+        ))
     return ScenarioConfig(
-        dataset_id="tier4_harmonic_contamination",
-        description="QP60 with strong 2nd harmonic distortion",
-        duration_days=10, noise_alpha=1.0, noise_sigma=0.03,
+        dataset_id=dataset_id,
+        description="2f harmonic distortion, fundamentals across QP30/60/120",
+        duration_days=12, noise_alpha=1.0, noise_sigma=0.03,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=0.8, center_hours=c,
-                      decay_hours=4.0, harmonic_content=0.4, difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=specs,
     )
 
 
@@ -1094,19 +1113,82 @@ def tier4_weak_qp60_strong_qp120() -> ScenarioConfig:
 
 
 def tier4_harmonic_pairs() -> ScenarioConfig:
-    """QP60 with harmonic content producing correlated QP120-range power."""
-    centers = _centers(6, 10)
+    """Harmonic-strength sweep across all bands.
+
+    Tests the harmonic suppression filter's power-ratio threshold.
+    9 events — 3 fundamentals per band × 3 harmonic strengths
+    (0.2, 0.4, 0.6). Periods log-uniform within each band so the 2f
+    harmonic also samples a range of locations.
+
+    Harmonic-to-fundamental CWT prominence ratio is ~= harmonic_content
+    (linear in amplitude). At h=0.2 the harmonic should be suppressed;
+    at h=0.6 it's a borderline case; at h=0.4 it's the design target.
+    """
+    dataset_id = "tier4_harmonic_pairs"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(9, 12)
+    strengths = rng.choice([0.2, 0.4, 0.6], 9, replace=True).tolist()
+    # 3 per band, shuffled
+    bands = ["QP30", "QP60", "QP120"] * 3
+    rng.shuffle(bands)
+    specs = []
+    for c, b, h in zip(centers, bands, strengths):
+        p_sec = _sample_periods_in_band(b, 1, rng)[0]
+        specs.append(EventSpec(
+            band=b, period_sec_override=p_sec,
+            amplitude=1.0, center_hours=c,
+            decay_hours=5.0 * p_sec / (4.0 * 3600.0),  # ~5 cycles
+            harmonic_content=float(h),
+            difficulty="extreme",
+        ))
     return ScenarioConfig(
-        dataset_id="tier4_harmonic_pairs",
-        description="QP60 with 50% harmonic leaking into QP120 band",
-        duration_days=10, noise_alpha=1.2, noise_sigma=0.07,
+        dataset_id=dataset_id,
+        description="Harmonic-strength sweep (h=0.2/0.4/0.6) across all bands",
+        duration_days=12, noise_alpha=1.2, noise_sigma=0.07,
         background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(band="QP60", amplitude=1.0, center_hours=c,
-                      decay_hours=3.0, harmonic_content=0.5,
-                      difficulty="extreme")
-            for c in centers
-        ],
+        event_specs=specs,
+    )
+
+
+def tier4_harmonic_noncanonical() -> ScenarioConfig:
+    """Harmonic distortion at non-canonical fundamental periods.
+
+    Fundamentals at 45, 50, 70, 100, 145 min — deliberately NOT at
+    30/60/120. Tests that the harmonic filter works on fundamental
+    periods the paper's canonical bands don't centre on:
+
+      45 min → 2f at 22.5 min (QP30 lower edge)
+      50 min → 2f at 25.0 min (QP30)
+      70 min → 2f at 35.0 min (QP30)
+      100 min → 2f at 50.0 min (QP60)
+      145 min → 2f at 72.5 min (QP60)
+
+    If the harmonic suppression is truly period-ratio-based (not
+    band-pair-based) it should handle all these.
+    """
+    dataset_id = "tier4_harmonic_noncanonical"
+    rng = _scenario_rng(dataset_id)
+    centers = _centers(10, 12)
+    # Two events per fundamental period
+    fundamentals_min = [45.0, 50.0, 70.0, 100.0, 145.0] * 2
+    amps = rng.uniform(0.8, 1.2, 10).tolist()
+    specs = []
+    for c, p_min, a in zip(centers, fundamentals_min, amps):
+        p_sec = p_min * _MIN
+        band = classify_period(p_sec) or "QP60"
+        specs.append(EventSpec(
+            band=band, period_sec_override=p_sec,
+            amplitude=float(a), center_hours=c,
+            decay_hours=5.0 * p_sec / (4.0 * 3600.0),
+            harmonic_content=0.4,
+            difficulty="extreme",
+        ))
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description="Harmonics at non-canonical fundamentals (45/50/70/100/145 min)",
+        duration_days=12, noise_alpha=1.0, noise_sigma=0.07,
+        background_trend=False, ppo_amplitude=0.5, difficulty_tier="tier4",
+        event_specs=specs,
     )
 
 
@@ -1585,6 +1667,7 @@ ALL_SCENARIOS: dict[str, callable] = {
     "tier3_catalog_realistic": tier3_catalog_realistic,
     "tier4_weak_qp60_strong_qp120": tier4_weak_qp60_strong_qp120,
     "tier4_harmonic_pairs": tier4_harmonic_pairs,
+    "tier4_harmonic_noncanonical": tier4_harmonic_noncanonical,
     "decoy_red_noise_qp120": decoy_red_noise_qp120,
     "decoy_broadband_redslope": decoy_broadband_redslope,
     "decoy_ppo_harmonic": decoy_ppo_harmonic,

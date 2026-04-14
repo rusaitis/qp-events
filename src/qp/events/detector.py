@@ -763,7 +763,7 @@ def filter_detections(
     # Reject a short-period candidate if a temporally overlapping
     # long-period one carries ≥2 × its power and the period ratio is
     # near 2:1 or 3:1 (±15 %).
-    HARMONIC_POWER_RATIO = 0.65  # harmonic must be <65 % of fundamental
+    HARMONIC_POWER_RATIO = 0.5  # harmonic power <50% of fundamental
     keep: list[bool] = [True] * len(merged)
     for i, short in enumerate(merged):
         if not keep[i] or not short.period_sec:
@@ -785,16 +785,56 @@ def filter_detections(
                 or short.date_to <= long.date_from
             ):
                 continue
-            # Duration match: a harmonic inherits the fundamental's
-            # envelope, so their ridge durations match within ~15 %.
-            # Independent co-occurring waves have decay widths that
-            # differ by more than that (QP30 ≠ QP60 ≠ QP120 decay).
+            overlap_start = max(short.date_from, long.date_from)
+            overlap_end = min(short.date_to, long.date_to)
+            overlap = (overlap_end - overlap_start).total_seconds()
             dur_s = (short.date_to - short.date_from).total_seconds()
-            dur_l = (long.date_to - long.date_from).total_seconds()
-            if max(dur_s, dur_l) > 0:
-                dur_ratio = min(dur_s, dur_l) / max(dur_s, dur_l)
-                if dur_ratio < 0.75:
-                    continue
+            if dur_s <= 0 or overlap / dur_s < 0.6:
+                continue
+            # Amplitude-envelope correlation: a phase-locked harmonic
+            # shares the fundamental's time-amplitude envelope (both
+            # ride the same Gaussian packet). Independent co-occurring
+            # waves at 2:1 period ratio have envelopes modulated by
+            # their own (unrelated) decay widths — correlation ~ 0.
+            # Measure Pearson correlation between the CWT magnitude
+            # at each peak period row, over the time overlap window.
+            i_ov_lo = max(
+                int(np.searchsorted(
+                    t_rel,
+                    (overlap_start - epoch).total_seconds() - epoch_offset,
+                )),
+                0,
+            )
+            i_ov_hi = min(
+                int(np.searchsorted(
+                    t_rel,
+                    (overlap_end - epoch).total_seconds() - epoch_offset,
+                )),
+                len(t_rel) - 1,
+            )
+            if i_ov_hi - i_ov_lo < 5:
+                continue
+            row_s = int(np.argmin(np.abs(periods - short.period_sec)))
+            row_l = int(np.argmin(np.abs(periods - long.period_sec)))
+            env_s = perp_power[row_s, i_ov_lo:i_ov_hi]
+            env_l = perp_power[row_l, i_ov_lo:i_ov_hi]
+            env_s_c = env_s - env_s.mean()
+            env_l_c = env_l - env_l.mean()
+            denom = math.sqrt(
+                float((env_s_c ** 2).sum() * (env_l_c ** 2).sum())
+            )
+            if denom <= 0:
+                continue
+            env_corr = float((env_s_c * env_l_c).sum() / denom)
+            # Harmonics share envelope EXACTLY (same Gaussian, scaled) →
+            # env_corr ≈ 0.99. Co-occurring independent waves at 2:1
+            # ratio with matched centres produce env_corr ≈ 0.95-0.99
+            # too, so correlation alone is indistinguishable. Combine
+            # with a strict power-ratio cut: genuine harmonic Fourier
+            # coefficients are bounded (<0.5 typical), while
+            # independent co-occurring waves can reach ratio 1.0.
+            if env_corr < 0.95:
+                continue
             # Harmonic amplitude bounded by waveform Fourier coefficients;
             # co-occurring independent waves typically >50 % of each other.
             if short.prominence < HARMONIC_POWER_RATIO * long.prominence:
