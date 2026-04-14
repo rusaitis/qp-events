@@ -638,6 +638,34 @@ def filter_detections(
                 if max_other > spectral_concentration * in_power:
                     continue
 
+        # Trim ridge extent to the peak-row "±3 σ" envelope: the
+        # σ-mask ridges straggle past the wave's physical envelope.
+        # 1 % of Gaussian peak power corresponds to ±3 σ — the same
+        # envelope window the ground-truth manifest uses for
+        # start_sec/end_sec. This aligns detection boundaries with
+        # the convention used for IoU scoring.
+        if peak.period_sec and peak.period_sec > 0:
+            pf_idx = int(np.argmin(np.abs(periods - peak.period_sec)))
+            row = perp_power[pf_idx, i0 : i1 + 1]
+            if row.size > 3 and row.max() > 0:
+                pk_local = int(row.argmax())
+                thr = 0.02 * row[pk_local]
+                left = pk_local
+                while left > 0 and row[left - 1] > thr:
+                    left -= 1
+                right = pk_local
+                while right < row.size - 1 and row[right + 1] > thr:
+                    right += 1
+                new_from_rel = float(t_rel[i0 + left])
+                new_to_rel = float(t_rel[i0 + right])
+                if (new_to_rel - new_from_rel) / peak.period_sec >= min_oscillations:
+                    peak.date_from = epoch + datetime.timedelta(
+                        seconds=new_from_rel + epoch_offset,
+                    )
+                    peak.date_to = epoch + datetime.timedelta(
+                        seconds=new_to_rel + epoch_offset,
+                    )
+
         filtered.append(peak)
 
     # 4. Deduplicate: within same band, keep higher-power peak
