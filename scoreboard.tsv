@@ -3,3 +3,4 @@ commit	date	score	f1	precision	recall	band_acc	period_err_pct	mean_iou	decoy_rej
 0bd1e21	2026-05-06	0.3495	0.3750	0.2355	0.9203	0.8485	15.27	0.6248	0.1176	0.3319	1.0000	1.0000	0.8605	0.8889	10692	69.1	keep	round6 S1: Stokes degree of polarization >= 0.7 (first round-6 gate, vs main baseline)
 0bd1e21	2026-05-06	0.5350	0.5848	0.4286	0.9203	0.9004	10.74	0.6175	0.2353	0.4959	1.0000	1.0000	0.8605	0.8889	10698	63.2	keep	round6 S1: Stokes d>=0.7 averaged over band freq range x duration
 a2ad5cb	2026-05-06	0.7376	0.7195	0.5974	0.9044	0.9251	9.06	0.6114	0.6176	0.5569	0.9111	1.0000	0.8605	0.8889	10711	35.4	keep	round6 R1: add Q-factor>=3 gate (period/FWHM); S1+R1 active
+f1a4633	2026-05-06	0.8155	0.7862	0.7209	0.8645	0.9724	5.44	0.8110	0.6471	0.6058	0.6889	1.0000	0.8605	0.8889	10719	21.3	keep	round6 N2: wavelet_sigma_mask whitening + 5sigma; S1+R1+N2

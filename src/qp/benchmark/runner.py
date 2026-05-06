@@ -60,6 +60,15 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 #: broadband decoys, but Q can.
 MIN_Q_FACTOR: float = 3.0
 
+#: Round 6 / N2 — sigma threshold for the whitened CWT-power mask.
+#:
+#: With per-frequency MAD whitening (wavelet_sigma_mask) the noise
+#: floor is uniform across the band, so a single sigma threshold is
+#: meaningful regardless of the noise spectrum's colour (alpha=1.2 in
+#: this benchmark). 5 sigma is the family-wise floor for the 300-freq
+#: x ~2000-time search volume per segment (Bonferroni p ~ 1e-7).
+N_SIGMA_THRESHOLD: float = 5.0
+
 
 def _detect_events_in_dataset(
     t: np.ndarray,
@@ -69,6 +78,7 @@ def _detect_events_in_dataset(
     """Run the detection pipeline on synthetic 3-component data."""
     from qp.events.bands import get_band
     from qp.events.detector import detect_wave_packets_multi
+    from qp.events.threshold import wavelet_sigma_mask
     from qp.signal.polarization import degree_of_polarization
     from qp.signal.wavelet import morlet_cwt
 
@@ -82,17 +92,29 @@ def _detect_events_in_dataset(
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
 
+    # N2: per-frequency MAD whitening + sigma threshold. The same
+    # function builds a robust noise floor on background rows (outside
+    # all QP bands) and interpolates it into the in-band rows. After
+    # this step the threshold is uniform across the band regardless of
+    # the noise colour.
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=N_SIGMA_THRESHOLD)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=N_SIGMA_THRESHOLD)
+
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
     all_peaks: list[WavePacketPeak] = []
-    for component, power in ((b_perp1, power1), (b_perp2, power2)):
+    for component, power, mask in (
+        (b_perp1, power1, mask1),
+        (b_perp2, power2, mask2),
+    ):
         peaks = detect_wave_packets_multi(
             data=component,
             times=times,
             dt=dt,
             cwt_freq=freq,
             cwt_power=power,
+            threshold_mask=mask,
             min_duration_hours=2.0,
             min_pixels=50,
         )
