@@ -11,18 +11,35 @@ period rows that fall inside the requested band, so a strong QP120
 ridge cannot bleed into a QP60 detection. The cone of influence (COI)
 is enforced by masking samples within ``coi_factor * period`` of either
 edge of the segment.
+
+Fused ridges (two wave packets that overlap in time, so their CWT
+blobs are connected) are optionally split at intra-ridge envelope
+minima using the canonical **half-power** criterion: the on-ridge
+amplitude must drop to :math:`1/\sqrt{2}` of the local peak between
+two sub-peaks for the split to be accepted. This is the textbook
+FWHM definition; in amplitude space the prominence threshold is
+:math:`1 - 1/\sqrt{2} \approx 0.293`.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy import ndimage
+from scipy.signal import find_peaks
 
 from qp.events.bands import Band, freq_to_period, get_band
+
+#: Half-power prominence threshold in amplitude space.
+#:
+#: A coherent wave packet splits cleanly from its neighbour when the
+#: on-ridge amplitude drops to half-power, i.e. amplitude factor
+#: :math:`1/\sqrt{2}` of peak (power factor 1/2). The required
+#: prominence is therefore :math:`1 - 1/\sqrt{2} \approx 0.293`.
+HALF_POWER_PROMINENCE: float = 1.0 - 1.0 / math.sqrt(2.0)
 
 
 # Default cone-of-influence factor for the Morlet wavelet with omega0=10.
@@ -123,6 +140,7 @@ def extract_ridges(
     min_duration_sec: float = 2 * 3600,
     min_pixels: int = 50,
     coi_factor: float = DEFAULT_COI_FACTOR,
+    split_fused_ridges: bool = True,
 ) -> list[Ridge]:
     r"""Extract connected ridges in one period band.
 
@@ -258,5 +276,72 @@ def extract_ridges(
             )
         )
 
+    if split_fused_ridges:
+        cwt_power_arr = np.asarray(cwt_power, dtype=float)
+        split: list[Ridge] = []
+        for r in ridges:
+            split.extend(
+                split_ridge_at_half_power(r, cwt_power_arr, dt, min_duration_sec)
+            )
+        ridges = split
+
     ridges.sort(key=lambda r: r.peak_time_idx)
     return ridges
+
+
+def split_ridge_at_half_power(
+    ridge: Ridge,
+    cwt_power: NDArray[np.floating],
+    dt: float,
+    min_duration_sec: float,
+) -> list[Ridge]:
+    r"""Split a fused ridge at on-ridge envelope half-power minima.
+
+    The on-ridge amplitude is :math:`A(t) = |\mathrm{CWT}|` at the
+    ridge's peak period row over the ridge's time extent. We search
+    for sub-peaks in :math:`A(t)` whose prominence exceeds the
+    half-power threshold (:math:`1 - 1/\sqrt{2} \approx 0.293` of the
+    ridge maximum), then split the ridge at the time of minimum
+    amplitude between consecutive sub-peaks. Sub-ridges shorter than
+    ``min_duration_sec`` are discarded.
+
+    Returns ``[ridge]`` if no split passes the criterion, so the
+    function is a safe no-op for clean single-packet ridges.
+    """
+    envelope = np.asarray(
+        cwt_power[ridge.peak_period_idx, ridge.t_start_idx : ridge.t_end_idx + 1],
+        dtype=float,
+    )
+    if envelope.size < 3 or envelope.max() <= 0:
+        return [ridge]
+
+    threshold = HALF_POWER_PROMINENCE * float(envelope.max())
+    sub_peaks, _ = find_peaks(envelope, prominence=threshold)
+    if sub_peaks.size <= 1:
+        return [ridge]
+
+    # Boundaries: ridge start, valleys between sub-peaks, ridge end.
+    boundaries = [0]
+    for i in range(len(sub_peaks) - 1):
+        seg = envelope[sub_peaks[i] : sub_peaks[i + 1] + 1]
+        boundaries.append(int(sub_peaks[i] + np.argmin(seg)))
+    boundaries.append(envelope.size - 1)
+
+    min_samples = int(math.ceil(min_duration_sec / dt))
+    sub_ridges: list[Ridge] = []
+    for j in range(len(boundaries) - 1):
+        local_start = boundaries[j]
+        local_end = boundaries[j + 1]
+        if local_end - local_start + 1 < min_samples:
+            continue
+        sub_envelope = envelope[local_start : local_end + 1]
+        peak_local = int(np.argmax(sub_envelope))
+        sub_ridges.append(replace(
+            ridge,
+            t_start_idx=ridge.t_start_idx + local_start,
+            t_end_idx=ridge.t_start_idx + local_end,
+            peak_time_idx=ridge.t_start_idx + local_start + peak_local,
+            peak_power=float(sub_envelope[peak_local]),
+        ))
+
+    return sub_ridges if sub_ridges else [ridge]
