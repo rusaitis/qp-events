@@ -40,26 +40,47 @@ BASE_SEED = 20260413
 BENCHMARK_DIR = OUTPUT_DIR / "benchmark"
 
 
+#: Round 6 / S1 — minimum Stokes degree of polarization for a detection.
+#:
+#: A coherent wave packet has d → 1 regardless of polarization
+#: geometry (linear, circular, elliptical); broadband transients have
+#: d → 0. The 0.7 threshold keeps detections that are at least 70%
+#: polarized at the dominant frequency over the packet duration.
+MIN_DEGREE_OF_POLARIZATION: float = 0.7
+
+
 def _detect_events_in_dataset(
     t: np.ndarray,
     fields: np.ndarray,
     dt: float = 60.0,
 ) -> list[WavePacketPeak]:
     """Run the detection pipeline on synthetic 3-component data."""
+    from qp.events.bands import get_band
     from qp.events.detector import detect_wave_packets_multi
+    from qp.signal.polarization import degree_of_polarization
+    from qp.signal.wavelet import morlet_cwt
 
     b_perp1 = fields[:, 1]
     b_perp2 = fields[:, 2]
+
+    # Compute complex CWTs of both transverse components once. The
+    # magnitudes feed ridge extraction; the phases feed the Stokes gate.
+    freq, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=300)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=300)
+    power1 = np.abs(cwt1)
+    power2 = np.abs(cwt2)
 
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
     all_peaks: list[WavePacketPeak] = []
-    for component in [b_perp1, b_perp2]:
+    for component, power in ((b_perp1, power1), (b_perp2, power2)):
         peaks = detect_wave_packets_multi(
             data=component,
             times=times,
             dt=dt,
+            cwt_freq=freq,
+            cwt_power=power,
             min_duration_hours=2.0,
             min_pixels=50,
         )
@@ -77,7 +98,42 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    return merged
+    # S1 polarization gate: require Stokes d >= threshold averaged
+    # over the QP band's full frequency range during the detection
+    # window. A coherent wave (linear, circular, or elliptical) has
+    # d → 1; an incoherent broadband transient has d → 0. Averaging
+    # over the band rather than a single peak row gives enough
+    # independent samples for a sharp d_noise floor — short narrowband
+    # packets only contain a few cycles, so single-row Stokes is too
+    # noisy to discriminate.
+    n_time = cwt1.shape[1]
+    polarized: list[WavePacketPeak] = []
+    for peak in merged:
+        if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
+            continue
+        i_start = max(
+            0, int(np.floor((peak.date_from - epoch).total_seconds() / dt))
+        )
+        i_end = min(
+            n_time - 1,
+            int(np.ceil((peak.date_to - epoch).total_seconds() / dt)),
+        )
+        if i_end <= i_start:
+            continue
+        band_obj = get_band(peak.band)
+        in_band = (
+            (freq >= band_obj.freq_min_hz)
+            & (freq < band_obj.freq_max_hz)
+        )
+        if not in_band.any():
+            continue
+        c1_window = cwt1[in_band, i_start : i_end + 1]
+        c2_window = cwt2[in_band, i_start : i_end + 1]
+        d = degree_of_polarization(c1_window.ravel(), c2_window.ravel())
+        if d >= MIN_DEGREE_OF_POLARIZATION:
+            polarized.append(peak)
+
+    return polarized
 
 
 # ------------------------------------------------------------------
