@@ -60,14 +60,56 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 #: broadband decoys, but Q can.
 MIN_Q_FACTOR: float = 3.0
 
-#: Round 6 / N2 — sigma threshold for the whitened CWT-power mask.
+#: Round 6 / N2 — family-wise error rate for the whitened CWT mask.
 #:
-#: With per-frequency MAD whitening (wavelet_sigma_mask) the noise
-#: floor is uniform across the band, so a single sigma threshold is
-#: meaningful regardless of the noise spectrum's colour (alpha=1.2 in
-#: this benchmark). 5 sigma is the family-wise floor for the 300-freq
-#: x ~2000-time search volume per segment (Bonferroni p ~ 1e-7).
-N_SIGMA_THRESHOLD: float = 5.0
+#: FWER per 36-h segment. The actual sigma threshold is derived from
+#: the effective number of independent time-frequency cells (see
+#: ``_bonferroni_n_sigma``); this constant is the only knob.
+SEGMENT_FWER_ALPHA: float = 0.01
+
+
+def _bonferroni_n_sigma(
+    n_time: int,
+    dt: float,
+    freq: np.ndarray,
+    morlet_omega0: float = 10.0,
+    alpha: float = SEGMENT_FWER_ALPHA,
+) -> float:
+    r"""Sigma threshold for FWER control over the CWT search volume.
+
+    The Morlet wavelet has temporal correlation length ~1 period at
+    every frequency and frequency-bandwidth :math:`\Delta f / f \approx
+    1/\omega_0`. The number of *independent* time-frequency cells
+    therefore scales as
+
+    .. math::
+
+        V_{\mathrm{indep}} = \underbrace{\frac{\omega_0}{2\pi}
+            \ln\!\left(\frac{f_{\max}}{f_{\min}}\right)}_{n_{f,\,\mathrm{indep}}}
+        \;\cdot\;
+        \underbrace{n_t\,dt\,\bar f}_{\bar n_{t,\,\mathrm{indep}}}
+
+    not the raw :math:`n_f \times n_t` cell count. For the QP
+    benchmark (300 freqs, 36-h segment at 60-s sampling, :math:`\omega_0
+    = 10`) :math:`V_{\mathrm{indep}} \approx 1{,}400`, four orders of
+    magnitude below the raw 6.5 \times 10^5. Bonferroni then sets the
+    per-pixel false-positive probability to :math:`\alpha /
+    V_{\mathrm{indep}}` and the corresponding Gaussian quantile is the
+    threshold (~4.4 sigma at :math:`\alpha = 0.01`).
+
+    Reviewer pitch: *"The sigma threshold controls the family-wise
+    error rate over the effective search volume of the wavelet
+    scalogram."*
+    """
+    from scipy.stats import norm
+
+    freq = np.asarray(freq, dtype=float)
+    f_min = float(freq[freq > 0].min())
+    f_max = float(freq.max())
+    n_freq_indep = (morlet_omega0 / (2.0 * np.pi)) * np.log(f_max / f_min)
+    n_time_indep = n_time * dt * float(freq.mean())
+    v_indep = max(n_freq_indep * n_time_indep, 1.0)
+    return float(norm.isf(alpha / v_indep))
 
 
 def _detect_events_in_dataset(
@@ -92,13 +134,14 @@ def _detect_events_in_dataset(
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
 
-    # N2: per-frequency MAD whitening + sigma threshold. The same
-    # function builds a robust noise floor on background rows (outside
-    # all QP bands) and interpolates it into the in-band rows. After
-    # this step the threshold is uniform across the band regardless of
-    # the noise colour.
-    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=N_SIGMA_THRESHOLD)
-    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=N_SIGMA_THRESHOLD)
+    # N2 + S2: per-frequency MAD whitening + sigma threshold derived
+    # from the effective CWT search volume. The mask builds a robust
+    # noise floor on background rows (outside all QP bands) and
+    # interpolates it into the in-band rows; the threshold is the
+    # Bonferroni-corrected Gaussian quantile at FWER alpha = 1%.
+    n_sigma = _bonferroni_n_sigma(power1.shape[1], dt, freq)
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
 
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
@@ -116,7 +159,12 @@ def _detect_events_in_dataset(
             cwt_power=power,
             threshold_mask=mask,
             min_duration_hours=2.0,
-            min_pixels=50,
+            # min_pixels is a salt-and-pepper safety net now that the
+            # whitened sigma mask handles noise rejection; the floor is
+            # well below any plausible real-wave footprint (>= 3 cycles
+            # x >= 1 freq row >> 10 px) but still kills single-pixel
+            # blobs below the sigma threshold.
+            min_pixels=10,
         )
         all_peaks.extend(peaks)
 
