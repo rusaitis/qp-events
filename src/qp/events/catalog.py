@@ -117,10 +117,24 @@ class WavePacketPeak:
     continuous: bool = True  # no data gap before this packet
     band: str | None = None  # which QP band fired (Phase 1+)
     period_sec: float | None = None  # peak period from CWT ridge
+    period_fwhm_sec: float | None = None  # FWHM of period marginal at peak time
 
     @property
     def duration_hours(self) -> float:
         return (self.date_to - self.date_from).total_seconds() / 3600
+
+    @property
+    def q_factor(self) -> float | None:
+        r"""Spectral quality factor :math:`Q = f_0 / \Delta f` of the peak.
+
+        Equivalent to ``peak_period / period_fwhm`` (FWHM is symmetric in
+        log-period to first order). A pure narrow-band oscillation has
+        :math:`Q \to \infty`; the canonical floor for a band-limited
+        peak is :math:`Q \approx \mathrm{period}/\mathrm{band\_width}`.
+        """
+        if self.period_sec is None or not self.period_fwhm_sec:
+            return None
+        return self.period_sec / self.period_fwhm_sec
 
 
 @dataclass

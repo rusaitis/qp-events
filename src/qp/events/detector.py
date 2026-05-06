@@ -399,6 +399,7 @@ def _ridge_to_packet(
         date_to=t_end,
         band=ridge.band,
         period_sec=float(ridge.peak_period_sec),
+        period_fwhm_sec=float(ridge.period_fwhm_sec),
     )
 
 

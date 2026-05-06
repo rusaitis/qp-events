@@ -48,6 +48,18 @@ BENCHMARK_DIR = OUTPUT_DIR / "benchmark"
 #: polarized at the dominant frequency over the packet duration.
 MIN_DEGREE_OF_POLARIZATION: float = 0.7
 
+#: Round 6 / R1 — minimum spectral quality factor Q = f0 / FWHM.
+#:
+#: A coherent wave concentrates its power near a single peak period:
+#: the Morlet-CWT FWHM at peak time is set by the wavelet bandwidth
+#: (Q ~ omega0 / 2.355 ~ 4.3 for omega0=10). A coherent broadband
+#: transient (FGM step, range change) has flat in-band power with
+#: FWHM equal to the full band width (Q ~ period_centroid / band_width
+#: ~ 3 for all three QP bands). Q >= 3 separates these regimes with a
+#: defensible single threshold; Stokes alone cannot reject coherent
+#: broadband decoys, but Q can.
+MIN_Q_FACTOR: float = 3.0
+
 
 def _detect_events_in_dataset(
     t: np.ndarray,
@@ -98,19 +110,20 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    # S1 polarization gate: require Stokes d >= threshold averaged
-    # over the QP band's full frequency range during the detection
-    # window. A coherent wave (linear, circular, or elliptical) has
-    # d → 1; an incoherent broadband transient has d → 0. Averaging
-    # over the band rather than a single peak row gives enough
-    # independent samples for a sharp d_noise floor — short narrowband
-    # packets only contain a few cycles, so single-row Stokes is too
-    # noisy to discriminate.
+    # S1 (Stokes d) and R1 (Q-factor) gates. Stokes d catches
+    # incoherent transients; Q catches coherent broadband transients
+    # (steps, range changes). Both are needed: real wave packets are
+    # both polarized and narrow-band.
     n_time = cwt1.shape[1]
-    polarized: list[WavePacketPeak] = []
+    kept: list[WavePacketPeak] = []
     for peak in merged:
         if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
             continue
+        # R1: spectral narrowness
+        q = peak.q_factor
+        if q is None or q < MIN_Q_FACTOR:
+            continue
+        # S1: polarization purity
         i_start = max(
             0, int(np.floor((peak.date_from - epoch).total_seconds() / dt))
         )
@@ -130,10 +143,11 @@ def _detect_events_in_dataset(
         c1_window = cwt1[in_band, i_start : i_end + 1]
         c2_window = cwt2[in_band, i_start : i_end + 1]
         d = degree_of_polarization(c1_window.ravel(), c2_window.ravel())
-        if d >= MIN_DEGREE_OF_POLARIZATION:
-            polarized.append(peak)
+        if d < MIN_DEGREE_OF_POLARIZATION:
+            continue
+        kept.append(peak)
 
-    return polarized
+    return kept
 
 
 # ------------------------------------------------------------------
