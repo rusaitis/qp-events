@@ -99,3 +99,54 @@ def test_zero_input_returns_zero():
 def test_shape_mismatch_raises():
     with pytest.raises(ValueError):
         stokes_parameters(np.zeros(10, dtype=complex), np.zeros(20, dtype=complex))
+
+
+# ---------------------------------------------------------------------
+# Minimum variance analysis
+# ---------------------------------------------------------------------
+
+
+from qp.signal.polarization import mva_intermediate_minimum_ratio
+
+
+def test_mva_planar_alfven_perturbation_has_high_ratio():
+    """delta B in the (b_perp1, b_perp2) plane only: lambda3 -> 0, ratio -> inf."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    field = np.column_stack(
+        [
+            np.zeros(n),  # b_par: no perturbation
+            np.cos(t),  # b_perp1
+            np.sin(t),  # b_perp2 (circular polarization)
+        ]
+    )
+    ratio = mva_intermediate_minimum_ratio(field)
+    assert ratio > 1e6, f"planar perturbation should give large ratio, got {ratio}"
+
+
+def test_mva_isotropic_noise_has_ratio_near_one():
+    """3D Gaussian noise: all eigenvalues ~ 1, ratio ~ 1."""
+    rng = np.random.default_rng(0)
+    field = rng.standard_normal((20000, 3))
+    ratio = mva_intermediate_minimum_ratio(field)
+    assert 0.7 < ratio < 1.3, f"isotropic noise should give ratio ~ 1, got {ratio}"
+
+
+def test_mva_step_in_all_components_has_low_ratio():
+    """A simultaneous step in all three components has poorly-defined wave normal."""
+    n = 1000
+    field = np.zeros((n, 3))
+    field[n // 2 :, :] = 1.0  # step in all components
+    rng = np.random.default_rng(42)
+    field += 0.1 * rng.standard_normal(field.shape)
+    ratio = mva_intermediate_minimum_ratio(field)
+    assert ratio < 5.0, f"isotropic step should fail lambda2/lambda3 >= 5, got {ratio}"
+
+
+def test_mva_short_input_returns_zero():
+    assert mva_intermediate_minimum_ratio(np.zeros((2, 3))) == 0.0
+
+
+def test_mva_wrong_shape_raises():
+    with pytest.raises(ValueError):
+        mva_intermediate_minimum_ratio(np.zeros((100, 2)))

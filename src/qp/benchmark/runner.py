@@ -60,6 +60,16 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 #: broadband decoys, but Q can.
 MIN_Q_FACTOR: float = 3.0
 
+#: Round 6 / N1 — minimum lambda_2/lambda_3 from MVA on the detection
+#: window. Alfvén waves are planar transverse perturbations, so the
+#: minimum-variance direction is well-defined (lambda_3 << lambda_2)
+#: and the ratio is large. An FGM artefact that affects all three
+#: axes (range change, calibration step) has all eigenvalues similar
+#: and ratio ~ 1. The textbook threshold for a "well-resolved" wave
+#: normal is lambda_2/lambda_3 >= 5 (Sonnerup & Scheible 1998).
+MIN_MVA_LAMBDA_RATIO: float = 5.0
+
+
 #: Round 6 / N2 — family-wise error rate for the whitened CWT mask.
 #:
 #: FWER per 36-h segment. The actual sigma threshold is derived from
@@ -121,15 +131,22 @@ def _detect_events_in_dataset(
     from qp.events.bands import get_band
     from qp.events.detector import detect_wave_packets_multi
     from qp.events.threshold import wavelet_sigma_mask
-    from qp.signal.polarization import degree_of_polarization
+    from qp.signal.polarization import (
+        degree_of_polarization,
+        mva_intermediate_minimum_ratio,
+    )
     from qp.signal.wavelet import morlet_cwt
 
     b_perp1 = fields[:, 1]
     b_perp2 = fields[:, 2]
 
-    # Compute complex CWTs of both transverse components once. The
-    # magnitudes feed ridge extraction; the phases feed the Stokes gate.
-    freq, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=300)
+    # Complex CWTs of all three field components. Magnitudes of the
+    # transverse pair feed ridge extraction; phases feed the Stokes
+    # gate; the b_par row is needed by N1 (MVA on bandpass-filtered
+    # data, per Sonnerup & Scheible 1998).
+    b_par = fields[:, 0]
+    freq, _, cwt_par = morlet_cwt(b_par, dt=dt, n_freqs=300)
+    _, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=300)
     _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=300)
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
@@ -180,10 +197,11 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    # S1 (Stokes d) and R1 (Q-factor) gates. Stokes d catches
-    # incoherent transients; Q catches coherent broadband transients
-    # (steps, range changes). Both are needed: real wave packets are
-    # both polarized and narrow-band.
+    # Per-detection physical gates. Each rejects a different decoy
+    # mode:
+    #   R1 (Q-factor)   — coherent broadband transients (FGM steps)
+    #   N1 (MVA ratio)  — non-planar perturbations (3-axis steps)
+    #   S1 (Stokes d)   — incoherent broadband bursts
     n_time = cwt1.shape[1]
     kept: list[WavePacketPeak] = []
     for peak in merged:
@@ -193,7 +211,7 @@ def _detect_events_in_dataset(
         q = peak.q_factor
         if q is None or q < MIN_Q_FACTOR:
             continue
-        # S1: polarization purity
+        # Time window indices used by N1 and S1
         i_start = max(
             0, int(np.floor((peak.date_from - epoch).total_seconds() / dt))
         )
@@ -203,6 +221,21 @@ def _detect_events_in_dataset(
         )
         if i_end <= i_start:
             continue
+        # N1: minimum variance analysis on the 3-component field,
+        # bandpass-filtered to the wave frequency by taking the real
+        # part of the CWT at the peak period. This isolates the
+        # wave's geometry from broadband alpha=1.2 noise that would
+        # otherwise dominate the covariance.
+        i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
+        field_bp = np.column_stack([
+            np.real(cwt_par[i_freq_peak, i_start : i_end + 1]),
+            np.real(cwt1[i_freq_peak, i_start : i_end + 1]),
+            np.real(cwt2[i_freq_peak, i_start : i_end + 1]),
+        ])
+        mva_ratio = mva_intermediate_minimum_ratio(field_bp)
+        if mva_ratio < MIN_MVA_LAMBDA_RATIO:
+            continue
+        # S1: polarization purity over the detection's TF window
         band_obj = get_band(peak.band)
         in_band = (
             (freq >= band_obj.freq_min_hz)

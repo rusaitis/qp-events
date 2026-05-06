@@ -96,3 +96,53 @@ def degree_of_polarization(
     if i_ <= 0.0:
         return 0.0
     return float(np.sqrt(q * q + u * u + v * v) / i_)
+
+
+def mva_intermediate_minimum_ratio(
+    field: ArrayLike,
+) -> float:
+    r"""Intermediate-to-minimum eigenvalue ratio from minimum variance analysis.
+
+    Minimum variance analysis (Sonnerup & Cahill 1967; Sonnerup &
+    Scheible 1998) diagonalises the field covariance matrix
+    :math:`M_{ij} = \langle B_i B_j \rangle - \langle B_i \rangle
+    \langle B_j \rangle` and identifies the principal axes of the
+    perturbation. The eigenvalue ordering is
+    :math:`\lambda_1 \geq \lambda_2 \geq \lambda_3`; the minimum
+    variance direction (eigenvector of :math:`\lambda_3`) is the wave
+    normal for a planar transverse perturbation.
+
+    The ratio :math:`\lambda_2 / \lambda_3` measures how well-defined
+    that minimum-variance direction is. A planar perturbation (e.g.
+    an Alfvén wave with :math:`\delta B \perp B_0`) has
+    :math:`\lambda_3 \to 0` so the ratio diverges; an isotropic
+    transient (FGM step affecting all three axes) has all eigenvalues
+    similar and the ratio approaches 1.
+
+    Parameters
+    ----------
+    field : array_like, shape (n_samples, 3)
+        Three-component magnetic-field time series — typically
+        ``(b_par, b_perp1, b_perp2)`` in MFA frame.
+
+    Returns
+    -------
+    ratio : float
+        :math:`\lambda_2 / \lambda_3`. Returns ``+inf`` when
+        :math:`\lambda_3 \le 0` (degenerate planar perturbation),
+        ``0.0`` for an empty or zero-variance input.
+    """
+    field = np.asarray(field, dtype=float)
+    if field.ndim != 2 or field.shape[1] != 3:
+        raise ValueError(
+            f"field must have shape (n_samples, 3), got {field.shape}"
+        )
+    if field.shape[0] < 3:
+        return 0.0
+    cov = np.cov(field, rowvar=False)
+    eigvals = np.linalg.eigvalsh(cov)  # ascending: [lambda_3, lambda_2, lambda_1]
+    if not np.all(np.isfinite(eigvals)) or eigvals[2] <= 0:
+        return 0.0
+    if eigvals[0] <= 0:
+        return float("inf")
+    return float(eigvals[1] / eigvals[0])
