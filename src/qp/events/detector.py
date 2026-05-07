@@ -437,7 +437,7 @@ def detect_with_gate(
 
     Returns the list of :class:`WavePacketPeak` accepted by every
     stage. Polarization, coordinate, and PPO enrichment is the
-    sweep script's job (see ``scripts/sweep_events.py``).
+    sweep script's job (see ``scripts/sweep_events_round8.py``).
     """
     # Lazy imports to keep module-level deps minimal
     from qp.events.threshold import (

@@ -25,6 +25,8 @@ _project_root = Path(__file__).resolve().parents[1]
 # The pickled .npy files reference classes from data_sweeper, cassinilib.NewSignal,
 # etc. We register lightweight stubs so numpy.load can deserialize them without
 # importing the full (heavy, fragile) old codebase.
+# DO NOT REMOVE: stub names match the module paths used when the legacy
+# DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
 _stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list", "WaveSignal", "Wave"]
 _stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper", "cassinilib", "cassinilib.NewSignal"]
 

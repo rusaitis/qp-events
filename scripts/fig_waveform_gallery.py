@@ -25,6 +25,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 
+# DO NOT REMOVE: stub names match the module paths used when the legacy
+# DataProducts/*.npy arrays were pickled. Removing them silently breaks
+# np.load() of those arrays.
 def _register_pickle_stubs() -> None:
     stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list",
                     "WaveSignal", "Wave"]
@@ -49,7 +52,7 @@ from qp.signal.morphology import (  # noqa: E402
     instantaneous_frequency,
 )
 
-from sweep_events import load_segments, segment_to_payload  # noqa: E402
+from qp.events.sweep_loader import load_segments, segment_to_payload  # noqa: E402
 
 DT = 60.0
 BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}

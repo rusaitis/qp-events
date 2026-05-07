@@ -278,8 +278,10 @@ class GateConfig:
     # Eliminates compressional contamination and single-axis glitches.
     # **Default is False** because the strict catalog (417 events) is
     # too sparse to recover the PPO modulation in the Fig 9 separation
-    # analysis. The strict path is used by `sweep_events.py --strict`
-    # for the cleaner Phase 6.5 ellipticity analysis.
+    # analysis. The strict path was used by the legacy sigma-gated sweep
+    # for cleaner ellipticity analysis; the round-8 detector applies
+    # transversality and polarization gates directly and does not use
+    # this flag.
     require_both_perp: bool = False
 
 

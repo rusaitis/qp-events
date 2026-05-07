@@ -63,7 +63,6 @@ class SuiteScore:
     overall_recall: float
     overall_f1: float
     per_tier_recall: dict[str, float]
-    per_band_recall: dict[str, float]
     band_accuracy: float
     decoy_rejection_rate: float
     summary_score: float  # harmonic mean of (F1, band_accuracy, decoy_rejection)
@@ -300,8 +299,6 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         tier_gt = sum(s.n_detectable for s in tier_scores)
         per_tier[tier] = tier_tp / tier_gt if tier_gt > 0 else 0.0
 
-    per_band: dict[str, float] = {}  # TODO: aggregate GT band info
-
     # Band accuracy
     total_matched = sum(len(s.matches) for s in scores)
     band_acc = (
@@ -342,7 +339,6 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         overall_recall=recall,
         overall_f1=f1,
         per_tier_recall=per_tier,
-        per_band_recall=per_band,
         band_accuracy=band_acc,
         decoy_rejection_rate=decoy_rej,
         summary_score=summary,

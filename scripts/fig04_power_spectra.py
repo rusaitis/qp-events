@@ -20,7 +20,9 @@ from pathlib import Path
 
 _project_root = Path(__file__).resolve().parents[1]
 
-# Register stubs for legacy pickle deserialization
+# Register stubs for legacy pickle deserialization.
+# DO NOT REMOVE: stub names match the module paths used when the legacy
+# DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
 _stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list", "WaveSignal", "Wave"]
 _stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper", "cassinilib", "cassinilib.NewSignal"]
 for mod_path in _stub_modules:

@@ -26,6 +26,7 @@ import datetime
 import logging
 import sys
 import time
+import types
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
@@ -34,6 +35,29 @@ import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
+
+
+# DO NOT REMOVE: stub names match the module paths used when the legacy
+# DataProducts/*.npy arrays were pickled. Removing them silently breaks
+# np.load() of those arrays.
+def _register_pickle_stubs() -> None:
+    stub_classes = [
+        "SignalSnapshot", "NewSignal", "Interval", "FFT_list",
+        "WaveSignal", "Wave",
+    ]
+    stub_modules = [
+        "__main__", "data_sweeper", "mag_fft_sweeper",
+        "cassinilib", "cassinilib.NewSignal",
+    ]
+    for mod_path in stub_modules:
+        if mod_path not in sys.modules:
+            sys.modules[mod_path] = types.ModuleType(mod_path)
+        for cls in stub_classes:
+            setattr(sys.modules[mod_path], cls, type(cls, (), {}))
+
+
+_register_pickle_stubs()
+
 
 import qp  # noqa: E402
 from qp.events.detector import (  # noqa: E402
@@ -45,13 +69,11 @@ from qp.events.detector import (  # noqa: E402
     detect_round8,
 )
 from qp.events.persistence import event_to_record, events_to_parquet  # noqa: E402
-
-# Reuse battle-tested loaders / ephemeris helpers from the v1 sweep.
-from sweep_events import (  # noqa: E402
-    _ppo_at_peak_from_info,
-    _region_at_peak_from_info,
-    _segment_central_window,
+from qp.events.sweep_loader import (  # noqa: E402
     load_segments,
+    ppo_at_peak_from_info,
+    region_at_peak_from_info,
+    segment_central_window,
     segment_to_payload,
 )
 
@@ -118,8 +140,8 @@ def _enrich_at_peak(
         lt = (np.degrees(phi_rad) / 15.0 + 12.0) % 24.0
         extra["local_time"] = float(lt)
 
-    extra["region"] = _region_at_peak_from_info(payload.info, peak_time)
-    sls = _ppo_at_peak_from_info(payload.info, peak_time, seg_t0, n_samples)
+    extra["region"] = region_at_peak_from_info(payload.info, peak_time)
+    sls = ppo_at_peak_from_info(payload.info, peak_time, seg_t0, n_samples)
     if sls.get("sls5n") is not None:
         extra["sls5_phase_n"] = sls["sls5n"]
     if sls.get("sls5s") is not None:
@@ -171,7 +193,7 @@ def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
     if not detections:
         return []
 
-    central_start, central_end = _segment_central_window(times)
+    central_start, central_end = segment_central_window(times)
     seg_id = f"seg_{payload.seg_idx:05d}"
     rows: list[dict] = []
     n_amp_rejected = 0

@@ -298,8 +298,9 @@ def write_summary(
             lines.append(f"| {band} | n/a | n/a | n/a | calibration failed |")
     lines.append("")
     lines.append(
-        "These values feed `GateConfig` in the Phase 3 mission sweep "
-        "(`scripts/sweep_events.py`)."
+        "These values feed the legacy gated sweep's `GateConfig`. The "
+        "round-8 detector (`qp.events.detector.detect_round8`) replaces "
+        "the sigma-based gates and ignores this calibration."
     )
     path.write_text("\n".join(lines) + "\n")
 
