@@ -40,15 +40,16 @@ BASE_SEED = 20260413
 BENCHMARK_DIR = OUTPUT_DIR / "benchmark"
 
 
-#: Round 6 / S1 — minimum Stokes degree of polarization for a detection.
+#: Minimum Stokes degree of polarization for a detection.
 #:
 #: A coherent wave packet has d → 1 regardless of polarization
 #: geometry (linear, circular, elliptical); broadband transients have
 #: d → 0. The 0.7 threshold keeps detections that are at least 70%
-#: polarized at the dominant frequency over the packet duration.
+#: polarized at the dominant frequency over the packet duration
+#: (Born & Wolf §1.4.2; Samson 1973).
 MIN_DEGREE_OF_POLARIZATION: float = 0.7
 
-#: Round 6 / R1 — minimum spectral quality factor Q = f0 / FWHM.
+#: Minimum spectral quality factor Q = f0 / FWHM.
 #:
 #: A coherent wave concentrates its power near a single peak period:
 #: the Morlet-CWT FWHM at peak time is set by the wavelet bandwidth
@@ -61,36 +62,22 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 MIN_Q_FACTOR: float = 3.0
 
 
-#: Round 6 / N1 — minimum lambda_2/lambda_3 from MVA on the detection
-#: window. Alfvén waves are planar transverse perturbations; the
-#: minimum-variance direction is well-defined (lambda_3 << lambda_2)
-#: and the ratio is large. An FGM artefact that affects all three
-#: axes has all eigenvalues similar (ratio ~ 1). Textbook threshold
-#: for a "well-resolved" wave normal is lambda_2/lambda_3 >= 5
-#: (Sonnerup & Scheible 1998).
-MIN_MVA_LAMBDA_RATIO: float = 5.0
-
-#: Round 7 / T2 — power ratio at the peak frequency above which a
-#: detection is treated as linear-polarized and exempted from the
-#: planarity test. Linear pol has rank-1 perturbation (one
-#: transverse component carries the wave, the other is noise), so
-#: lambda_2 ~ lambda_3 ~ noise and the round-6 lambda_2/lambda_3 >= 5
-#: test fails by construction. We detect this geometry via the
-#: bandpass-power ratio and use T1 (transversality) plus Stokes d to
-#: gate the rank-1 case instead.
-LINEAR_POL_POWER_RATIO: float = 10.0
-
-#: Round 7 / T1 — maximum allowed parallel fraction of the MVA major
-#: axis. The "planar" test (lambda_2/lambda_3 >= 5) is necessary but
-#: not sufficient: a compressional wave with small transverse leakage
-#: (e.g. par_leakage = 0.05) is also planar — its principal plane is
-#: spanned by (b_par, one transverse axis) — and so passes the
-#: eigenvalue ratio test. The textbook discriminator for an Alfvén
-#: wave is that the *major axis* lies in the perpendicular plane:
-#: |e_max . b_par|^2 -> 0 for a transverse wave, -> 1 for a
-#: compressional one. We require |e_max . b_par|^2 <= 0.5, i.e. the
-#: major axis lies closer to the perpendicular plane than to B_0
-#: (cos^2(angle) <= 0.5, angle >= 45 deg).
+#: Maximum allowed parallel fraction of the MVA major axis.
+#:
+#: The textbook discriminator for an Alfvén wave is that the major
+#: axis of the bandpass-filtered perturbation lies in the
+#: perpendicular plane: ``|e_max . b_par|^2 -> 0`` for a transverse
+#: wave, ``-> 1`` for a compressional one (Sonnerup & Scheible 1998
+#: §8). We require ``|e_max . b_par|^2 <= 0.5``, i.e. the major axis
+#: lies closer to the perpendicular plane than to B_0
+#: (``cos^2(angle) <= 0.5``, angle >= 45°).
+#:
+#: This single test handles linear, circular, and elliptical
+#: polarizations uniformly: the major axis is well-defined for any
+#: rank-1 or rank-2 transverse perturbation. We do not separately
+#: enforce planarity (``lambda_2/lambda_3 >= 5``) — that test fails
+#: by construction for linear pol (rank-1) and the Stokes-d gate
+#: already rejects 3-axis incoherent transients.
 MAX_MVA_PARALLEL_FRACTION: float = 0.5
 
 
@@ -157,7 +144,6 @@ def _detect_events_in_dataset(
     from qp.events.threshold import wavelet_sigma_mask
     from qp.signal.polarization import (
         degree_of_polarization,
-        mva_intermediate_minimum_ratio,
         mva_major_axis_parallel_fraction,
     )
     from qp.signal.wavelet import morlet_cwt
@@ -222,25 +208,26 @@ def _detect_events_in_dataset(
                 continue
         merged.append(peak)
 
-    # Per-detection physical gates. Each rejects a different decoy
-    # mode:
-    #   R1 (Q-factor)              — coherent broadband transients (FGM steps)
-    #   N1 + T2 (MVA planarity     — non-planar perturbations (3-axis
-    #            with linear-pol     steps); rank-1 cases (linear pol)
-    #            exemption)          exempted via band-power ratio
-    #   T1 (MVA major-axis ⊥ B0)   — compressional decoys (rank<=2 but
-    #                                principal axis along B0)
-    #   S1 (Stokes d)              — incoherent broadband bursts
+    # Per-detection physical gates. Three independent properties:
+    #   Q-factor                  — narrow-band oscillation (rejects
+    #                                coherent broadband transients:
+    #                                FGM steps, range changes)
+    #   MVA major-axis perp B_0   — transverse Alfvén signature
+    #                                (rejects compressional decoys
+    #                                and 3-axis steps)
+    #   Stokes degree d            — coherent polarization state
+    #                                (rejects incoherent broadband
+    #                                bursts of any geometry)
     n_time = cwt1.shape[1]
     kept: list[WavePacketPeak] = []
     for peak in merged:
         if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
             continue
-        # R1: spectral narrowness
+        # Spectral narrowness
         q = peak.q_factor
         if q is None or q < MIN_Q_FACTOR:
             continue
-        # Time window indices used by N1 and S1
+        # Time window indices for MVA and Stokes
         i_start = max(
             0, int(np.floor((peak.date_from - epoch).total_seconds() / dt))
         )
@@ -250,47 +237,22 @@ def _detect_events_in_dataset(
         )
         if i_end <= i_start:
             continue
-        # N1: minimum variance analysis on the 3-component field,
-        # bandpass-filtered to the wave frequency by taking the real
-        # part of the CWT at the peak period. This isolates the
-        # wave's geometry from broadband alpha=1.2 noise that would
-        # otherwise dominate the covariance.
+        # Transversality: MVA on the bandpass-filtered 3-component
+        # field (real part of the CWT at the peak period) isolates the
+        # wave's geometry from broadband alpha=1.2 noise. The major
+        # axis must lie closer to the perpendicular plane than to B_0.
         i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
         field_bp = np.column_stack([
             np.real(cwt_par[i_freq_peak, i_start : i_end + 1]),
             np.real(cwt1[i_freq_peak, i_start : i_end + 1]),
             np.real(cwt2[i_freq_peak, i_start : i_end + 1]),
         ])
-        # T2 + N1: planarity for rank-2 perturbations (circular,
-        # elliptical) via lambda_2/lambda_3 >= 5. Linear-pol waves
-        # have rank-1 perturbation (one transverse component dominant)
-        # so lambda_2 ~ lambda_3 ~ noise and the test fails by
-        # construction; we detect rank-1 via the band-power ratio and
-        # exempt those detections, gating the rank-1 case via T1
-        # (transversality) and S1 (Stokes d) only.
-        p1_band = float(np.mean(
-            np.abs(cwt1[i_freq_peak, i_start : i_end + 1]) ** 2
-        ))
-        p2_band = float(np.mean(
-            np.abs(cwt2[i_freq_peak, i_start : i_end + 1]) ** 2
-        ))
-        big = max(p1_band, p2_band)
-        small = max(min(p1_band, p2_band), 1e-30)
-        is_linear_pol = (big / small) >= LINEAR_POL_POWER_RATIO
-        if not is_linear_pol:
-            mva_ratio = mva_intermediate_minimum_ratio(field_bp)
-            if mva_ratio < MIN_MVA_LAMBDA_RATIO:
-                continue
-        # T1: transversality. The major axis of the bandpass-filtered
-        # perturbation must lie in the perpendicular plane (closer to
-        # the perp plane than to B_0). This rejects compressional
-        # decoys that pass the planar test because their principal
-        # plane is spanned by (b_par, one perp axis) rather than the
-        # transverse plane.
-        par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
-        if par_frac > MAX_MVA_PARALLEL_FRACTION:
+        if (
+            mva_major_axis_parallel_fraction(field_bp, par_axis=0)
+            > MAX_MVA_PARALLEL_FRACTION
+        ):
             continue
-        # S1: polarization purity over the detection's TF window
+        # Polarization purity over the detection's t-f window
         band_obj = get_band(peak.band)
         in_band = (
             (freq >= band_obj.freq_min_hz)
