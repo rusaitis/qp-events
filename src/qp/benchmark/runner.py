@@ -69,6 +69,19 @@ MIN_Q_FACTOR: float = 3.0
 #: normal is lambda_2/lambda_3 >= 5 (Sonnerup & Scheible 1998).
 MIN_MVA_LAMBDA_RATIO: float = 5.0
 
+#: Round 7 / T1 — maximum allowed parallel fraction of the MVA major
+#: axis. The "planar" test (lambda_2/lambda_3 >= 5) is necessary but
+#: not sufficient: a compressional wave with small transverse leakage
+#: (e.g. par_leakage = 0.05) is also planar — its principal plane is
+#: spanned by (b_par, one transverse axis) — and so passes the
+#: eigenvalue ratio test. The textbook discriminator for an Alfvén
+#: wave is that the *major axis* lies in the perpendicular plane:
+#: |e_max . b_par|^2 -> 0 for a transverse wave, -> 1 for a
+#: compressional one. We require |e_max . b_par|^2 <= 0.5, i.e. the
+#: major axis lies closer to the perpendicular plane than to B_0
+#: (cos^2(angle) <= 0.5, angle >= 45 deg).
+MAX_MVA_PARALLEL_FRACTION: float = 0.5
+
 
 #: Round 6 / N2 — family-wise error rate for the whitened CWT mask.
 #:
@@ -177,6 +190,7 @@ def _detect_events_in_dataset(
     from qp.signal.polarization import (
         degree_of_polarization,
         mva_intermediate_minimum_ratio,
+        mva_major_axis_parallel_fraction,
     )
     from qp.signal.wavelet import morlet_cwt
 
@@ -295,6 +309,15 @@ def _detect_events_in_dataset(
         ])
         mva_ratio = mva_intermediate_minimum_ratio(field_bp)
         if mva_ratio < MIN_MVA_LAMBDA_RATIO:
+            continue
+        # T1: transversality. The major axis of the bandpass-filtered
+        # perturbation must lie in the perpendicular plane (closer to
+        # the perp plane than to B_0). This rejects compressional
+        # decoys that pass the planar test because their principal
+        # plane is spanned by (b_par, one perp axis) rather than the
+        # transverse plane.
+        par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
+        if par_frac > MAX_MVA_PARALLEL_FRACTION:
             continue
         # S1: polarization purity over the detection's TF window
         band_obj = get_band(peak.band)

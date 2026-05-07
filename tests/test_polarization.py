@@ -150,3 +150,85 @@ def test_mva_short_input_returns_zero():
 def test_mva_wrong_shape_raises():
     with pytest.raises(ValueError):
         mva_intermediate_minimum_ratio(np.zeros((100, 2)))
+
+
+# ---------------------------------------------------------------------
+# Major-axis parallel fraction (transversality)
+# ---------------------------------------------------------------------
+
+
+from qp.signal.polarization import mva_major_axis_parallel_fraction
+
+
+def test_major_axis_purely_transverse_alfven():
+    """Pure transverse perturbation (b_par=0): major axis is perpendicular to B0."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    field = np.column_stack([np.zeros(n), np.cos(t), np.sin(t)])
+    frac = mva_major_axis_parallel_fraction(field)
+    assert frac < 1e-10, f"transverse wave should give ~0, got {frac}"
+
+
+def test_major_axis_purely_compressional():
+    """Pure b_par perturbation: major axis is along B0."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    rng = np.random.default_rng(0)
+    field = np.column_stack([
+        np.cos(t),
+        0.001 * rng.standard_normal(n),  # near-zero noise on b_perp1
+        0.001 * rng.standard_normal(n),
+    ])
+    frac = mva_major_axis_parallel_fraction(field)
+    assert frac > 0.99, f"compressional wave should give ~1, got {frac}"
+
+
+def test_major_axis_compressional_with_leakage():
+    """Decoy compressional with 5% par_leakage: major axis still > 0.5 along B0."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    par_leakage = 0.05
+    field = np.column_stack([
+        np.cos(t),
+        par_leakage * np.cos(t),
+        par_leakage * np.sin(t),
+    ])
+    frac = mva_major_axis_parallel_fraction(field)
+    # var(par)/(var(par)+var(perp1)) ~ 1/(1+0.05^2) ~ 0.9975 along (par,perp1) axis
+    assert frac > 0.9, f"compressional with leakage should give >0.9, got {frac}"
+
+
+def test_major_axis_isotropic_returns_finite():
+    """Isotropic noise: any direction is equally valid; result is in [0,1]."""
+    rng = np.random.default_rng(1)
+    field = rng.standard_normal((10000, 3))
+    frac = mva_major_axis_parallel_fraction(field)
+    assert 0.0 <= frac <= 1.0
+
+
+def test_major_axis_choice_of_par_axis():
+    """par_axis=2 selects column 2 as the parallel direction."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    # Put compressional signal on column 2
+    field = np.column_stack([
+        0.05 * np.cos(t),
+        0.05 * np.sin(t),
+        np.cos(t),
+    ])
+    frac = mva_major_axis_parallel_fraction(field, par_axis=2)
+    assert frac > 0.9, f"compressional on column 2 with par_axis=2 should give >0.9, got {frac}"
+
+
+def test_major_axis_short_input_returns_zero():
+    assert mva_major_axis_parallel_fraction(np.zeros((2, 3))) == 0.0
+
+
+def test_major_axis_invalid_par_axis_raises():
+    with pytest.raises(ValueError):
+        mva_major_axis_parallel_fraction(np.zeros((100, 3)), par_axis=3)
+
+
+def test_major_axis_wrong_shape_raises():
+    with pytest.raises(ValueError):
+        mva_major_axis_parallel_fraction(np.zeros((100, 2)))

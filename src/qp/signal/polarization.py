@@ -146,3 +146,56 @@ def mva_intermediate_minimum_ratio(
     if eigvals[0] <= 0:
         return float("inf")
     return float(eigvals[1] / eigvals[0])
+
+
+def mva_major_axis_parallel_fraction(
+    field: ArrayLike,
+    par_axis: int = 0,
+) -> float:
+    r"""Squared projection of the MVA major axis onto the background-field axis.
+
+    The maximum-variance eigenvector :math:`\hat e_1` of the
+    covariance matrix points along the wave's largest perturbation
+    axis. For a transverse Alfvén wave :math:`\delta\mathbf{B} \perp
+    \mathbf{B}_0`, so :math:`\hat e_1` lies in the perpendicular
+    plane and :math:`(\hat e_1 \cdot \hat b_\parallel)^2 \to 0`. For
+    a compressional perturbation :math:`\delta\mathbf{B} \parallel
+    \mathbf{B}_0`, so :math:`(\hat e_1 \cdot \hat b_\parallel)^2 \to
+    1`. Combined with :math:`\lambda_2/\lambda_3 \geq 5` the pair
+    test "planar AND transverse" is the textbook MVA Alfvén
+    signature (Sonnerup & Cahill 1967, Sonnerup & Scheible 1998 §8).
+
+    Parameters
+    ----------
+    field : array_like, shape (n_samples, 3)
+        Three-component magnetic-field time series in the MFA frame
+        (or equivalent), with the background-field component in
+        column ``par_axis``.
+    par_axis : int, default 0
+        Which column corresponds to :math:`b_\parallel`. The other
+        two are taken as transverse.
+
+    Returns
+    -------
+    fraction : float
+        :math:`(\hat e_1 \cdot \hat e_{\text{par}})^2 \in [0, 1]`.
+        Returns ``0.0`` for inputs with fewer than three samples or
+        zero covariance (no preferred direction).
+    """
+    field = np.asarray(field, dtype=float)
+    if field.ndim != 2 or field.shape[1] != 3:
+        raise ValueError(
+            f"field must have shape (n_samples, 3), got {field.shape}"
+        )
+    if not 0 <= par_axis < 3:
+        raise ValueError(f"par_axis must be 0, 1, or 2; got {par_axis}")
+    if field.shape[0] < 3:
+        return 0.0
+    cov = np.cov(field, rowvar=False)
+    if not np.all(np.isfinite(cov)):
+        return 0.0
+    eigvals, eigvecs = np.linalg.eigh(cov)  # ascending eigenvalues
+    if eigvals[2] <= 0:
+        return 0.0
+    e_max = eigvecs[:, 2]  # eigenvector of the largest eigenvalue
+    return float(e_max[par_axis] ** 2)
