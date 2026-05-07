@@ -107,10 +107,11 @@ def _enrich_at_peak(
     if payload.coord_r is not None and idx < len(payload.coord_r):
         extra["r_distance"] = float(payload.coord_r[idx])
     if payload.coord_th is not None and idx < len(payload.coord_th):
-        # KRTP theta is colatitude in radians; magnetic latitude is
-        # 90 - theta_deg. Coord stores radians.
+        # `coord_th` in MFA-36h segments is signed magnetic latitude in
+        # radians (range ~ +/-0.5 rad), already converted upstream — not
+        # KRTP colatitude. Just convert to degrees.
         theta_rad = float(payload.coord_th[idx])
-        extra["mag_lat"] = 90.0 - np.degrees(theta_rad)
+        extra["mag_lat"] = float(np.degrees(theta_rad))
     if payload.coord_phi is not None and idx < len(payload.coord_phi):
         # KRTP phi is azimuth in radians; LT = (phi_deg / 15 + 12) mod 24
         phi_rad = float(payload.coord_phi[idx])
@@ -124,6 +125,26 @@ def _enrich_at_peak(
     if sls.get("sls5s") is not None:
         extra["sls5_phase_s"] = sls["sls5s"]
     return extra
+
+
+_MAX_AMP_NT: float = 10.0  # set by main(); workers receive it via Pool initializer
+
+
+def _init_worker(cap_nT: float) -> None:
+    """Pool initializer: write the amplitude cap into each worker's module globals."""
+    global _MAX_AMP_NT
+    _MAX_AMP_NT = float(cap_nT)
+
+
+def _amp_within_cap(d: DetectedEvent, cap_nT: float) -> bool:
+    """Reject events where any wave component exceeds ``cap_nT``.
+
+    Catches the proximal-orbit pathology where the detector picks up the
+    rotating ambient dipole field as a "wave" of ~10-20 kT amplitude at
+    perikrone (r ~ 1 R_S). Cassini's true wave amplitudes in the QP bands
+    are well below 20 nT in the magnetosphere.
+    """
+    return max(d.b_perp1_amp, d.b_perp2_amp, d.b_par_amp) <= cap_nT
 
 
 def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
@@ -153,9 +174,13 @@ def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
     central_start, central_end = _segment_central_window(times)
     seg_id = f"seg_{payload.seg_idx:05d}"
     rows: list[dict] = []
+    n_amp_rejected = 0
     for k, d in enumerate(detections):
         # Only keep detections whose peak falls in the central 24 h.
         if not (central_start <= d.peak.peak_time < central_end):
+            continue
+        if not _amp_within_cap(d, _MAX_AMP_NT):
+            n_amp_rejected += 1
             continue
         extra = _enrich_at_peak(d, payload)
         extra["segment_idx"] = payload.seg_idx
@@ -164,6 +189,11 @@ def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
             d, event_id=k, segment_id=seg_id, extra=extra,
         )
         rows.append(row)
+    if n_amp_rejected:
+        log.debug(
+            "seg %d: rejected %d events exceeding %.0f nT amplitude cap",
+            payload.seg_idx, n_amp_rejected, _MAX_AMP_NT,
+        )
     return rows
 
 
@@ -213,8 +243,22 @@ def main() -> None:
         default=qp.OUTPUT_DIR / "events_round8.parquet",
         help="Output parquet path",
     )
+    parser.add_argument(
+        "--max-amp-nT",
+        type=float,
+        default=10.0,
+        help="Reject events with any wave-component amplitude above this "
+             "value (default: 10 nT). Enforces the small-amplitude linear-wave "
+             "regime (delta-B/B << 1 at Cassini's typical 10-25 R_S range) "
+             "and excludes proximal-orbit perikrone passes where the rotating "
+             "ambient field looks like a wave.",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
+
+    # Propagate to workers (spawn picks up module globals at import time).
+    global _MAX_AMP_NT
+    _MAX_AMP_NT = float(args.max_amp_nT)
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -241,7 +285,11 @@ def main() -> None:
             rows.extend(process_segment(p))
     else:
         ctx = get_context("spawn")
-        with ctx.Pool(processes=args.workers) as pool:
+        with ctx.Pool(
+            processes=args.workers,
+            initializer=_init_worker,
+            initargs=(args.max_amp_nT,),
+        ) as pool:
             for batch in pool.imap_unordered(process_segment, payloads, chunksize=4):
                 rows.extend(batch)
 
@@ -263,6 +311,7 @@ def main() -> None:
             "min_q_factor": MIN_Q_FACTOR,
             "min_stokes_d": MIN_DEGREE_OF_POLARIZATION,
             "max_mva_par_frac": MAX_MVA_PARALLEL_FRACTION,
+            "max_amp_nT": float(args.max_amp_nT),
         },
         "elapsed_seconds": time.perf_counter() - t_start,
     }
