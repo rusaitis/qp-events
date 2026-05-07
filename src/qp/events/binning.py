@@ -29,14 +29,20 @@ band plus a ``"total"`` field. The driver wraps this in an
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
 
 from qp.dwell.grid import DwellGridConfig
+
+if TYPE_CHECKING:
+    import xarray as xr
+
+log = logging.getLogger(__name__)
 from qp.events.bands import QP_BAND_NAMES
 from qp.events.catalog import WaveEvent
 
@@ -536,3 +542,274 @@ def save_event_time_zarr(
         shutil.rmtree(path)
     ds.to_zarr(path, mode="w", consolidated=False)
     return path
+
+
+# ----------------------------------------------------------------------
+# Full-mirror schema — for each period band, accumulate event time on
+# the same axes and region splits as the canonical dwell grid at
+# Output/dwell_grid_cassini_saturn.zarr. The variable names mirror the
+# dwell-grid names with a ``<band>_`` prefix so the ratio computation
+# is one indexing step:
+#
+#     event_time_per_bin = ev_zarr[f"{band}_kmag_inv_lat_closed_magnetosphere"]
+#     dwell_per_bin      = dw_zarr["kmag_inv_lat_closed_magnetosphere"]
+#     occurrence_rate    = event_time_per_bin / dwell_per_bin
+#
+# Three of the dwell schemas can be reproduced from the spacecraft
+# trajectory alone (region splits, dipole invariant latitude, weak-
+# field plasma-sheet proxy). The fourth — KMAG-traced invariant
+# latitude — requires per-sample field-line tracing and is left for a
+# follow-up.
+# ----------------------------------------------------------------------
+
+
+@dataclass
+class SegmentPositionsExt(SegmentPositions):
+    """Per-segment positions enriched with KSM cartesian + region codes.
+
+    Adds the per-minute spacecraft Cartesian position (KSM, R_S),
+    region code (Jackman 2019 crossings), and total field magnitude
+    (nT). Region codes follow ``qp.dwell.regions.REGION_CODES``:
+    ``0=magnetosphere, 1=magnetosheath, 2=solar_wind, 9=unknown``. The
+    weak-field grid uses ``b_total_nT`` directly.
+    """
+
+    ksm_x: np.ndarray | None = None  # (N,) R_S
+    ksm_y: np.ndarray | None = None  # (N,) R_S
+    ksm_z: np.ndarray | None = None  # (N,) R_S
+    region_codes: np.ndarray | None = None  # (N,) int (0/1/2/9)
+    b_total_nT: np.ndarray | None = None  # (N,) float
+
+
+def accumulate_full_mirror(
+    events: Iterable[WaveEvent],
+    segment_positions: dict[int, SegmentPositionsExt],
+    *,
+    bands: list[str] | None = None,
+    band_for_period_min: Callable[[float], str | None] | None = None,
+    config: DwellGridConfig | None = None,
+    b_threshold_nT: float = 2.0,
+) -> dict[str, np.ndarray]:
+    r"""Accumulate per-band event time on every dwell-grid schema.
+
+    Returns a flat dict of arrays, prefixed by band name. For each
+    band ``B`` and the band-union ``"total"``, four families of
+    variables are produced:
+
+    1. 3D ``(r, magnetic_latitude, local_time)``, with region splits:
+       ``B_total``, ``B_magnetosphere``, ``B_magnetosheath``,
+       ``B_solar_wind``, ``B_unknown``.
+    2. 2D ``(dipole_inv_lat, local_time)`` with the same region splits:
+       ``B_dipole_inv_lat_total``, ``B_dipole_inv_lat_magnetosphere``,
+       ...
+    3. 2D ``(dipole_inv_lat, local_time)`` plasma-sheet proxy
+       (``|B| < b_threshold_nT``):
+       ``B_weak_field_total``, ``B_weak_field_magnetosphere``, ...
+
+    All arrays are float64 minutes. The KMAG-traced invariant-latitude
+    schemas are *not* produced here — they require per-sample
+    field-line tracing and are added by a follow-up that consumes a
+    sample-cache from :mod:`qp.fieldline.tracer`.
+
+    Parameters
+    ----------
+    events : iterable of WaveEvent
+        Detections to bin.
+    segment_positions : dict[int, SegmentPositionsExt]
+        Per-segment trajectory and region information. Events whose
+        segment id is missing are dropped (counted in :class:`BinningStats`
+        — but stats aren't returned here; use ``bin_events_walking``
+        for fallback peak-position binning).
+    bands : list[str], optional
+        Band names to populate. Defaults to ``QP_BAND_NAMES``.
+    band_for_period_min : callable, optional
+        Function ``(period_min: float) -> str | None`` mapping a
+        detected period to a band name. Defaults to using the event's
+        stored ``band`` attribute (so this argument lets a single
+        parquet be re-binned into different band schemes).
+    config : DwellGridConfig, optional
+        Same axes as the dwell grid. Defaults to
+        ``DwellGridConfig()``.
+    b_threshold_nT : float, default 2.0
+        Plasma-sheet proxy threshold (matches the dwell grid).
+    """
+    from qp.dwell.grid import (
+        accumulate_inv_lat_grid,
+        accumulate_weak_field_grid,
+        accumulate_with_regions,
+    )
+
+    if config is None:
+        config = DwellGridConfig()
+    if bands is None:
+        bands = list(QP_BAND_NAMES)
+
+    use_stored_band = band_for_period_min is None
+    events_list = list(events)
+
+    seg_masks: dict[int, dict[str, np.ndarray]] = {}
+    epoch = np.datetime64("1970-01-01T00:00:00")
+    for ev in events_list:
+        seg_id = ev.segment_id
+        if seg_id is None or seg_id not in segment_positions:
+            continue
+        if use_stored_band:
+            if ev.band is None or ev.band not in bands:
+                continue
+            band = ev.band
+        else:
+            period_min = ev.period_peak_min
+            if period_min is None and ev.period is not None:
+                period_min = ev.period / 60.0
+            if period_min is None:
+                continue
+            band = band_for_period_min(float(period_min))
+            if band is None or band not in bands:
+                continue
+        sp = segment_positions[seg_id]
+        n = sp.times_unix.size
+        seg_masks.setdefault(seg_id, {b: np.zeros(n, dtype=bool) for b in bands})
+        t_from = (
+            np.datetime64(ev.date_from) - epoch
+        ).astype("timedelta64[s]").astype(float)
+        t_to = (
+            np.datetime64(ev.date_to) - epoch
+        ).astype("timedelta64[s]").astype(float)
+        m = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
+        if sp.central_mask is not None:
+            m &= sp.central_mask
+        seg_masks[seg_id][band] |= m
+
+    grids: dict[str, np.ndarray] = {}
+    region_names = ("total", "magnetosphere", "magnetosheath", "solar_wind", "unknown")
+    shape_3d = config.shape
+    shape_2d = (config.n_lat, config.n_lt)
+
+    def _zero_grids_for_band(b: str) -> None:
+        for r in region_names:
+            grids[f"{b}_{r}"] = np.zeros(shape_3d, dtype=np.float64)
+            grids[f"{b}_dipole_inv_lat_{r}"] = np.zeros(shape_2d, dtype=np.float64)
+            grids[f"{b}_weak_field_{r}"] = np.zeros(shape_2d, dtype=np.float64)
+
+    band_keys = list(bands) + ["total"]
+    for b in band_keys:
+        _zero_grids_for_band(b)
+
+    for seg_id, band_to_mask in seg_masks.items():
+        sp = segment_positions[seg_id]
+        if (
+            sp.ksm_x is None or sp.ksm_y is None or sp.ksm_z is None
+            or sp.region_codes is None
+        ):
+            log.warning(
+                "segment %s missing KSM cartesian or region codes; skipping",
+                seg_id,
+            )
+            continue
+        # Per-band masks
+        for b in bands:
+            mask = band_to_mask[b]
+            if not mask.any():
+                continue
+            x = sp.ksm_x[mask]
+            y = sp.ksm_y[mask]
+            z = sp.ksm_z[mask]
+            codes = sp.region_codes[mask]
+            r3d = accumulate_with_regions(x, y, z, codes, 1.0, config)
+            r2d = accumulate_inv_lat_grid(x, y, z, 1.0, codes, config)
+            for r in region_names:
+                grids[f"{b}_{r}"] += r3d[r]
+                grids[f"{b}_dipole_inv_lat_{r}"] += r2d[r]
+            if sp.b_total_nT is not None:
+                bt = sp.b_total_nT[mask]
+                rwf = accumulate_weak_field_grid(
+                    x, y, z, bt, 1.0, b_threshold_nT, codes, config,
+                )
+                for r in region_names:
+                    grids[f"{b}_weak_field_{r}"] += rwf[r]
+        # Band-union mask for the "total" band (no double-counting)
+        any_mask = np.zeros_like(next(iter(band_to_mask.values())))
+        for m in band_to_mask.values():
+            any_mask |= m
+        if not any_mask.any():
+            continue
+        x = sp.ksm_x[any_mask]
+        y = sp.ksm_y[any_mask]
+        z = sp.ksm_z[any_mask]
+        codes = sp.region_codes[any_mask]
+        r3d = accumulate_with_regions(x, y, z, codes, 1.0, config)
+        r2d = accumulate_inv_lat_grid(x, y, z, 1.0, codes, config)
+        for r in region_names:
+            grids[f"total_{r}"] += r3d[r]
+            grids[f"total_dipole_inv_lat_{r}"] += r2d[r]
+        if sp.b_total_nT is not None:
+            bt = sp.b_total_nT[any_mask]
+            rwf = accumulate_weak_field_grid(
+                x, y, z, bt, 1.0, b_threshold_nT, codes, config,
+            )
+            for r in region_names:
+                grids[f"total_weak_field_{r}"] += rwf[r]
+
+    return grids
+
+
+def full_mirror_grids_to_xarray(
+    grids: dict[str, np.ndarray],
+    config: DwellGridConfig,
+    bands: list[str],
+    *,
+    title: str = "QP Event Time Grid (full-mirror schema)",
+    description: str | None = None,
+    extra_attrs: dict | None = None,
+) -> "xr.Dataset":
+    """Wrap full-mirror grids into an xarray Dataset matching the dwell layout."""
+    import xarray as xr
+
+    coords = {
+        "r": config.r_centers,
+        "magnetic_latitude": config.lat_centers,
+        "local_time": config.lt_centers,
+        "dipole_inv_lat": config.lat_centers,
+        "r_edges": config.r_edges,
+        "lat_edges": config.lat_edges,
+        "lt_edges": config.lt_edges,
+    }
+    data_vars: dict[str, tuple] = {}
+    region_names = ("total", "magnetosphere", "magnetosheath", "solar_wind", "unknown")
+    band_keys = list(bands) + ["total"]
+    for b in band_keys:
+        for r in region_names:
+            arr = grids.get(f"{b}_{r}")
+            if arr is not None:
+                data_vars[f"{b}_{r}"] = (
+                    ("r", "magnetic_latitude", "local_time"),
+                    arr.astype(np.float32),
+                )
+            arr2 = grids.get(f"{b}_dipole_inv_lat_{r}")
+            if arr2 is not None:
+                data_vars[f"{b}_dipole_inv_lat_{r}"] = (
+                    ("dipole_inv_lat", "local_time"),
+                    arr2.astype(np.float32),
+                )
+            arr3 = grids.get(f"{b}_weak_field_{r}")
+            if arr3 is not None:
+                data_vars[f"{b}_weak_field_{r}"] = (
+                    ("dipole_inv_lat", "local_time"),
+                    arr3.astype(np.float32),
+                )
+
+    attrs = {
+        "title": title,
+        "units": "minutes",
+        "n_r": config.n_r,
+        "n_lat": config.n_lat,
+        "n_lt": config.n_lt,
+        "schema": "full_mirror",
+        "kmag_inv_lat_populated": False,
+        "bands": list(bands),
+    }
+    if description:
+        attrs["description"] = description
+    if extra_attrs:
+        attrs.update(extra_attrs)
+    return xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)

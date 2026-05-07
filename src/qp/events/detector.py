@@ -547,3 +547,238 @@ def _dt_to_unix(dt_obj: datetime.datetime) -> float:
 def _nearest_index(arr: np.ndarray, value: float) -> int:
     """Find the index of the nearest value in a sorted array."""
     return int(np.argmin(np.abs(arr - value)))
+
+
+# ---------------------------------------------------------------------
+# Round-8 detector — public entry point
+# ---------------------------------------------------------------------
+#
+# Four physically distinct gates, each with a canonical (or
+# search-volume-derived) threshold:
+#
+#   amplitude       whitened sigma-mask            Bonferroni FWER 1%
+#   narrowness      spectral Q-factor              >= 3
+#   transversality  MVA major-axis projection      |e_max . b_par|^2 <= 0.5
+#   polarization    Stokes degree d                >= 0.7
+#
+# Plus three housekeeping rules: duration >= 2 h, dedup 2 h same-band,
+# min_pixels 10. See the round-7/round-8 retrospectives in
+# planner notes for the full lineage.
+
+#: Family-wise error rate for the whitened CWT sigma-mask. The actual
+#: sigma threshold is derived from the effective number of independent
+#: time-frequency cells of the Morlet scalogram (see
+#: :func:`bonferroni_n_sigma_for_cwt`).
+SEGMENT_FWER_ALPHA: float = 0.01
+
+#: Minimum spectral Q = period / FWHM. Floor for any band-limited peak.
+MIN_Q_FACTOR: float = 3.0
+
+#: Minimum Stokes degree of polarization over the in-band TF window.
+MIN_DEGREE_OF_POLARIZATION: float = 0.7
+
+#: Maximum allowed parallel fraction of the MVA major axis. Closer to
+#: the perpendicular plane than to B_0 (cos^2(angle) <= 0.5).
+MAX_MVA_PARALLEL_FRACTION: float = 0.5
+
+
+def bonferroni_n_sigma_for_cwt(
+    n_time: int,
+    dt: float,
+    freq: np.ndarray,
+    morlet_omega0: float = 10.0,
+    alpha: float = SEGMENT_FWER_ALPHA,
+) -> float:
+    r"""Sigma threshold for FWER control over the Morlet-CWT search volume.
+
+    The Morlet wavelet has temporal correlation length ~1 period at
+    every frequency and frequency-bandwidth :math:`\Delta f / f \approx
+    1/\omega_0`. The number of *independent* time-frequency cells is
+
+    .. math::
+
+        V_{\mathrm{indep}} = \frac{\omega_0}{2\pi}
+            \ln\!\left(\frac{f_{\max}}{f_{\min}}\right)
+        \cdot
+        n_t\,dt\,\bar f
+
+    Bonferroni then sets the per-pixel FP probability to
+    :math:`\alpha / V_{\mathrm{indep}}` and the threshold is the
+    corresponding Gaussian quantile (~4.6σ at α = 0.01).
+    """
+    from scipy.stats import norm
+
+    freq = np.asarray(freq, dtype=float)
+    f_min = float(freq[freq > 0].min())
+    f_max = float(freq.max())
+    n_freq_indep = (morlet_omega0 / (2.0 * np.pi)) * np.log(f_max / f_min)
+    n_time_indep = n_time * dt * float(freq.mean())
+    v_indep = max(n_freq_indep * n_time_indep, 1.0)
+    return float(norm.isf(alpha / v_indep))
+
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass(frozen=True, slots=True)
+class DetectedEvent:
+    """A WavePacketPeak that passed all round-8 gates, with diagnostics.
+
+    The four gate values (q_factor, mva_par_frac, stokes_d, plus the
+    bandpass amplitudes per component) are retained so callers can
+    persist them in tabular form without rerunning the detector.
+    """
+
+    peak: WavePacketPeak
+    q_factor: float
+    mva_par_frac: float
+    stokes_d: float
+    b_perp1_amp: float
+    b_perp2_amp: float
+    b_par_amp: float
+
+
+def detect_round8(
+    t: NDArray[np.floating],
+    fields: NDArray[np.floating],
+    dt: float = 60.0,
+    *,
+    n_freqs: int = 300,
+    fwer_alpha: float = SEGMENT_FWER_ALPHA,
+    min_q_factor: float = MIN_Q_FACTOR,
+    min_stokes_d: float = MIN_DEGREE_OF_POLARIZATION,
+    max_mva_par_frac: float = MAX_MVA_PARALLEL_FRACTION,
+    min_duration_hours: float = 2.0,
+    min_pixels: int = 10,
+    epoch: datetime.datetime | None = None,
+) -> list[DetectedEvent]:
+    """Round-8 simplified wave-event detector.
+
+    Parameters
+    ----------
+    t : array_like, shape (N,)
+        Time samples in seconds since ``epoch``.
+    fields : array_like, shape (N, 3)
+        ``[b_par, b_perp1, b_perp2]`` in MFA frame.
+    dt : float, default 60
+        Sampling interval, seconds.
+    epoch : datetime, optional
+        Reference epoch for ``t``. Default 2000-01-01 (J2000-ish).
+
+    Returns
+    -------
+    list of DetectedEvent
+        One entry per peak that passed all four gates. The gate values
+        are populated; the underlying ``WavePacketPeak`` is unchanged.
+    """
+    from qp.events.bands import get_band
+    from qp.events.threshold import wavelet_sigma_mask
+    from qp.signal.polarization import (
+        degree_of_polarization,
+        mva_major_axis_parallel_fraction,
+    )
+
+    if epoch is None:
+        epoch = datetime.datetime(2000, 1, 1)
+
+    b_par = np.asarray(fields[:, 0], dtype=float)
+    b_perp1 = np.asarray(fields[:, 1], dtype=float)
+    b_perp2 = np.asarray(fields[:, 2], dtype=float)
+
+    # Complex CWTs of all three field components. The transverse pair
+    # feeds ridge extraction and Stokes; b_par enters MVA.
+    freq, _, cwt_par = morlet_cwt(b_par, dt=dt, n_freqs=n_freqs)
+    _, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
+    power1 = np.abs(cwt1)
+    power2 = np.abs(cwt2)
+
+    # Whitened sigma-mask at the FWER-derived threshold.
+    n_sigma = bonferroni_n_sigma_for_cwt(
+        power1.shape[1], dt, freq, alpha=fwer_alpha,
+    )
+    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
+    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+
+    times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
+
+    all_peaks: list[WavePacketPeak] = []
+    for component, power, mask in (
+        (b_perp1, power1, mask1),
+        (b_perp2, power2, mask2),
+    ):
+        peaks = detect_wave_packets_multi(
+            data=component,
+            times=times,
+            dt=dt,
+            cwt_freq=freq,
+            cwt_power=power,
+            threshold_mask=mask,
+            min_duration_hours=min_duration_hours,
+            min_pixels=min_pixels,
+        )
+        all_peaks.extend(peaks)
+
+    # Same-band dedup within 2 h.
+    all_peaks.sort(key=lambda p: p.peak_time)
+    merged: list[WavePacketPeak] = []
+    for peak in all_peaks:
+        if merged and peak.band == merged[-1].band:
+            sep = abs((peak.peak_time - merged[-1].peak_time).total_seconds())
+            if sep < 7200:
+                continue
+        merged.append(peak)
+
+    # Per-detection physical gates.
+    n_time = cwt1.shape[1]
+    kept: list[DetectedEvent] = []
+    for peak in merged:
+        if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
+            continue
+        q = peak.q_factor
+        if q is None or q < min_q_factor:
+            continue
+        i_start = max(
+            0, int(np.floor((peak.date_from - epoch).total_seconds() / dt)),
+        )
+        i_end = min(
+            n_time - 1,
+            int(np.ceil((peak.date_to - epoch).total_seconds() / dt)),
+        )
+        if i_end <= i_start:
+            continue
+        # Transversality: MVA on bandpass-filtered 3-component field.
+        i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
+        sl = slice(i_start, i_end + 1)
+        field_bp = np.column_stack([
+            np.real(cwt_par[i_freq_peak, sl]),
+            np.real(cwt1[i_freq_peak, sl]),
+            np.real(cwt2[i_freq_peak, sl]),
+        ])
+        par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
+        if par_frac > max_mva_par_frac:
+            continue
+        # Polarization purity over the in-band TF window.
+        band_obj = get_band(peak.band)
+        in_band = (freq >= band_obj.freq_min_hz) & (freq < band_obj.freq_max_hz)
+        if not in_band.any():
+            continue
+        c1_window = cwt1[in_band, sl]
+        c2_window = cwt2[in_band, sl]
+        d = degree_of_polarization(c1_window.ravel(), c2_window.ravel())
+        if d < min_stokes_d:
+            continue
+        # Bandpass amplitudes (RMS of the real CWT slice at peak f).
+        b_perp1_amp = float(np.sqrt(np.mean(field_bp[:, 1] ** 2)))
+        b_perp2_amp = float(np.sqrt(np.mean(field_bp[:, 2] ** 2)))
+        b_par_amp = float(np.sqrt(np.mean(field_bp[:, 0] ** 2)))
+        kept.append(DetectedEvent(
+            peak=peak,
+            q_factor=float(q),
+            mva_par_frac=float(par_frac),
+            stokes_d=float(d),
+            b_perp1_amp=b_perp1_amp,
+            b_perp2_amp=b_perp2_amp,
+            b_par_amp=b_par_amp,
+        ))
+    return kept
