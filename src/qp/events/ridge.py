@@ -42,6 +42,61 @@ from qp.events.bands import Band, freq_to_period, get_band
 HALF_POWER_PROMINENCE: float = 1.0 - 1.0 / math.sqrt(2.0)
 
 
+def _parabolic_interp_period(
+    cwt_power: NDArray[np.floating],
+    periods_sec: NDArray[np.floating],
+    peak_period_idx: int,
+    peak_time_idx: int,
+) -> float:
+    r"""Parabolic interpolation of the spectral peak period.
+
+    Fits a parabola to :math:`\log|W|^2` at the three frequency bins
+    :math:`(k-1, k, k+1)` of the local maximum and returns the
+    interpolated period at the parabola's vertex. Standard FFT/CWT
+    sub-bin peak refinement (Smith 2007, *Spectral Audio Signal
+    Processing*, App. H.3, Eq. H.9):
+
+    .. math::
+
+        p = \frac{y_{k-1} - y_{k+1}}
+                {2 \, (y_{k-1} - 2 y_k + y_{k+1})}, \quad p \in [-\tfrac{1}{2}, \tfrac{1}{2}]
+
+    For a log-spaced period grid, the vertex period is
+    :math:`\exp(\log P_k + p (\log P_{k+1} - \log P_k))`.
+
+    Falls back to the discrete-bin period if the peak is at the edge
+    of the period array or the parabola is degenerate.
+    """
+    n_periods = cwt_power.shape[0]
+    p0 = float(periods_sec[peak_period_idx])
+    if peak_period_idx <= 0 or peak_period_idx >= n_periods - 1:
+        return p0
+    y_minus = float(cwt_power[peak_period_idx - 1, peak_time_idx])
+    y_centre = float(cwt_power[peak_period_idx, peak_time_idx])
+    y_plus = float(cwt_power[peak_period_idx + 1, peak_time_idx])
+    # Fit on log power; require positive samples
+    if y_minus <= 0 or y_centre <= 0 or y_plus <= 0:
+        return p0
+    log_minus = math.log(y_minus)
+    log_centre = math.log(y_centre)
+    log_plus = math.log(y_plus)
+    denom = log_minus - 2.0 * log_centre + log_plus
+    if denom == 0.0:
+        return p0
+    offset = 0.5 * (log_minus - log_plus) / denom
+    if not -0.6 <= offset <= 0.6:
+        # Numerical edge case (e.g. flat peak); ignore the interpolation.
+        return p0
+    log_p_minus = math.log(float(periods_sec[peak_period_idx - 1]))
+    log_p_centre = math.log(p0)
+    log_p_plus = math.log(float(periods_sec[peak_period_idx + 1]))
+    if offset >= 0:
+        log_p_interp = log_p_centre + offset * (log_p_plus - log_p_centre)
+    else:
+        log_p_interp = log_p_centre + offset * (log_p_centre - log_p_minus)
+    return math.exp(log_p_interp)
+
+
 # Default cone-of-influence factor for the Morlet wavelet with omega0=10.
 # A point at scale s is "inside the COI" if it is at least sqrt(2) * s
 # from either edge; we use a slightly more conservative 1.0 * period.
@@ -243,7 +298,16 @@ def extract_ridges(
         peak_period_idx = p_min_idx + int(peak_local[0])
         peak_time_idx = t_start_idx + int(peak_local[1])
         peak_power = float(cwt_power[peak_period_idx, peak_time_idx])
-        peak_period_sec = float(periods_sec[peak_period_idx])
+        # P1: parabolic interpolation around the spectral peak. For
+        # log-spaced periods the vertex offset is the sub-bin position
+        # of the maximum of log|CWT|^2 (Smith 2007, *Spectral Audio
+        # Signal Processing*, App. H.3, Eq. H.9). This recovers
+        # sub-grid precision; without it period_sec is quantised to
+        # the discrete scale grid (~0.8% spacing for 300 freqs across
+        # 15-180 min).
+        peak_period_sec = _parabolic_interp_period(
+            cwt_power, periods_sec, peak_period_idx, peak_time_idx,
+        )
 
         # FWHM of the period marginal at peak time
         col_full = cwt_power[row_idx, peak_time_idx]
