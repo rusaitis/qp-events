@@ -153,6 +153,75 @@ def test_mva_wrong_shape_raises():
 
 
 # ---------------------------------------------------------------------
+# Minimum-eigenvalue fraction (rank-2 planarity, all pol modes)
+# ---------------------------------------------------------------------
+
+
+from qp.signal.polarization import mva_minimum_eigenvalue_fraction
+
+
+def test_min_eig_linear_polarization_is_low():
+    """Pure linear pol (rank 1): lambda_2 ~ lambda_3 ~ noise, but lambda_3/lambda_1 -> 0."""
+    n = 1000
+    rng = np.random.default_rng(0)
+    t = np.linspace(0, 50 * np.pi, n)
+    field = np.column_stack([
+        0.01 * rng.standard_normal(n),
+        np.cos(t),  # only b_perp1 has the wave
+        0.01 * rng.standard_normal(n),
+    ])
+    frac = mva_minimum_eigenvalue_fraction(field)
+    assert frac < 0.01, f"linear pol should give ~0, got {frac}"
+
+
+def test_min_eig_circular_polarization_is_low():
+    """Pure circular pol (rank 2 planar): lambda_3 -> 0, lambda_3/lambda_1 -> 0."""
+    n = 1000
+    t = np.linspace(0, 50 * np.pi, n)
+    field = np.column_stack([np.zeros(n), np.cos(t), np.sin(t)])
+    frac = mva_minimum_eigenvalue_fraction(field)
+    assert frac < 1e-10, f"circular pol should give ~0, got {frac}"
+
+
+def test_min_eig_independent_3axis_perturbation_is_high():
+    """True rank-3 perturbation (independent variation on each axis): ratio close to 1.
+
+    A coordinated step along (1,1,1) is rank-1, not rank-3 — its
+    minimum-eigenvalue fraction is therefore small. The genuine
+    rank-3 case is independent variation (e.g. 3-D Gaussian noise),
+    which we test in the dedicated isotropic-noise test below; here
+    we just confirm that *anisotropic* but rank-3 input still gives
+    a non-trivial ratio.
+    """
+    rng = np.random.default_rng(42)
+    n = 5000
+    field = np.column_stack([
+        rng.standard_normal(n),         # var ~ 1
+        0.7 * rng.standard_normal(n),   # var ~ 0.49
+        0.5 * rng.standard_normal(n),   # var ~ 0.25
+    ])
+    frac = mva_minimum_eigenvalue_fraction(field)
+    assert 0.15 < frac < 0.4, f"anisotropic rank-3 should give ~0.25, got {frac}"
+
+
+def test_min_eig_isotropic_noise_returns_unity():
+    """3D Gaussian noise: lambda_1 ~ lambda_2 ~ lambda_3 ~ 1, ratio ~ 1."""
+    rng = np.random.default_rng(0)
+    field = rng.standard_normal((20000, 3))
+    frac = mva_minimum_eigenvalue_fraction(field)
+    assert 0.7 < frac < 1.3
+
+
+def test_min_eig_short_input_returns_zero():
+    assert mva_minimum_eigenvalue_fraction(np.zeros((2, 3))) == 0.0
+
+
+def test_min_eig_wrong_shape_raises():
+    with pytest.raises(ValueError):
+        mva_minimum_eigenvalue_fraction(np.zeros((100, 2)))
+
+
+# ---------------------------------------------------------------------
 # Major-axis parallel fraction (transversality)
 # ---------------------------------------------------------------------
 

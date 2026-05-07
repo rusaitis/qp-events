@@ -60,14 +60,25 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 #: broadband decoys, but Q can.
 MIN_Q_FACTOR: float = 3.0
 
+
 #: Round 6 / N1 — minimum lambda_2/lambda_3 from MVA on the detection
-#: window. Alfvén waves are planar transverse perturbations, so the
+#: window. Alfvén waves are planar transverse perturbations; the
 #: minimum-variance direction is well-defined (lambda_3 << lambda_2)
 #: and the ratio is large. An FGM artefact that affects all three
-#: axes (range change, calibration step) has all eigenvalues similar
-#: and ratio ~ 1. The textbook threshold for a "well-resolved" wave
-#: normal is lambda_2/lambda_3 >= 5 (Sonnerup & Scheible 1998).
+#: axes has all eigenvalues similar (ratio ~ 1). Textbook threshold
+#: for a "well-resolved" wave normal is lambda_2/lambda_3 >= 5
+#: (Sonnerup & Scheible 1998).
 MIN_MVA_LAMBDA_RATIO: float = 5.0
+
+#: Round 7 / T2 — power ratio at the peak frequency above which a
+#: detection is treated as linear-polarized and exempted from the
+#: planarity test. Linear pol has rank-1 perturbation (one
+#: transverse component carries the wave, the other is noise), so
+#: lambda_2 ~ lambda_3 ~ noise and the round-6 lambda_2/lambda_3 >= 5
+#: test fails by construction. We detect this geometry via the
+#: bandpass-power ratio and use T1 (transversality) plus Stokes d to
+#: gate the rank-1 case instead.
+LINEAR_POL_POWER_RATIO: float = 10.0
 
 #: Round 7 / T1 — maximum allowed parallel fraction of the MVA major
 #: axis. The "planar" test (lambda_2/lambda_3 >= 5) is necessary but
@@ -307,9 +318,26 @@ def _detect_events_in_dataset(
             np.real(cwt1[i_freq_peak, i_start : i_end + 1]),
             np.real(cwt2[i_freq_peak, i_start : i_end + 1]),
         ])
-        mva_ratio = mva_intermediate_minimum_ratio(field_bp)
-        if mva_ratio < MIN_MVA_LAMBDA_RATIO:
-            continue
+        # T2 + N1: planarity for rank-2 perturbations (circular,
+        # elliptical) via lambda_2/lambda_3 >= 5. Linear-pol waves
+        # have rank-1 perturbation (one transverse component dominant)
+        # so lambda_2 ~ lambda_3 ~ noise and the test fails by
+        # construction; we detect rank-1 via the band-power ratio and
+        # exempt those detections, gating the rank-1 case via T1
+        # (transversality) and S1 (Stokes d) only.
+        p1_band = float(np.mean(
+            np.abs(cwt1[i_freq_peak, i_start : i_end + 1]) ** 2
+        ))
+        p2_band = float(np.mean(
+            np.abs(cwt2[i_freq_peak, i_start : i_end + 1]) ** 2
+        ))
+        big = max(p1_band, p2_band)
+        small = max(min(p1_band, p2_band), 1e-30)
+        is_linear_pol = (big / small) >= LINEAR_POL_POWER_RATIO
+        if not is_linear_pol:
+            mva_ratio = mva_intermediate_minimum_ratio(field_bp)
+            if mva_ratio < MIN_MVA_LAMBDA_RATIO:
+                continue
         # T1: transversality. The major axis of the bandpass-filtered
         # perturbation must lie in the perpendicular plane (closer to
         # the perp plane than to B_0). This rejects compressional

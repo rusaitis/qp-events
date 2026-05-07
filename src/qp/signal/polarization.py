@@ -148,6 +148,63 @@ def mva_intermediate_minimum_ratio(
     return float(eigvals[1] / eigvals[0])
 
 
+def mva_minimum_eigenvalue_fraction(
+    field: ArrayLike,
+) -> float:
+    r"""Ratio :math:`\lambda_3 / \lambda_1` from minimum variance analysis.
+
+    Generalises :func:`mva_intermediate_minimum_ratio` to handle all
+    polarization geometries with a single criterion. The classic
+    "planar perturbation" test is :math:`\lambda_2/\lambda_3 \geq 5`,
+    but this fails for purely linear polarization where
+    :math:`\lambda_2 \approx \lambda_3 \approx \sigma_{\text{noise}}^2`
+    even though the wave is well-defined (just rank-1 instead of
+    rank-2).
+
+    The ratio :math:`\lambda_3 / \lambda_1` is small whenever the
+    perturbation has rank :math:`\leq 2` in 3-D space:
+
+    - linear pol (rank 1): :math:`\lambda_2 \approx \lambda_3 \to 0`,
+      :math:`\lambda_3 / \lambda_1 \to 0`
+    - circular pol (rank 2 planar): :math:`\lambda_3 \to 0`,
+      :math:`\lambda_3 / \lambda_1 \to 0`
+    - elliptical pol (rank 2 planar): same
+    - 3-axis FGM step (rank 3): :math:`\lambda_3 \sim \lambda_1`,
+      :math:`\lambda_3 / \lambda_1 \sim 0.3` to 1
+
+    A single threshold (typically :math:`\leq 0.2`) cleanly separates
+    plasma waves from isotropic transients without requiring a
+    polarization branch.
+
+    Parameters
+    ----------
+    field : array_like, shape (n_samples, 3)
+        Three-component magnetic-field time series — typically
+        ``(b_par, b_perp1, b_perp2)`` in MFA frame.
+
+    Returns
+    -------
+    fraction : float
+        :math:`\lambda_3 / \lambda_1 \in [0, 1]`. Returns ``0.0`` for
+        empty or degenerate inputs and clips above at 1.0 if the
+        eigenvalues are nearly equal.
+    """
+    field = np.asarray(field, dtype=float)
+    if field.ndim != 2 or field.shape[1] != 3:
+        raise ValueError(
+            f"field must have shape (n_samples, 3), got {field.shape}"
+        )
+    if field.shape[0] < 3:
+        return 0.0
+    cov = np.cov(field, rowvar=False)
+    if not np.all(np.isfinite(cov)):
+        return 0.0
+    eigvals = np.linalg.eigvalsh(cov)  # ascending: [lambda_3, lambda_2, lambda_1]
+    if eigvals[2] <= 0:
+        return 0.0
+    return float(max(eigvals[0], 0.0) / eigvals[2])
+
+
 def mva_major_axis_parallel_fraction(
     field: ArrayLike,
     par_axis: int = 0,
