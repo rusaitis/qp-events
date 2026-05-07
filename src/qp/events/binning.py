@@ -813,3 +813,257 @@ def full_mirror_grids_to_xarray(
     if extra_attrs:
         attrs.update(extra_attrs)
     return xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)
+
+
+# ----------------------------------------------------------------------
+# KMAG-traced event-time schemas — kmag_inv_lat + kmag_eq_r per band.
+#
+# Implementation strategy: we subset the full trajectory to the union
+# of all band masks, hand THAT to compute_invariant_latitudes_parallel
+# with trace_every_n=10 (matching the dwell grid), and then accumulate
+# per band by reading per-trace band membership at the subsampled
+# cadence. This means the tracer only fires on event-window samples,
+# so the cost scales with total event minutes, not total mission
+# minutes.
+# ----------------------------------------------------------------------
+
+
+def accumulate_kmag_event_grids(
+    band_masks: dict[str, np.ndarray],
+    x_traj: np.ndarray,
+    y_traj: np.ndarray,
+    z_traj: np.ndarray,
+    t_unix_traj: np.ndarray,
+    region_codes_traj: np.ndarray,
+    *,
+    trace_every_n: int = 10,
+    config: DwellGridConfig | None = None,
+    tracing_config=None,
+    field_config=None,
+) -> tuple[dict[str, np.ndarray], dict[str, int]]:
+    r"""Trace event-window samples and accumulate KMAG event-time grids.
+
+    For each band ``B`` and the band-union ``"total"``, emit four
+    families of variables, each with the standard 5-region split:
+
+    - ``B_kmag_inv_lat_<region>``       (kmag_inv_lat, LT)
+    - ``B_kmag_inv_lat_closed_<region>`` (closed lines only)
+    - ``B_kmag_eq_r_<region>``          (kmag_eq_r, LT)
+    - ``B_kmag_eq_r_closed_<region>``    (closed lines only)
+
+    Parameters
+    ----------
+    band_masks : dict[str, ndarray]
+        Per-band boolean masks over the full trajectory (length N).
+    x_traj, y_traj, z_traj : ndarray
+        KSM positions at every trajectory minute, R_S.
+    t_unix_traj : ndarray
+        POSIX timestamps at every trajectory minute. Converted
+        internally to J2000 seconds.
+    region_codes_traj : ndarray of int
+        Region code at every trajectory minute (0/1/2/9).
+    trace_every_n : int, default 10
+        Subsampling cadence for tracing — must match the dwell grid.
+    config : DwellGridConfig, optional
+    tracing_config, field_config : qp.dwell.tracing types, optional
+        If None, default ``TracingConfig`` / ``SaturnFieldConfig`` are
+        used (same defaults as ``compute_dwell_grid.py``).
+
+    Returns
+    -------
+    grids : dict[str, ndarray]
+        Flat dict of accumulated grids, ready for
+        :func:`full_mirror_grids_to_xarray_with_kmag`.
+    stats : dict[str, int]
+        ``{"n_traces": ..., "n_closed": ..., "n_events_traced_min": ...}``
+    """
+    from qp.coords.ksm import local_time
+    from qp.dwell.grid import (
+        accumulate_kmag_eq_r_grid,
+        accumulate_traced_inv_lat_grid,
+    )
+    from qp.dwell.tracing import (
+        SaturnFieldConfig,
+        TracingConfig,
+        compute_invariant_latitudes_parallel,
+    )
+
+    if config is None:
+        config = DwellGridConfig()
+    if tracing_config is None:
+        tracing_config = TracingConfig(trace_every_n=trace_every_n)
+    if field_config is None:
+        field_config = SaturnFieldConfig()
+
+    # 1. Union event-mask (any band, any minute) → defines what to trace
+    bands = list(band_masks.keys())
+    if not bands:
+        return {}, {"n_traces": 0, "n_closed": 0, "n_events_traced_min": 0}
+    union = np.zeros_like(next(iter(band_masks.values())))
+    for m in band_masks.values():
+        union |= m
+    n_event_min = int(union.sum())
+    log.info(
+        "KMAG event tracing: %d event-minutes (~%d traces at every-%d cadence)",
+        n_event_min, n_event_min // trace_every_n, trace_every_n,
+    )
+
+    # 2. Subset trajectory + region codes to the union mask
+    keep = np.flatnonzero(union)
+    x_e = x_traj[keep]
+    y_e = y_traj[keep]
+    z_e = z_traj[keep]
+    t_e = t_unix_traj[keep]
+    codes_e = region_codes_traj[keep]
+    # Convert POSIX → J2000 for KMAG
+    j2000_posix = 946728000.0
+    t_j2000 = t_e - j2000_posix
+
+    # 3. Trace
+    result = compute_invariant_latitudes_parallel(
+        x_e, y_e, z_e, t_j2000,
+        config=tracing_config,
+        field_config=field_config,
+        region_codes=codes_e,
+    )
+
+    # 4. Subsample band masks at the same cadence as the tracer's
+    #    internal subsampling (np.arange(0, n_active, trace_every_n)).
+    n_active = len(keep)
+    sub_idx = np.arange(0, n_active, trace_every_n)
+    n_traces = len(sub_idx)
+    # Original-trajectory indices of each traced position
+    orig_idx_for_trace = keep[sub_idx]
+
+    lt_sub = local_time(x_e[sub_idx], y_e[sub_idx])
+    z_sub = z_e[sub_idx]
+    codes_sub = codes_e[sub_idx]
+    dt_trace = float(trace_every_n)
+
+    # Per-band membership at each traced position
+    per_band_mask: dict[str, np.ndarray] = {
+        b: band_masks[b][orig_idx_for_trace] for b in bands
+    }
+    union_mask_sub = np.zeros(n_traces, dtype=bool)
+    for m in per_band_mask.values():
+        union_mask_sub |= m
+
+    # 5. Accumulate per band — apply the band's mask to lt/z/codes
+    #    by giving the accumulator a NaN-filled inv_lat where mask is
+    #    False (the validity check drops those).
+    grids: dict[str, np.ndarray] = {}
+
+    def _accumulate_for(
+        band_key: str, mask_sub: np.ndarray,
+    ) -> None:
+        if not mask_sub.any():
+            empty_inv = np.zeros(
+                (config.n_lat, config.n_lt), dtype=np.float64,
+            )
+            empty_eq = np.zeros((config.n_r, config.n_lt), dtype=np.float64)
+            for r in ("total", "magnetosphere", "magnetosheath",
+                      "solar_wind", "unknown"):
+                grids[f"{band_key}_kmag_inv_lat_{r}"] = empty_inv.copy()
+                grids[f"{band_key}_kmag_inv_lat_closed_{r}"] = empty_inv.copy()
+                grids[f"{band_key}_kmag_eq_r_{r}"] = empty_eq.copy()
+                grids[f"{band_key}_kmag_eq_r_closed_{r}"] = empty_eq.copy()
+            return
+        inv_n_b = np.where(mask_sub, result.inv_lat_north, np.nan)
+        inv_s_b = np.where(mask_sub, result.inv_lat_south, np.nan)
+        l_eq_b = np.where(mask_sub, result.l_equatorial, np.nan)
+        closed_b = result.is_closed & mask_sub
+        # kmag_inv_lat (all + closed-only)
+        all_inv = accumulate_traced_inv_lat_grid(
+            inv_n_b, inv_s_b, closed_b, lt_sub, z_sub,
+            dt_minutes=dt_trace, region_codes=codes_sub, config=config,
+        )
+        closed_inv = accumulate_traced_inv_lat_grid(
+            inv_n_b, inv_s_b, closed_b, lt_sub, z_sub,
+            dt_minutes=dt_trace, region_codes=codes_sub,
+            closed_only=True, config=config,
+        )
+        # kmag_eq_r (all + closed-only)
+        all_eq = accumulate_kmag_eq_r_grid(
+            l_eq_b, closed_b, lt_sub,
+            dt_minutes=dt_trace, region_codes=codes_sub, config=config,
+        )
+        closed_eq = accumulate_kmag_eq_r_grid(
+            l_eq_b, closed_b, lt_sub,
+            dt_minutes=dt_trace, region_codes=codes_sub,
+            closed_only=True, config=config,
+        )
+        for k, v in all_inv.items():
+            grids[f"{band_key}_kmag_inv_lat_{k}"] = v
+        for k, v in closed_inv.items():
+            grids[f"{band_key}_kmag_inv_lat_closed_{k}"] = v
+        for k, v in all_eq.items():
+            grids[f"{band_key}_kmag_eq_r_{k}"] = v
+        for k, v in closed_eq.items():
+            grids[f"{band_key}_kmag_eq_r_closed_{k}"] = v
+
+    for b in bands:
+        _accumulate_for(b, per_band_mask[b])
+    _accumulate_for("total", union_mask_sub)
+
+    stats = {
+        "n_traces": int(result.n_traces),
+        "n_closed": int(result.n_closed),
+        "n_events_traced_min": n_event_min,
+    }
+    return grids, stats
+
+
+def kmag_event_grids_to_xarray(
+    grids: dict[str, np.ndarray],
+    config: DwellGridConfig,
+    bands: list[str],
+    *,
+    title: str = "QP Event Time Grid (KMAG-traced schemas)",
+    extra_attrs: dict | None = None,
+) -> "xr.Dataset":
+    """Wrap KMAG event grids into an xarray Dataset.
+
+    Output dims: ``(kmag_inv_lat, local_time)`` and
+    ``(kmag_eq_r, local_time)``. The two coordinate vectors reuse
+    ``config.lat_centers`` and ``config.r_centers`` respectively, so
+    the bin edges align exactly with the dwell grid.
+    """
+    import xarray as xr
+
+    coords = {
+        "local_time": config.lt_centers,
+        "kmag_inv_lat": config.lat_centers,
+        "kmag_eq_r": config.r_centers,
+        "lat_edges": config.lat_edges,
+        "lt_edges": config.lt_edges,
+        "r_edges": config.r_edges,
+    }
+    region_names = ("total", "magnetosphere", "magnetosheath",
+                    "solar_wind", "unknown")
+    data_vars: dict[str, tuple] = {}
+    for b in list(bands) + ["total"]:
+        for r in region_names:
+            for prefix in ("kmag_inv_lat", "kmag_inv_lat_closed"):
+                k = f"{b}_{prefix}_{r}"
+                if k in grids:
+                    data_vars[k] = (
+                        ("kmag_inv_lat", "local_time"),
+                        grids[k].astype(np.float32),
+                    )
+            for prefix in ("kmag_eq_r", "kmag_eq_r_closed"):
+                k = f"{b}_{prefix}_{r}"
+                if k in grids:
+                    data_vars[k] = (
+                        ("kmag_eq_r", "local_time"),
+                        grids[k].astype(np.float32),
+                    )
+
+    attrs = {
+        "title": title,
+        "units": "minutes",
+        "schema": "kmag_event_grids",
+        "bands": list(bands),
+    }
+    if extra_attrs:
+        attrs.update(extra_attrs)
+    return xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)

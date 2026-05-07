@@ -509,3 +509,85 @@ def accumulate_weak_field_grid(
             result[name] = accum(valid & (codes == code))
 
     return result
+
+
+def accumulate_kmag_eq_r_grid(
+    l_equatorial: ArrayLike,
+    is_closed: ArrayLike,
+    local_time: ArrayLike,
+    dt_minutes: float = 60.0,
+    region_codes: ArrayLike | None = None,
+    closed_only: bool = False,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    r"""Accumulate dwell time on a 2D ``(kmag_eq_r, local_time)`` grid.
+
+    Each spacecraft sample contributes to the bin given by the
+    *equatorial apex* of its KMAG-traced field line -- the maximum
+    radial distance reached by the field line, which corresponds to
+    the equatorial-plane crossing for closed lines. This is the
+    natural axis for visualising field-line-resonance occurrence:
+    a wave detected at any latitude on a field line maps to the same
+    equatorial-r bin as one detected at the apex itself.
+
+    Parameters
+    ----------
+    l_equatorial : array_like
+        Equatorial apex distance ($R_S$), one entry per traced
+        position. Aligned to ``compute_invariant_latitudes`` output
+        (NaN for open / failed traces).
+    is_closed : array_like of bool
+        Whether the field line is closed at both footpoints.
+    local_time : array_like
+        Local time in hours, one entry per traced position.
+    dt_minutes : float, default 60.0
+        Dwell time per traced sample in minutes (matches
+        ``trace_every_n`` x cadence -- e.g. 10 for 10-min subsampling
+        of 1-min data).
+    region_codes : array_like of int, optional
+        If given, also produce per-region grids using the standard
+        ``REGION_CODES`` mapping.
+    closed_only : bool, default False
+        If True, drop open field lines.
+    config : DwellGridConfig, optional
+        Grid axes. The radial axis ``r_range, n_r`` is reused for the
+        ``kmag_eq_r`` dimension so the output bins match the standard
+        spacecraft-position radial bins.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        Keys: ``'total'`` and (if ``region_codes`` is given) the
+        region-name keys from :data:`REGION_CODES`. Values: 2D arrays
+        of shape ``(n_r, n_lt)`` in minutes.
+    """
+    if config is None:
+        config = DwellGridConfig()
+
+    l_eq = np.asarray(l_equatorial, dtype=float)
+    closed = np.asarray(is_closed, dtype=bool)
+    lt = np.asarray(local_time, dtype=float)
+
+    shape_2d = (config.n_r, config.n_lt)
+    i_r = _bin_index(l_eq, *config.r_range, config.n_r)
+    i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
+
+    valid = (
+        np.isfinite(l_eq)
+        & (l_eq >= config.r_range[0]) & (l_eq < config.r_range[1])
+        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+    )
+    if closed_only:
+        valid &= closed
+
+    def accum(mask: np.ndarray) -> np.ndarray:
+        return _accumulate_grid_2d(i_r, i_lt, mask, shape_2d, dt_minutes)
+
+    result = {"total": accum(valid)}
+
+    if region_codes is not None:
+        codes = np.asarray(region_codes, dtype=int)
+        for code, name in REGION_CODES.items():
+            result[name] = accum(valid & (codes == code))
+
+    return result

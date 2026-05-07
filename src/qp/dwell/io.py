@@ -71,6 +71,7 @@ def to_xarray(
     field_config=None,
     inv_lat_grids: dict[str, np.ndarray] | None = None,
     kmag_inv_lat_grids: dict[str, np.ndarray] | None = None,
+    kmag_eq_r_grids: dict[str, np.ndarray] | None = None,
 ) -> xr.Dataset:
     r"""Convert dwell-time grids to an xarray Dataset.
 
@@ -94,6 +95,11 @@ def to_xarray(
     kmag_inv_lat_grids : dict, optional
         2D grids of shape ``(n_lat, n_lt)`` from KMAG field line tracing.
         Uses ``(kmag_inv_lat, local_time)`` dimensions.
+    kmag_eq_r_grids : dict, optional
+        2D grids of shape ``(n_r, n_lt)`` from KMAG field line tracing —
+        each sample binned by the equatorial apex of its traced field
+        line. Uses ``(kmag_eq_r, local_time)`` dimensions; the
+        ``kmag_eq_r`` coordinate reuses the same edges/centers as ``r``.
 
     Returns
     -------
@@ -161,6 +167,25 @@ def to_xarray(
         for name, arr in kmag_inv_lat_grids.items():
             data_vars[name] = (
                 kmag_dims,
+                arr,
+                {"units": "min", "long_name": f"Dwell time ({name})"},
+            )
+
+    # 2D KMAG traced equatorial-r grids (kmag_eq_r × local_time)
+    if kmag_eq_r_grids:
+        eq_r_dim = "kmag_eq_r"
+        coords[eq_r_dim] = (
+            eq_r_dim,
+            config.r_centers,
+            {
+                "units": "R_S",
+                "long_name": "KMAG field-line equatorial apex (bin center)",
+            },
+        )
+        eq_r_dims = (eq_r_dim, "local_time")
+        for name, arr in kmag_eq_r_grids.items():
+            data_vars[name] = (
+                eq_r_dims,
                 arr,
                 {"units": "min", "long_name": f"Dwell time ({name})"},
             )

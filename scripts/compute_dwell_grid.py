@@ -165,6 +165,23 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Trace all samples (default: magnetosphere only)")
     trace_group.add_argument("--no-trace", action="store_true",
                              help="Skip KMAG tracing entirely")
+    trace_group.add_argument(
+        "--include-equatorial", action="store_true",
+        help=(
+            "Also accumulate the equatorial-r schema "
+            "(kmag_eq_r × LT) alongside the existing schemas. "
+            "Free since equatorial apex comes from the same trace."
+        ),
+    )
+    trace_group.add_argument(
+        "--equatorial-only", action="store_true",
+        help=(
+            "Produce a sibling zarr with ONLY the equatorial-r "
+            "schema (kmag_eq_r × LT, with closed-only variants). "
+            "Useful to add the new schema next to an existing dwell "
+            "grid without re-running the full pipeline."
+        ),
+    )
 
     # --- Field model ---
     field_group = parser.add_argument_group("KMAG field model")
@@ -336,6 +353,8 @@ def main():
 
     # KMAG tracing (optional)
     kmag_inv_lat_named: dict[str, np.ndarray] = {}
+    kmag_eq_r_named: dict[str, np.ndarray] = {}
+    want_equatorial = args.include_equatorial or args.equatorial_only
     if not args.no_trace and all_x:
         log.info("Starting KMAG field line tracing...")
         x_all = np.concatenate(all_x)
@@ -385,6 +404,57 @@ def main():
         closed_hours = float(kmag_closed["total"].sum()) / 60
         print(f"KMAG inv lat:      {inv_lat_shape}, {kmag_hours:,.0f} h mapped, {closed_hours:,.0f} h closed")
 
+        if want_equatorial:
+            from qp.dwell.grid import accumulate_kmag_eq_r_grid
+            eq_r_grids = accumulate_kmag_eq_r_grid(
+                result.l_equatorial, result.is_closed, lt_sub,
+                dt_minutes=dt_trace, region_codes=codes_sub,
+                config=grid_config,
+            )
+            for k, v in eq_r_grids.items():
+                kmag_eq_r_named[f"kmag_eq_r_{k}"] = v
+            eq_r_closed = accumulate_kmag_eq_r_grid(
+                result.l_equatorial, result.is_closed, lt_sub,
+                dt_minutes=dt_trace, region_codes=codes_sub,
+                closed_only=True, config=grid_config,
+            )
+            for k, v in eq_r_closed.items():
+                kmag_eq_r_named[f"kmag_eq_r_closed_{k}"] = v
+            eq_total_h = float(eq_r_grids["total"].sum()) / 60
+            eq_closed_h = float(eq_r_closed["total"].sum()) / 60
+            eq_r_shape = (grid_config.n_r, grid_config.n_lt)
+            print(
+                f"KMAG eq_r:         {eq_r_shape}, "
+                f"{eq_total_h:,.0f} h mapped, {eq_closed_h:,.0f} h closed",
+            )
+
+    # In --equatorial-only mode, write a sibling zarr with just the
+    # equatorial schemas (and the bare minimum of context). The
+    # existing dwell grid stays untouched.
+    if args.equatorial_only:
+        attrs["title"] = "Cassini KMAG Equatorial-r Sibling Grid"
+        attrs["description"] = (
+            "Per-region dwell time on a (kmag_eq_r, LT) axis. Each "
+            "spacecraft sample is binned by the equatorial apex of "
+            "its KMAG-traced field line. To be consumed alongside "
+            "the canonical dwell grid via xarray.merge."
+        )
+        ds = to_xarray(
+            {},  # no 3D spatial grids
+            grid_config,
+            attrs=attrs,
+            tracing_config=tracing_config if not args.no_trace else None,
+            field_config=field_config if not args.no_trace else None,
+            kmag_eq_r_grids=kmag_eq_r_named or None,
+        )
+        print(ds)
+        print()
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        save_zarr(ds, output_path, encoding=zarr_encoding)
+        print(f"Saved (equatorial-only) to {output_path}")
+        return
+
     # Prefix inv lat grid names for clarity in the Dataset
     inv_lat_named = {f"dipole_inv_lat_{k}": v for k, v in inv_lat_accum.items()}
     weak_field_named = {f"weak_field_{k}": v for k, v in weak_field_accum.items()}
@@ -397,6 +467,7 @@ def main():
         field_config=field_config if not args.no_trace else None,
         inv_lat_grids=inv_lat_named,
         kmag_inv_lat_grids=kmag_inv_lat_named or None,
+        kmag_eq_r_grids=kmag_eq_r_named or None,
     )
     print(ds)
     print()

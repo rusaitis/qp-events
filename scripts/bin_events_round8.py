@@ -294,21 +294,26 @@ def main() -> None:
         "--with-kmag-trace",
         action="store_true",
         help=(
-            "Populate KMAG-traced inv-lat schemas. NOT IMPLEMENTED in "
-            "this pass — requires per-sample tracing parity with "
-            "compute_dwell_grid.py. Will raise NotImplementedError."
+            "Populate KMAG-traced schemas: kmag_inv_lat (footpoint, "
+            "for conjugate-latitude axis) AND kmag_eq_r (equatorial "
+            "apex, for FLR-resonance axis). One tracing pass over "
+            "the union of all event-window minutes; cost scales with "
+            "total event minutes, not mission minutes."
         ),
+    )
+    parser.add_argument(
+        "--trace-every", type=int, default=10,
+        help=(
+            "Subsampling cadence for KMAG tracing (must match the "
+            "dwell grid; default 10)."
+        ),
+    )
+    parser.add_argument(
+        "--trace-workers", type=int, default=8,
+        help="Multiprocessing workers for KMAG tracing.",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
-
-    if args.with_kmag_trace:
-        raise NotImplementedError(
-            "KMAG-traced inv-lat schemas require a sample-level tracing "
-            "cache. Track that work as a follow-up; the slim mirror "
-            "(3D + dipole_inv_lat + weak_field) covers Figs 7 and the "
-            "dipole-latitude denominators."
-        )
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -351,7 +356,32 @@ def main() -> None:
     )
     log.info("accumulated in %.1fs", time.perf_counter() - t_acc)
 
-    # 5. Write zarr
+    # 5. Optional KMAG tracing — adds kmag_inv_lat + kmag_eq_r schemas
+    #    (with closed-only variants) per band.
+    kmag_grids: dict[str, np.ndarray] = {}
+    kmag_stats: dict[str, int] = {}
+    if args.with_kmag_trace:
+        from qp.dwell.tracing import SaturnFieldConfig, TracingConfig
+        from qp.events.binning import accumulate_kmag_event_grids
+        log.info("KMAG tracing event-window samples ...")
+        t_kmag = time.perf_counter()
+        kmag_grids, kmag_stats = accumulate_kmag_event_grids(
+            masks, x, y, z, t_unix, region_codes,
+            trace_every_n=args.trace_every,
+            config=config,
+            tracing_config=TracingConfig(
+                trace_every_n=args.trace_every,
+                n_workers=args.trace_workers,
+            ),
+            field_config=SaturnFieldConfig(),
+        )
+        log.info(
+            "KMAG traced in %.1fs (%d traces, %d closed)",
+            time.perf_counter() - t_kmag,
+            kmag_stats["n_traces"], kmag_stats["n_closed"],
+        )
+
+    # 6. Write zarr
     band_edges_min = {b: list(edges[b]) for b in bands}
     extra_attrs = {
         "band_scheme": args.bands,
@@ -362,12 +392,19 @@ def main() -> None:
         "n_samples_trajectory": int(t_unix.size),
         "b_threshold_nT": args.b_threshold,
         "events_parquet": str(args.events),
-        "kmag_inv_lat_populated": False,
+        "kmag_inv_lat_populated": bool(args.with_kmag_trace),
+        "kmag_eq_r_populated": bool(args.with_kmag_trace),
         "time_epoch": "J2000 (POSIX - 946728000.0)",
         "coordinate_system": "KSM",
         "source": "PDS MAG 1-min KSM",
         "boundary_crossings_source": "Jackman et al. 2019",
     }
+    if kmag_stats:
+        extra_attrs["kmag_n_traces"] = kmag_stats["n_traces"]
+        extra_attrs["kmag_n_closed"] = kmag_stats["n_closed"]
+        extra_attrs["kmag_n_event_minutes"] = kmag_stats["n_events_traced_min"]
+        extra_attrs["kmag_trace_every_n"] = args.trace_every
+
     ds = full_mirror_grids_to_xarray(
         grids,
         config,
@@ -375,11 +412,25 @@ def main() -> None:
         title="QP Event Time Grid (round-8 detector)",
         description=(
             "Per-band cumulative event time on the canonical Cassini "
-            "dwell-grid axes. KMAG-traced invariant-latitude schemas "
-            "are not populated in this pass."
+            "dwell-grid axes. KMAG-traced schemas populated when "
+            "--with-kmag-trace was set."
         ),
         extra_attrs=extra_attrs,
     )
+
+    if kmag_grids:
+        import xarray as xr
+
+        from qp.events.binning import kmag_event_grids_to_xarray
+        ds_kmag = kmag_event_grids_to_xarray(
+            kmag_grids, config, bands=bands,
+        )
+        ds_kmag.attrs.clear()
+        # Merge — shared local_time; kmag side adds kmag_inv_lat,
+        # kmag_eq_r dims. Use override on shared coord edges (they're
+        # identical by construction).
+        ds = xr.merge([ds, ds_kmag], compat="override")
+        ds.attrs.update(extra_attrs)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():

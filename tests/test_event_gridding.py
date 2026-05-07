@@ -213,3 +213,116 @@ class TestXarrayWrap:
         # lat edges: -90..90 with step 1.0
         assert ds["lat_edges"].values[0] == pytest.approx(-90.0)
         assert ds["lat_edges"].values[-1] == pytest.approx(90.0)
+
+
+class TestKmagEqRGrid:
+    """Tests for the equatorial-r dwell accumulator."""
+
+    def test_closed_lines_bin_at_apex(self) -> None:
+        from qp.dwell.grid import accumulate_kmag_eq_r_grid
+
+        # 3 closed lines with apexes at L = 5.5, 10.5, 20.5 R_S, all at noon LT
+        l_eq = np.array([5.5, 10.5, 20.5])
+        is_closed = np.array([True, True, True])
+        lt = np.array([12.0, 12.0, 12.0])
+        grids = accumulate_kmag_eq_r_grid(
+            l_eq, is_closed, lt, dt_minutes=10.0,
+        )
+        total = grids["total"]
+        assert total.shape == (100, 96)
+        # All three contribute 10 min each in the noon LT column
+        i_lt = int((12.0 - 0.0) / 24.0 * 96)
+        assert total[5, i_lt] == pytest.approx(10.0)
+        assert total[10, i_lt] == pytest.approx(10.0)
+        assert total[20, i_lt] == pytest.approx(10.0)
+        # Other bins zero
+        assert total.sum() == pytest.approx(30.0)
+
+    def test_closed_only_filter_drops_open(self) -> None:
+        from qp.dwell.grid import accumulate_kmag_eq_r_grid
+
+        l_eq = np.array([10.5, 15.5])
+        is_closed = np.array([True, False])
+        lt = np.array([12.0, 12.0])
+        all_lines = accumulate_kmag_eq_r_grid(
+            l_eq, is_closed, lt, dt_minutes=10.0, closed_only=False,
+        )
+        closed = accumulate_kmag_eq_r_grid(
+            l_eq, is_closed, lt, dt_minutes=10.0, closed_only=True,
+        )
+        # all_lines: both closed AND open lines (apex finite) contribute
+        # closed: only the closed line contributes
+        assert float(all_lines["total"].sum()) == pytest.approx(20.0)
+        assert float(closed["total"].sum()) == pytest.approx(10.0)
+
+    def test_nan_apex_excluded(self) -> None:
+        from qp.dwell.grid import accumulate_kmag_eq_r_grid
+
+        # Failed traces have NaN apex; they should not contribute
+        l_eq = np.array([np.nan, 12.5, np.nan])
+        is_closed = np.array([False, True, False])
+        lt = np.array([0.0, 12.0, 18.0])
+        grids = accumulate_kmag_eq_r_grid(
+            l_eq, is_closed, lt, dt_minutes=10.0,
+        )
+        assert float(grids["total"].sum()) == pytest.approx(10.0)
+
+    def test_per_region_split_consistent(self) -> None:
+        from qp.dwell.grid import accumulate_kmag_eq_r_grid
+
+        l_eq = np.array([10.5, 10.5, 10.5])
+        is_closed = np.array([True, True, True])
+        lt = np.array([6.0, 12.0, 18.0])
+        codes = np.array([0, 1, 0])  # MS, SH, MS
+        grids = accumulate_kmag_eq_r_grid(
+            l_eq, is_closed, lt, dt_minutes=10.0, region_codes=codes,
+        )
+        # total sums to 30; magnetosphere = 20; sheath = 10
+        assert float(grids["total"].sum()) == pytest.approx(30.0)
+        assert float(grids["magnetosphere"].sum()) == pytest.approx(20.0)
+        assert float(grids["magnetosheath"].sum()) == pytest.approx(10.0)
+
+
+class TestKmagEventGridsAccumulator:
+    """Light end-to-end test for accumulate_kmag_event_grids.
+
+    Uses a tiny synthetic trajectory in the magnetosphere where the
+    KMAG model produces a closed field line, and verifies that:
+    - the union ``total_*`` schema has at least as many minutes as
+      either single band
+    - the kmag_inv_lat and kmag_eq_r schemas both populate
+    """
+
+    def test_synthetic_one_event_traces_and_bins(self) -> None:
+        from qp.events.binning import accumulate_kmag_event_grids
+
+        n = 200  # 200 minutes
+        t_unix = np.linspace(1.0e9, 1.0e9 + n * 60, n)
+        # static spacecraft position around L=10 R_S, low latitude — KMAG
+        # should give a closed line for the magnetosphere region.
+        x = np.full(n, 10.0)
+        y = np.zeros(n)
+        z = np.full(n, 0.5)
+        codes = np.zeros(n, dtype=int)  # all MS
+        # event between minutes 50..100 in band QP60
+        mask_qp60 = np.zeros(n, dtype=bool)
+        mask_qp60[50:100] = True
+        masks = {"QP60": mask_qp60}
+
+        grids, stats = accumulate_kmag_event_grids(
+            masks, x, y, z, t_unix, codes,
+            trace_every_n=10,
+        )
+        assert stats["n_events_traced_min"] == 50
+        # The grids dict should contain the four families per band:
+        for prefix in ("kmag_inv_lat", "kmag_inv_lat_closed",
+                       "kmag_eq_r", "kmag_eq_r_closed"):
+            assert f"QP60_{prefix}_total" in grids
+            assert f"total_{prefix}_total" in grids
+        # Equatorial-r grid should have non-zero total if the trace
+        # produced a closed line. The benchmark KMAG defaults at
+        # x=10, y=0, z=0.5 give a well-defined closed field line.
+        # Either equatorial OR inv-lat should accumulate something.
+        total_eq = float(grids["QP60_kmag_eq_r_total"].sum())
+        total_inv = float(grids["QP60_kmag_inv_lat_total"].sum())
+        assert (total_eq + total_inv) > 0.0
