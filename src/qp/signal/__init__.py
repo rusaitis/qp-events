@@ -6,8 +6,8 @@ from qp.signal.fft import (
     estimate_background,
     estimate_background_powerlaw,
 )
-from qp.signal.wavelet import morlet_cwt, cwt_power, cwt_averaged_spectrum
-from qp.signal.power_ratio import compute_power_ratios, freq_to_period_minutes
+from qp.signal.wavelet import morlet_cwt, cwt_power
+from qp.signal.power_ratio import compute_power_ratios
 from qp.signal.cross_correlation import (
     cross_correlate,
     phase_shift,

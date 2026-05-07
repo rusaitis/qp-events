@@ -81,7 +81,3 @@ def compute_power_ratios(
     }
 
 
-def freq_to_period_minutes(freq: ArrayLike) -> np.ndarray:
-    """Convert frequency (Hz) to period (minutes)."""
-    freq = np.asarray(freq)
-    return np.where(freq > 0, 1.0 / (freq * 60), np.inf)

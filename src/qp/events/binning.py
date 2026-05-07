@@ -32,7 +32,6 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
@@ -525,23 +524,6 @@ def grids_to_xarray(
         attrs.update(extra_attrs)
 
     return xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)
-
-
-def save_event_time_zarr(
-    grids: dict[str, np.ndarray],
-    config: DwellGridConfig,
-    path: Path,
-    **xr_kwargs,
-) -> Path:
-    r"""Persist event-time grids to a zarr matching the dwell layout."""
-    ds = grids_to_xarray(grids, config, **xr_kwargs)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        # Remove the old zarr to avoid mixing schemas
-        import shutil
-        shutil.rmtree(path)
-    ds.to_zarr(path, mode="w", consolidated=False)
-    return path
 
 
 # ----------------------------------------------------------------------

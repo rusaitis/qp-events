@@ -1,73 +1,124 @@
-"""Phase 6.6 — PPO phase folding of QP60 wave events.
+"""Figure 11 (round-8) — QP wave events folded by SLS5 PPO phase.
 
-Bins QP60 event peak times by SLS5N phase (and SLS5S phase) and plots
-the resulting histogram. The published Fig 9 shows the 10.7 h
-modulation indirectly via wave-train separation times; this figure
-shows the same modulation directly in PPO phase space, which is what
-the proposed driver theory (periodic magnetotail flapping at the PPO
-period) predicts.
+The published Fig 9 shows the 10.7 h modulation indirectly via
+wave-train separation times. This figure shows the same modulation
+**directly** in PPO phase space, which is what the proposed driver
+theory (periodic magnetotail flapping at the PPO period) predicts: a
+double-peaked distribution with maxima near phases at which the tail
+crosses the magnetic equator.
+
+Reads ``Output/events_round8.parquet`` (round-8 detector, 1881 events)
+and bins peak times against ``sls5_phase_n`` and ``sls5_phase_s``
+(degrees, already populated by the sweep). For each QP band we plot
+two histograms (SLS5N, SLS5S) with the uniform-distribution reference
+line and Rayleigh-test p-value annotated.
+
+Output: ``Output/figures/figure11_ppo_phase_fold.png``
 """
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
+from qp.plotting.style import use_paper_style  # noqa: E402
+
+log = logging.getLogger(__name__)
+
+BANDS = ("QP30", "QP60", "QP120")
+BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
+
+
+def _rayleigh_p(phases_deg: np.ndarray) -> float:
+    r"""Rayleigh test for non-uniformity on the circle.
+
+    Returns the p-value under the null hypothesis of a uniform
+    distribution on $[0, 2\pi)$. Small p means the distribution has a
+    preferred direction — i.e. PPO phase modulation.
+    """
+    n = phases_deg.size
+    if n == 0:
+        return float("nan")
+    phi = np.deg2rad(phases_deg)
+    R = np.hypot(np.cos(phi).sum(), np.sin(phi).sum()) / n
+    # Wilkie (1983) approximation, accurate for n >= 10
+    z = n * R**2
+    p = np.exp(-z) * (1.0 + (2 * z - z**2) / (4 * n))
+    return float(p)
+
 
 def main() -> None:
-    df = pd.read_parquet(_PROJECT_ROOT / "Output" / "events_qp_v1.parquet")
-    print(f"Total events: {len(df)}")
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    by_band = {b: df[df["band"] == b] for b in ("QP30", "QP60", "QP120")}
-    bins = np.linspace(0, 360, 25)  # 15° bins
+    parquet = _PROJECT_ROOT / "Output" / "events_round8.parquet"
+    if not parquet.exists():
+        raise SystemExit(f"missing {parquet} — run sweep_events_round8.py first")
 
-    fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True, sharey=True)
-    for col, band in enumerate(("QP30", "QP60", "QP120")):
+    df = pd.read_parquet(parquet)
+    log.info("loaded %d events from %s", len(df), parquet.name)
+
+    by_band = {b: df[df["band"] == b] for b in BANDS}
+    bins = np.linspace(0, 360, 25)  # 15 deg bins
+
+    use_paper_style()
+    fig, axes = plt.subplots(
+        2, len(BANDS), figsize=(13, 7), sharex=True, sharey="row",
+        constrained_layout=True,
+    )
+
+    for col, band in enumerate(BANDS):
         sub = by_band[band]
-        for row, key in enumerate(("ppo_phase_n_deg", "ppo_phase_s_deg")):
+        for row, key in enumerate(("sls5_phase_n", "sls5_phase_s")):
             ax = axes[row, col]
-            phases = sub[key].dropna().values
-            if len(phases) == 0:
+            phases = sub[key].dropna().to_numpy()
+            if phases.size == 0:
                 ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
                         ha="center", va="center")
                 continue
             counts, edges = np.histogram(phases, bins=bins)
             centers = 0.5 * (edges[:-1] + edges[1:])
-            uniform = len(phases) / (len(bins) - 1)
-            ax.bar(centers, counts, width=14, color="#ff6b6b" if row == 0 else "#4ecdc4",
-                   alpha=0.8, edgecolor="black", lw=0.3)
+            uniform = phases.size / (bins.size - 1)
+            color = BAND_COLORS[band] if row == 0 else "#7fcdcd"
+            ax.bar(centers, counts, width=14, color=color,
+                   alpha=0.85, edgecolor="black", lw=0.3)
             ax.axhline(uniform, color="grey", lw=1, ls="--",
                        label="uniform")
             ax.set_xlim(0, 360)
             ax.set_xticks([0, 90, 180, 270, 360])
             if row == 1:
-                ax.set_xlabel("PPO phase (deg)")
+                ax.set_xlabel("PPO phase [deg]")
             label = "SLS5N" if row == 0 else "SLS5S"
-            ax.set_title(f"{band} — {label}", fontsize=11)
+            p_ray = _rayleigh_p(phases)
+            ax.set_title(
+                f"{band} — {label}  (n={phases.size}, p$_R$={p_ray:.2g})",
+                fontsize=10,
+            )
             if col == 0:
                 ax.set_ylabel("Event count")
             ax.grid(alpha=0.3)
     axes[0, 0].legend(fontsize=9, loc="upper right")
 
-    fig.suptitle("Figure 11 (Phase 6.6) — QP wave events vs SLS5 PPO phase",
-                 fontsize=13)
-    fig.tight_layout()
+    fig.suptitle(
+        "Figure 11 (round-8) — QP wave events vs SLS5 PPO phase",
+        fontsize=12,
+    )
     out_dir = _PROJECT_ROOT / "Output" / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "figure11_ppo_phase_fold.png"
     fig.savefig(out, dpi=180, bbox_inches="tight")
     plt.close(fig)
-    print(f"Wrote {out}")
+    log.info("wrote %s", out)
 
 
 if __name__ == "__main__":

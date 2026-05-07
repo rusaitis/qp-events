@@ -98,14 +98,3 @@ def cwt_power(
     return freq, time, np.abs(cwt_matrix) ** 2
 
 
-def cwt_averaged_spectrum(
-    data: ArrayLike,
-    dt: float = 60.0,
-    **kwargs,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute time-averaged CWT power spectrum.
-
-    Returns freq and mean power (averaged over time).
-    """
-    freq, _, power = cwt_power(data, dt, **kwargs)
-    return freq, np.mean(power, axis=1)

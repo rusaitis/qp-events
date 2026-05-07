@@ -7,12 +7,15 @@ Modernized from boundary_crossings.py.
 from __future__ import annotations
 
 import datetime
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 import qp
+
+log = logging.getLogger(__name__)
 
 # Location codes
 MS = 0  # magnetosphere
@@ -182,5 +185,5 @@ def export_crossings(
     if output_path is None:
         output_path = qp.DATA_PRODUCTS / "CROSSINGS.npy"
     np.save(output_path, arr)
-    print(f"Saved crossings to {output_path} — shape {arr.shape}")
+    log.info("Saved crossings to %s — shape %s", output_path, arr.shape)
     return arr
