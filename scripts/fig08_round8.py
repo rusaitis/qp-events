@@ -16,7 +16,6 @@ Output: ``Output/figures/figure8_round8.png``
 from __future__ import annotations
 
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -26,7 +25,6 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from qp.plotting.style import use_paper_style  # noqa: E402
 

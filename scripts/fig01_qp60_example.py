@@ -9,7 +9,6 @@ Referee notes: dark background, ephemeris in caption.
 """
 
 import sys
-import pickle
 import datetime
 
 import numpy as np
@@ -37,7 +36,6 @@ for mod_path in _stub_modules:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
 # Now safe to import qp
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.coords.mfa import to_mfa

@@ -17,14 +17,12 @@ Usage
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 _project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_project_root / "src"))
 
 from qp.dwell.io import load_zarr
 from qp.plotting.style import use_paper_style

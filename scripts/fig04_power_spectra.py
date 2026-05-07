@@ -14,7 +14,6 @@ import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import matplotlib.ticker as mticker
 
 from pathlib import Path
 
@@ -31,7 +30,6 @@ for mod_path in _stub_modules:
     for cls_name in _stub_classes:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.coords.mfa import to_mfa
@@ -39,7 +37,7 @@ from qp.signal.timeseries import running_average
 from qp.signal.power_ratio import compute_power_ratios
 from qp.plotting.style import (
     FIELD_COLORS, FIELD_COLORS_SPECTRA, use_paper_style, style_axes,
-    draw_period_lines, plot_segmented, BG_COLOR,
+    draw_period_lines, plot_segmented,
 )
 
 

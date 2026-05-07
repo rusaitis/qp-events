@@ -11,7 +11,6 @@ import math
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import numpy as np
 
 MODE_COLORS = {
     1: "#1f77b4",  # blue

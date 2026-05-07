@@ -23,14 +23,12 @@ Usage
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, zoom
 
 _project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_project_root / "src"))
 
 
 def main():

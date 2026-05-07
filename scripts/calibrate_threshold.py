@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import csv
 import datetime
-import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,7 +39,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from qp.events.bands import QP_BANDS
 from qp.events.catalog import WaveTemplate

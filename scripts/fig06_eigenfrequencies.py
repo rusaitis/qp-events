@@ -35,7 +35,6 @@ for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
                      "WaveSignal", "Wave"]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.signal.power_ratio import compute_power_ratios

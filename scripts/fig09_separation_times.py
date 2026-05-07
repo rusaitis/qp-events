@@ -9,7 +9,6 @@ peaks, then computes separations between consecutive peaks.
 
 import sys
 import types
-import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -31,12 +30,10 @@ for mod_path in _stub_modules:
                      "WaveSignal", "Wave"]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.events.detector import detect_wave_packets
 from qp.events.wave_packets import compute_separations, separation_statistics, separation_histogram
-from qp.plotting.style import use_paper_style, BG_COLOR
 
 
 # QP60 band: 50-70 min (60±10 min as stated in paper)

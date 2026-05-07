@@ -47,14 +47,34 @@ from qp.events.catalog import WaveEvent
 
 
 # ----------------------------------------------------------------------
-# Bin index helper (mirrors qp.dwell.grid._bin_index)
+# Coordinate quantization + event-window helpers
 # ----------------------------------------------------------------------
+
+_UNIX_EPOCH = np.datetime64("1970-01-01T00:00:00")
 
 
 def _bin_index(value: float, vmin: float, vmax: float, n: int) -> int:
+    """Scalar version: map a single value to a bin index in ``[0, n)``."""
     frac = (value - vmin) / (vmax - vmin)
     idx = int(math.floor(frac * n))
     return max(0, min(n - 1, idx))
+
+
+def _bin_floor(values: np.ndarray, vmin: float, vmax: float, n: int) -> np.ndarray:
+    """Vectorised version: ``np.floor((v - vmin) / (vmax - vmin) * n)``,
+    clipped to ``[0, n - 1]`` and cast to int."""
+    idx = np.floor((values - vmin) / (vmax - vmin) * n).astype(int)
+    return np.clip(idx, 0, n - 1)
+
+
+def _event_time_window(ev: WaveEvent) -> tuple[float, float]:
+    """Return ``(t_from, t_to)`` of an event as Unix-epoch seconds (float)."""
+    dt_from = np.datetime64(ev.date_from) - _UNIX_EPOCH
+    dt_to = np.datetime64(ev.date_to) - _UNIX_EPOCH
+    return (
+        float(dt_from.astype("timedelta64[s]").astype(float)),
+        float(dt_to.astype("timedelta64[s]").astype(float)),
+    )
 
 
 def _in_range(
@@ -222,7 +242,6 @@ def bin_events_walking(
     grids["total"] = np.zeros(config.shape, dtype=np.float64)
 
     stats = BinningStats()
-    epoch = np.datetime64("1970-01-01T00:00:00")
 
     # Phase 1: for each segment, build per-minute boolean masks for
     # each band so we can compute the union ("total") correctly.
@@ -241,12 +260,7 @@ def bin_events_walking(
             seg_event_masks[seg_id] = {
                 b: np.zeros(n, dtype=bool) for b in QP_BAND_NAMES
             }
-        t_from = (
-            np.datetime64(ev.date_from) - epoch
-        ).astype("timedelta64[s]").astype(float)
-        t_to = (
-            np.datetime64(ev.date_to) - epoch
-        ).astype("timedelta64[s]").astype(float)
+        t_from, t_to = _event_time_window(ev)
         time_mask = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
         if sp.central_mask is not None:
             time_mask &= sp.central_mask
@@ -287,12 +301,7 @@ def bin_events_walking(
             continue
 
         sp = segment_positions[seg_id]
-        t_from = (
-            np.datetime64(ev.date_from) - epoch
-        ).astype("timedelta64[s]").astype(float)
-        t_to = (
-            np.datetime64(ev.date_to) - epoch
-        ).astype("timedelta64[s]").astype(float)
+        t_from, t_to = _event_time_window(ev)
         mask = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
         if sp.central_mask is not None:
             mask = mask & sp.central_mask
@@ -353,24 +362,9 @@ def _accumulate_mask(
             stats.n_out_of_range += 1
         return None
 
-    i_r = np.clip(
-        np.floor(
-            (rs - config.r_range[0])
-            / (config.r_range[1] - config.r_range[0]) * config.n_r,
-        ).astype(int), 0, config.n_r - 1,
-    )
-    i_lat = np.clip(
-        np.floor(
-            (lats - config.lat_range[0])
-            / (config.lat_range[1] - config.lat_range[0]) * config.n_lat,
-        ).astype(int), 0, config.n_lat - 1,
-    )
-    i_lt = np.clip(
-        np.floor(
-            (lts - config.lt_range[0])
-            / (config.lt_range[1] - config.lt_range[0]) * config.n_lt,
-        ).astype(int), 0, config.n_lt - 1,
-    )
+    i_r = _bin_floor(rs, *config.r_range, config.n_r)
+    i_lat = _bin_floor(lats, *config.lat_range, config.n_lat)
+    i_lt = _bin_floor(lts, *config.lt_range, config.n_lt)
 
     flat = np.ravel_multi_index((i_r, i_lat, i_lt), config.shape)
     counts = np.bincount(flat, minlength=math.prod(config.shape))
@@ -429,24 +423,9 @@ def accumulate_segment_dwell(
         rs, lats, lts = rs[in_r], lats[in_r], lts[in_r]
         if rs.size == 0:
             continue
-        i_r = np.clip(
-            np.floor(
-                (rs - config.r_range[0])
-                / (config.r_range[1] - config.r_range[0]) * config.n_r,
-            ).astype(int), 0, config.n_r - 1,
-        )
-        i_lat = np.clip(
-            np.floor(
-                (lats - config.lat_range[0])
-                / (config.lat_range[1] - config.lat_range[0]) * config.n_lat,
-            ).astype(int), 0, config.n_lat - 1,
-        )
-        i_lt = np.clip(
-            np.floor(
-                (lts - config.lt_range[0])
-                / (config.lt_range[1] - config.lt_range[0]) * config.n_lt,
-            ).astype(int), 0, config.n_lt - 1,
-        )
+        i_r = _bin_floor(rs, *config.r_range, config.n_r)
+        i_lat = _bin_floor(lats, *config.lat_range, config.n_lat)
+        i_lt = _bin_floor(lts, *config.lt_range, config.n_lt)
         flat = np.ravel_multi_index(
             (i_r, i_lat, i_lt), config.shape,
         )
@@ -630,7 +609,6 @@ def accumulate_full_mirror(
     events_list = list(events)
 
     seg_masks: dict[int, dict[str, np.ndarray]] = {}
-    epoch = np.datetime64("1970-01-01T00:00:00")
     for ev in events_list:
         seg_id = ev.segment_id
         if seg_id is None or seg_id not in segment_positions:
@@ -651,12 +629,7 @@ def accumulate_full_mirror(
         sp = segment_positions[seg_id]
         n = sp.times_unix.size
         seg_masks.setdefault(seg_id, {b: np.zeros(n, dtype=bool) for b in bands})
-        t_from = (
-            np.datetime64(ev.date_from) - epoch
-        ).astype("timedelta64[s]").astype(float)
-        t_to = (
-            np.datetime64(ev.date_to) - epoch
-        ).astype("timedelta64[s]").astype(float)
+        t_from, t_to = _event_time_window(ev)
         m = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
         if sp.central_mask is not None:
             m &= sp.central_mask

@@ -28,11 +28,9 @@ for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
                      "WaveSignal", "Wave"]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
-from qp.plotting.style import use_paper_style, style_axes, BG_COLOR
-from qp.fieldline.tracer import trace_dipole_fieldline_bidirectional, conjugate_latitude
+from qp.plotting.style import use_paper_style, style_axes
 
 
 def load_orbit_data():

@@ -24,9 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
-import sys
 import time
-import types
 from dataclasses import dataclass
 from multiprocessing import get_context
 from pathlib import Path
@@ -34,32 +32,12 @@ from pathlib import Path
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
-
-
-# DO NOT REMOVE: stub names match the module paths used when the legacy
-# DataProducts/*.npy arrays were pickled. Removing them silently breaks
-# np.load() of those arrays.
-def _register_pickle_stubs() -> None:
-    stub_classes = [
-        "SignalSnapshot", "NewSignal", "Interval", "FFT_list",
-        "WaveSignal", "Wave",
-    ]
-    stub_modules = [
-        "__main__", "data_sweeper", "mag_fft_sweeper",
-        "cassinilib", "cassinilib.NewSignal",
-    ]
-    for mod_path in stub_modules:
-        if mod_path not in sys.modules:
-            sys.modules[mod_path] = types.ModuleType(mod_path)
-        for cls in stub_classes:
-            setattr(sys.modules[mod_path], cls, type(cls, (), {}))
-
-
-_register_pickle_stubs()
 
 
 import qp  # noqa: E402
+from qp.io import register_legacy_pickle_stubs  # noqa: E402
+
+register_legacy_pickle_stubs()
 from qp.events.detector import (  # noqa: E402
     DetectedEvent,
     MAX_MVA_PARALLEL_FRACTION,

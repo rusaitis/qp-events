@@ -30,14 +30,12 @@ import argparse
 import datetime
 import logging
 import os
-import sys
 from pathlib import Path
 
 import numpy as np
 
 # Ensure src/ is on path when running as script
 _project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_project_root / "src"))
 
 from qp.coords.ksm import local_time as compute_lt
 from qp.dwell.grid import (

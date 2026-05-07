@@ -9,7 +9,6 @@ Referee: white dashed line at 50-min period.
 
 import sys
 import types
-import datetime
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,7 +29,6 @@ for mod_path in _stub_modules:
     for cls_name in _stub_classes:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.signal.power_ratio import compute_power_ratios

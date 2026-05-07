@@ -31,3 +31,4 @@ from qp.io.crossings import (
     SW,
     UNKNOWN,
 )
+from qp.io.legacy_pickle import register_stubs as register_legacy_pickle_stubs

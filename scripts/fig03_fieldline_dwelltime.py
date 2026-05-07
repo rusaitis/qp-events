@@ -7,7 +7,6 @@ right = noon (12 LT ± 2h). Uses realistic KMAG field model.
 Referee: dark background.
 """
 
-import sys
 import os
 import datetime
 
@@ -19,7 +18,6 @@ import matplotlib.collections as mcoll
 from pathlib import Path
 
 _project_root = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
 from qp.analysis.filtering import value_to_bin

@@ -10,8 +10,6 @@ Output: ``Output/figures/figure_waveform_gallery_{band}.png``
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 
 import matplotlib
@@ -22,32 +20,17 @@ import numpy as np
 import pandas as pd
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 
-# DO NOT REMOVE: stub names match the module paths used when the legacy
-# DataProducts/*.npy arrays were pickled. Removing them silently breaks
-# np.load() of those arrays.
-def _register_pickle_stubs() -> None:
-    stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list",
-                    "WaveSignal", "Wave"]
-    stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper",
-                    "cassinilib", "cassinilib.NewSignal"]
-    for mod_path in stub_modules:
-        if mod_path not in sys.modules:
-            sys.modules[mod_path] = types.ModuleType(mod_path)
-        for cls in stub_classes:
-            setattr(sys.modules[mod_path], cls, type(cls, (), {}))
+from qp.io import register_legacy_pickle_stubs  # noqa: E402
 
-
-_register_pickle_stubs()
+register_legacy_pickle_stubs()
 
 import datetime  # noqa: E402
 
 from qp.events.bands import QP_BANDS  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 from qp.signal.morphology import (  # noqa: E402
-    amplitude_growth_rate,
     band_envelope,
     instantaneous_frequency,
 )

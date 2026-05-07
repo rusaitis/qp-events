@@ -13,7 +13,6 @@ Output: ``Output/figures/figure_polarization_vs_latitude.png``
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -24,7 +23,6 @@ import pandas as pd
 from scipy import stats
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 from qp.plotting.style import use_paper_style  # noqa: E402
 

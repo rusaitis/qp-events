@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -44,7 +43,6 @@ from matplotlib.colors import LogNorm
 from matplotlib.patches import Circle
 
 _project_root = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_project_root / "src"))
 
 from qp.plotting.style import save_figure, use_paper_style
 

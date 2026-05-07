@@ -12,7 +12,6 @@ import types
 
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from scipy import signal as sig
 
 from pathlib import Path
@@ -30,10 +29,9 @@ for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
                      "WaveSignal", "Wave"]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
-sys.path.insert(0, str(_project_root / "src"))
 
 import qp
-from qp.plotting.style import use_paper_style, style_axes, BG_COLOR
+from qp.plotting.style import use_paper_style, style_axes
 
 
 def running_phase(b_perp1, b_perp2, dt=60.0, half_window=61):

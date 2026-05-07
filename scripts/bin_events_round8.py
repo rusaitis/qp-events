@@ -45,14 +45,12 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
-import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_PROJECT_ROOT / "src"))
 
 import qp  # noqa: E402
 from qp.dwell.grid import (  # noqa: E402
