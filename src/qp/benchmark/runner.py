@@ -77,6 +77,17 @@ MIN_MVA_LAMBDA_RATIO: float = 5.0
 #: ``_bonferroni_n_sigma``); this constant is the only knob.
 SEGMENT_FWER_ALPHA: float = 0.01
 
+#: Round 7 / M1 — family-wise error rate for the matched-filter gate.
+#:
+#: The matched filter is the Neyman-Pearson optimal detector for a
+#: known waveform in coloured Gaussian noise (Helstrom 1968). Per
+#: detection we compute the matched-filter peak SNR vs a
+#: Gaussian-windowed sine at the detected period, with the segment's
+#: power-law background as the prewhitening kernel. The SNR threshold
+#: is derived from this FWER applied across all candidate detections
+#: (``_matched_filter_threshold``); the single knob is alpha.
+MATCHED_FILTER_FWER_ALPHA: float = 0.01
+
 
 def _bonferroni_n_sigma(
     n_time: int,
@@ -122,6 +133,36 @@ def _bonferroni_n_sigma(
     return float(norm.isf(alpha / v_indep))
 
 
+def _matched_filter_threshold(
+    n_candidates: int,
+    n_components: int = 2,
+    alpha: float = MATCHED_FILTER_FWER_ALPHA,
+) -> float:
+    r"""SNR threshold for matched filter at FWER ``alpha`` over the candidate set.
+
+    For each candidate detection we evaluate the matched-filter peak
+    SNR on each of the two transverse components and take the maximum.
+    Under H0 (no wave) the prewhitened SNR is approximately N(0, 1),
+    so the family-wise false-positive rate over ``n_candidates *
+    n_components`` independent tests is controlled by setting the
+    per-test p-value to :math:`\alpha / (n_{\mathrm{cand}}
+    n_{\mathrm{comp}})`. The corresponding Gaussian quantile is the
+    threshold.
+
+    A typical 36-h segment yields 5-30 candidates after deduplication;
+    with two transverse components the threshold lands around
+    :math:`3.5 \sigma` for :math:`\alpha = 0.01`. This keeps coherent
+    waves (matched-filter SNR :math:`\geq 8\sigma` for any plausible
+    real packet) and rejects compressional decoys (no transverse
+    signal: SNR ~ 1) and broadband bursts (template mismatch at any
+    single period).
+    """
+    from scipy.stats import norm
+
+    n = max(int(n_candidates) * max(int(n_components), 1), 1)
+    return float(norm.isf(alpha / n))
+
+
 def _detect_events_in_dataset(
     t: np.ndarray,
     fields: np.ndarray,
@@ -131,6 +172,8 @@ def _detect_events_in_dataset(
     from qp.events.bands import get_band
     from qp.events.detector import detect_wave_packets_multi
     from qp.events.threshold import wavelet_sigma_mask
+    from qp.signal.fft import estimate_background_powerlaw, welch_psd
+    from qp.signal.matched_filter import matched_filter_peak_snr
     from qp.signal.polarization import (
         degree_of_polarization,
         mva_intermediate_minimum_ratio,
@@ -159,6 +202,21 @@ def _detect_events_in_dataset(
     n_sigma = _bonferroni_n_sigma(power1.shape[1], dt, freq)
     mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
     mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+
+    # M1: segment-level prewhitening kernel for the matched-filter gate.
+    # Welch PSD with 12-h subsegments at 6-h overlap on a 36-h segment
+    # yields ~5 averaged sub-spectra. Power-law fit excludes the QP
+    # bands so the background reflects the noise floor only.
+    nperseg = min(12 * 60, power1.shape[1])
+    noverlap = nperseg // 2
+    try:
+        freq_psd1, psd1 = welch_psd(b_perp1, dt=dt, nperseg=nperseg, noverlap=noverlap)
+        bg1 = estimate_background_powerlaw(psd1, freq_psd1)
+        freq_psd2, psd2 = welch_psd(b_perp2, dt=dt, nperseg=nperseg, noverlap=noverlap)
+        bg2 = estimate_background_powerlaw(psd2, freq_psd2)
+    except Exception:  # noqa: BLE001
+        # Welch failed (e.g., segment too short); skip the M1 gate.
+        freq_psd1 = bg1 = freq_psd2 = bg2 = None
 
     epoch = datetime.datetime(2000, 1, 1)
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
@@ -199,10 +257,13 @@ def _detect_events_in_dataset(
 
     # Per-detection physical gates. Each rejects a different decoy
     # mode:
-    #   R1 (Q-factor)   — coherent broadband transients (FGM steps)
-    #   N1 (MVA ratio)  — non-planar perturbations (3-axis steps)
-    #   S1 (Stokes d)   — incoherent broadband bursts
+    #   R1 (Q-factor)         — coherent broadband transients (FGM steps)
+    #   N1 (MVA ratio)        — non-planar perturbations (3-axis steps)
+    #   S1 (Stokes d)         — incoherent broadband bursts
+    #   M1 (matched-filter)   — compressional / off-template waveforms
     n_time = cwt1.shape[1]
+    # M1 threshold derived from the candidate count (Bonferroni FWER).
+    mf_threshold = _matched_filter_threshold(len(merged))
     kept: list[WavePacketPeak] = []
     for peak in merged:
         if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
@@ -248,6 +309,32 @@ def _detect_events_in_dataset(
         d = degree_of_polarization(c1_window.ravel(), c2_window.ravel())
         if d < MIN_DEGREE_OF_POLARIZATION:
             continue
+        # M1: matched-filter peak SNR vs Gaussian-windowed sine
+        # template at the detected period, prewhitened with the
+        # segment's power-law background. Take the max across the two
+        # transverse components: linear-pol waves only excite one,
+        # circular waves excite both, compressional decoys excite
+        # neither (so max is bounded by H0 noise ~ N(0,1)).
+        if bg1 is not None and bg2 is not None:
+            peak_idx = int(
+                (peak.peak_time - epoch).total_seconds() / dt
+            )
+            peak_idx = int(np.clip(peak_idx, 0, n_time - 1))
+            try:
+                snr1 = matched_filter_peak_snr(
+                    b_perp1, dt=dt, period=peak.period_sec,
+                    t_peak_idx=peak_idx,
+                    background=bg1, freq=freq_psd1,
+                )
+                snr2 = matched_filter_peak_snr(
+                    b_perp2, dt=dt, period=peak.period_sec,
+                    t_peak_idx=peak_idx,
+                    background=bg2, freq=freq_psd2,
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if max(snr1, snr2) < mf_threshold:
+                continue
         kept.append(peak)
 
     return kept
