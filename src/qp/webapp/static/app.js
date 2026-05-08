@@ -22,6 +22,12 @@ const REGION_COLORS = {
   unknown:       "#555555",
 };
 const BAND_COLORS = { QP30: "#80c0ff", QP60: "#ffb000", QP120: "#f06090" };
+// Indexed by uPlot series index (0 = x). Used by cursor.points.fill — uPlot
+// wraps series.stroke into a function internally, so we cannot read it back
+// at runtime; we keep the literal hex strings here instead.
+const WAVE_CURSOR_COLORS = [
+  null, FIELD_COLORS.par, FIELD_COLORS.perp1, FIELD_COLORS.perp2, FIELD_COLORS.tot,
+];
 
 // Rolling-mean window per band (minutes ≈ 4× central period). Removing
 // this trend makes the small QP perturbations visible against the
@@ -573,14 +579,12 @@ function ensureWavePlot(target) {
     title: "MFA components",
     cursor: {
       focus: { prox: 24 },
-      // Cursor circle on the focused curve in that curve's own color.
-      // Use a thick colored border (uPlot's default fill is hollow); the
-      // border-color is what's visible on .u-cursor-pt elements.
+      // Solid disk, no border, in the curve's own color. uPlot wraps
+      // series.stroke into a function internally, so we look up the literal
+      // color from WAVE_CURSOR_COLORS rather than u.series[sIdx].stroke.
       points: {
-        size:  10,
-        width: 3,
-        stroke: (u, sIdx) => u.series[sIdx].stroke,
-        fill:   (u, sIdx) => u.series[sIdx].stroke,
+        size: 10,
+        fill: (_u, sIdx) => WAVE_CURSOR_COLORS[sIdx],
       },
     },
     focus: { alpha: 0.20 },
