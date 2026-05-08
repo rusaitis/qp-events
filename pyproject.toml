@@ -26,6 +26,10 @@ dev = [
     "ruff",
     "mypy",
 ]
+webapp = [
+    "fastapi",
+    "uvicorn[standard]",
+]
 
 [build-system]
 requires = ["hatchling"]

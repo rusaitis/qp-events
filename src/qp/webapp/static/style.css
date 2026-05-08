@@ -1,0 +1,518 @@
+/* QP Event Review — dark paper theme.
+   Colors mirror src/qp/plotting/style.py (FIELD_COLORS, LOC_COLORS, BG=#171717). */
+
+:root {
+  --bg:        #171717;
+  --bg-soft:   #1f1f1f;
+  --panel:    #1c1c1c;
+  --border:   #2c2c2c;
+  --text:     #e8e8e8;
+  --muted:    #9b9b9b;
+  --accent:   #4dd2ff;
+
+  --c-par:    #DC267F;
+  --c-perp1:  #FFB000;
+  --c-perp2:  #FE6100;
+  --c-tot:    #648FFF;
+
+  --r-ms: #12d5ae;
+  --r-sh: #f29539;
+  --r-sw: #f26b59;
+  --r-uk: #555;
+
+  --b-qp30:  #80c0ff;
+  --b-qp60:  #ffb000;
+  --b-qp120: #f06090;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+button, input, select {
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  font-size: 13px;
+  border-radius: 4px;
+  font-family: inherit;
+}
+button { cursor: pointer; }
+button:hover { border-color: #555; }
+button.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+.toggles { display: inline-flex; gap: 4px; margin-left: 8px; }
+.toggle {
+  font-size: 11px;
+  padding: 3px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+}
+.toggle:hover { color: var(--text); border-color: #3a3a3a; }
+/* Status-LED dot — always present so the button geometry never shifts;
+   subtle gray when off, glowing slate-blue when on. */
+.toggle::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3a4048;
+  margin-right: 6px;
+  vertical-align: 1px;
+  transition: background 140ms ease, box-shadow 140ms ease;
+}
+.toggle.active,
+button.toggle.active {
+  color: var(--text);
+  background: #232b33;
+  border-color: #3a4651;
+}
+.toggle.active::before {
+  background: #6ee0b1;
+  box-shadow: 0 0 6px rgba(110, 224, 177, 0.85),
+              0 0 2px rgba(110, 224, 177, 1);
+}
+input[type=number] { width: 80px; }
+select { padding: 4px 6px; }
+
+label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.tabs, .subtabs { display: flex; gap: 4px; }
+.tab, .subtab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 14px;
+  border-radius: 4px 4px 0 0;
+}
+.tab.active, .subtab.active {
+  background: var(--bg-soft);
+  border-color: var(--border);
+  border-bottom-color: var(--bg-soft);
+  color: var(--text);
+}
+.status { color: var(--muted); font-size: 11px; }
+
+.panel {
+  padding: 12px 16px;
+}
+.panel.hidden, .subpanel.hidden, .hidden { display: none !important; }
+
+.timeline-wrap {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+}
+#timeline {
+  width: 100%;
+  display: block;
+}
+.timeline-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 2px; }
+.dot.qp30  { background: var(--b-qp30); }
+.dot.qp60  { background: var(--b-qp60); }
+.dot.qp120 { background: var(--b-qp120); }
+.sep { width: 12px; }
+.region-swatch {
+  display: inline-block; width: 14px; height: 8px; border-radius: 2px; opacity: 0.6;
+}
+.region-swatch.ms { background: var(--r-ms); }
+.region-swatch.sh { background: var(--r-sh); }
+.region-swatch.sw { background: var(--r-sw); }
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.filters .count { color: var(--muted); margin-left: auto; }
+.filters .presets { display: flex; gap: 4px; }
+
+.meta-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.meta-secondary { color: var(--muted); font-size: 12px; }
+
+.selection-envelope {
+  display: grid;
+  grid-template-columns: 2fr 1.4fr;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+.sel-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.sel-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.sel-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+.pill-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pill-group-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.filter-pill {
+  --pill-color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  background: transparent;
+  border: 1px solid var(--pill-color);
+  color: var(--pill-color);
+  opacity: 0.55;
+  font-family: inherit;
+  cursor: pointer;
+}
+.filter-pill:hover { opacity: 1; }
+.filter-pill.active,
+button.filter-pill.active {
+  opacity: 1;
+  background: var(--pill-color);
+  border-color: var(--pill-color);
+  color: #0e0e0e;
+}
+.filter-pill[data-band=QP30]            { --pill-color: var(--b-qp30); }
+.filter-pill[data-band=QP60]            { --pill-color: var(--b-qp60); }
+.filter-pill[data-band=QP120]           { --pill-color: var(--b-qp120); }
+.filter-pill[data-region=magnetosphere] { --pill-color: var(--r-ms); }
+.filter-pill[data-region=magnetosheath] { --pill-color: var(--r-sh); }
+.filter-pill[data-region=solar_wind]    { --pill-color: var(--r-sw); }
+
+.sort-group { display: inline-flex; align-items: center; gap: 6px; }
+.segmented {
+  display: inline-flex;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+}
+.seg-btn {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.seg-btn:hover { color: var(--text); }
+.seg-btn.active,
+button.seg-btn.active {
+  background: #2b333b;
+  color: var(--text);
+  border: none;
+}
+.reverse-btn,
+button.reverse-btn {
+  font-size: 14px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--muted);
+  border-radius: 6px;
+  line-height: 1;
+}
+.reverse-btn:hover { color: var(--text); }
+.reverse-btn.active,
+button.reverse-btn.active {
+  background: #2b333b;
+  color: var(--text);
+  border-color: #3a4651;
+}
+.sel-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.nav-btn {
+  font-size: 14px;
+  padding: 4px 12px;
+}
+.position {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.pos-num {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: text;
+  padding: 0 4px;
+  border-radius: 3px;
+  border-bottom: 1px dashed transparent;
+  outline: none;
+  min-width: 1.5ch;
+}
+.pos-num:hover { border-bottom-color: rgba(255,255,255,0.25); }
+.pos-num:focus {
+  background: rgba(108, 132, 153, 0.15);
+  border-bottom-color: #6c8499;
+}
+.pos-of { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.pos-total { font-size: 13px; color: var(--muted); }
+
+.view-toolbar {
+  display: flex;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.event-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 8px;
+  margin: 10px 0 6px;
+}
+.stat-group {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.stat-group-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px 10px;
+}
+.stat-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.stat-grid.stack  { grid-template-columns: 1fr; }
+.stat-grid .stat.span-all { grid-column: 1 / -1; }
+.stat-val .pill {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: #000;
+}
+.stat-val .pill[data-band=QP30]  { background: var(--b-qp30); }
+.stat-val .pill[data-band=QP60]  { background: var(--b-qp60); }
+.stat-val .pill[data-band=QP120] { background: var(--b-qp120); }
+.stat-val .pill[data-region=magnetosphere] { background: var(--r-ms); }
+.stat-val .pill[data-region=magnetosheath] { background: var(--r-sh); }
+.stat-val .pill[data-region=solar_wind]    { background: var(--r-sw); }
+.stat-val .pill[data-region=unknown]       { background: var(--r-uk); color: #ddd; }
+.stat-val.time { font-size: 13px; font-family: ui-monospace, monospace; }
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.stat-label {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.stat-label sub,
+.stat-val sub {
+  font-size: 0.78em;
+  vertical-align: -0.22em;
+  margin-left: 0.04em;
+  letter-spacing: 0;
+  line-height: 1;
+}
+.stat-val {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+}
+.stat-val em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--muted);
+  margin-left: 2px;
+  font-weight: 400;
+}
+
+.q-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #000;
+}
+.q-chip.q-high { background: #2bd07b; }   /* Q ≥ 4 */
+.q-chip.q-mid  { background: #f5b800; }   /* 2.5 ≤ Q < 4 */
+.q-chip.q-low  { background: #f29539; }   /* Q < 2.5 */
+.q-chip.q-unknown { background: var(--r-uk); color: #ddd; }
+
+.band-pill, .region-pill {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #000;
+  font-weight: 600;
+}
+.band-pill[data-band=QP30]  { background: var(--b-qp30); }
+.band-pill[data-band=QP60]  { background: var(--b-qp60); }
+.band-pill[data-band=QP120] { background: var(--b-qp120); }
+.region-pill[data-region=magnetosphere] { background: var(--r-ms); }
+.region-pill[data-region=magnetosheath] { background: var(--r-sh); }
+.region-pill[data-region=solar_wind]    { background: var(--r-sw); }
+.region-pill[data-region=unknown]       { background: var(--r-uk); color: #ddd; }
+
+.plot {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin: 8px 0;
+  padding: 6px 8px 10px;
+  /* container auto-sizes around the uPlot wrapper (canvas + axes + legend),
+     so x-axis tick labels and the legend stay inside the envelope. */
+}
+.plot .uplot { width: 100%; }
+.plot.small .u-wrap { height: 200px !important; }
+
+.hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+
+/* uPlot dark overrides */
+.uplot, .u-legend, .u-title { color: var(--text) !important; font-family: inherit !important; }
+.u-legend { background: transparent !important; }
+.u-legend th, .u-legend td { color: var(--muted); }
+.u-axis { color: var(--muted); }
+/* (removed `.u-cursor-pt { background: var(--accent) }` — it was forcing
+   every cursor focus dot to the cyan accent regardless of series color.
+   uPlot's per-series fill/stroke is now what drives the dot color.) */
+
+/* Legend marker: render as a thicker horizontal line instead of a square.
+   uPlot inline-styles `border-color` to the series stroke; we collapse the
+   left/right/bottom borders so only the colored top edge shows through. */
+.u-legend .u-marker {
+  width: 22px !important;
+  height: 0 !important;
+  border-top-width: 3px !important;
+  border-right-width: 0 !important;
+  border-bottom-width: 0 !important;
+  border-left-width: 0 !important;
+  border-style: solid !important;
+  background: transparent !important;
+  margin-right: 8px !important;
+  vertical-align: middle;
+}
+.uplot .u-title {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.bench-summary { color: var(--muted); font-size: 11px; }
+.bench-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px;
+  margin: 8px 0;
+}
+.bench-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+.bench-card.tp  { border-left: 3px solid #2bd07b; }
+.bench-card.miss { border-left: 3px solid #d04a4a; }
+.bench-card.selected { background: #283340; border-color: var(--accent); }
+.bench-card .row { display: flex; justify-content: space-between; }
+.bench-tag { font-weight: 600; }
+.bench-tag.tp { color: #2bd07b; }
+.bench-tag.miss { color: #d04a4a; }

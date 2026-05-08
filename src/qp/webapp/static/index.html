@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QP Event Review</title>
+  <link rel="stylesheet" href="/static/uPlot.min.css">
+  <link rel="stylesheet" href="/static/style.css?v=18">
+</head>
+<body>
+  <header class="topbar">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="events">Events</button>
+      <button class="tab" data-tab="synthetic">Synthetic</button>
+    </nav>
+    <span class="status" id="status"></span>
+  </header>
+
+  <!-- ================= Events tab ================= -->
+  <section class="panel" id="tab-events">
+    <div class="selection-envelope">
+      <div class="sel-section sel-filters">
+        <div class="sel-section-title">Selection</div>
+        <div class="sel-controls">
+          <div class="pill-group" id="band-pills">
+            <span class="pill-group-label">Band</span>
+            <button class="filter-pill" data-band="QP30">QP30</button>
+            <button class="filter-pill" data-band="QP60">QP60</button>
+            <button class="filter-pill" data-band="QP120">QP120</button>
+          </div>
+          <div class="pill-group" id="region-pills">
+            <span class="pill-group-label">Region</span>
+            <button class="filter-pill" data-region="magnetosphere">MS</button>
+            <button class="filter-pill" data-region="magnetosheath">SH</button>
+            <button class="filter-pill" data-region="solar_wind">SW</button>
+          </div>
+          <div class="sort-group">
+            <span class="pill-group-label">Sort</span>
+            <div class="segmented" role="tablist">
+              <button class="seg-btn active" data-sort="peak_time">Date</button>
+              <button class="seg-btn" data-sort="b_perp1_amp">Amp</button>
+              <button class="seg-btn" data-sort="q_factor">Q</button>
+              <button class="seg-btn" data-sort="period_min">Period</button>
+            </div>
+            <button id="reverse-btn" class="reverse-btn" title="reverse sort order">⇅</button>
+          </div>
+        </div>
+      </div>
+      <div class="sel-section sel-nav">
+        <div class="sel-section-title">Browse</div>
+        <div class="sel-nav-row">
+          <button id="prev-btn" class="nav-btn" title="←">◀</button>
+          <span class="position">
+            <span class="pos-num" id="event-position-num"
+                  contenteditable="true" spellcheck="false"
+                  inputmode="numeric"
+                  title="click to type a position, then Enter">
+            </span>
+            <span class="pos-of">of</span>
+            <span class="pos-total" id="event-position-total"></span>
+          </span>
+          <button id="next-btn" class="nav-btn" title="→">▶</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-wrap">
+      <div class="sel-section-title">Timeline</div>
+      <canvas id="timeline" height="56"></canvas>
+    </div>
+
+    <div class="event-stats" id="event-stats"></div>
+
+    <div class="view-toolbar">
+      <button id="zoom-btn" class="toggle active" title="z — focus on event window ± 1 h">zoom</button>
+      <button id="detrend-btn" class="toggle" title=". — subtract band-aware rolling mean">detrend</button>
+      <button id="span-btn" class="toggle active" title="show event span (orange highlight)">span</button>
+      <button id="peak-btn" class="toggle active" title="show peak time (white dashed line)">peak</button>
+    </div>
+
+    <div class="plot" id="plot-wave"></div>
+    <div class="plot" id="plot-spec"></div>
+
+    <div class="hint">
+      ←/→ next · shift+←/→ jump 10 · 1/2/3 band filter · m/s/w region filter · g goto · z zoom · . detrend · t toggle tab
+    </div>
+  </section>
+
+  <!-- ================= Synthetic tab ================= -->
+  <section class="panel hidden" id="tab-synthetic">
+    <nav class="subtabs" role="tablist">
+      <button class="subtab active" data-subtab="generator">Generator</button>
+      <button class="subtab" data-subtab="benchmark">Benchmark</button>
+    </nav>
+
+    <div class="subpanel" id="sub-generator">
+      <div class="filters">
+        <label>Band
+          <select id="syn-band">
+            <option>QP30</option>
+            <option selected>QP60</option>
+            <option>QP120</option>
+          </select>
+        </label>
+        <label>Amp [nT]
+          <input id="syn-amp" type="number" step="0.1" min="0.1" max="10" value="2.0">
+        </label>
+        <label>Period [min]
+          <input id="syn-period" type="number" step="1" min="5" max="240" value="60">
+        </label>
+        <label>Decay [h]
+          <input id="syn-decay" type="number" step="0.5" min="0.5" max="24" value="4">
+        </label>
+        <label>Noise σ
+          <input id="syn-noise" type="number" step="0.05" min="0" max="5" value="0.3">
+        </label>
+        <label>Seed
+          <input id="syn-seed" type="number" step="1" min="0" value="0">
+        </label>
+        <button id="syn-randomize">randomize seed</button>
+        <span class="presets">
+          <button data-preset="low">low SNR</button>
+          <button data-preset="med">med SNR</button>
+          <button data-preset="high">high SNR</button>
+        </span>
+      </div>
+      <div class="plot" id="plot-syn-wave"></div>
+      <div class="plot" id="plot-syn-spec"></div>
+    </div>
+
+    <div class="subpanel hidden" id="sub-benchmark">
+      <div class="filters">
+        <label>Preset
+          <select id="bench-preset">
+            <option value="low_snr">low SNR</option>
+            <option value="med_snr" selected>med SNR</option>
+            <option value="high_snr">high SNR</option>
+          </select>
+        </label>
+        <span id="bench-summary" class="bench-summary"></span>
+      </div>
+      <div id="bench-grid" class="bench-grid"></div>
+      <div class="plot" id="plot-bench-wave"></div>
+      <div class="plot" id="plot-bench-spec"></div>
+    </div>
+  </section>
+
+  <script src="/static/uPlot.iife.min.js"></script>
+  <script src="/static/app.js?v=37"></script>
+</body>
+</html>
