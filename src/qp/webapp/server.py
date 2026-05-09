@@ -6,37 +6,61 @@ Run with ``uv run python -m qp.webapp`` or
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
 from . import loaders, synthetic
 
 STATIC_DIR = Path(__file__).parent / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+STYLE_CSS  = STATIC_DIR / "style.css"
+APP_JS     = STATIC_DIR / "app.js"
 
-app = FastAPI(title="QP Event Review", docs_url="/api/docs", redoc_url=None)
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+def _render_index() -> str:
+    """Substitute {STYLE_V}/{APP_V} markers in index.html with file mtimes.
+
+    Eliminates manual `?v=NN` bumping after every CSS/JS edit — the browser
+    auto-revalidates whenever either asset changes on disk.
+    """
+    return (
+        INDEX_HTML.read_text(encoding="utf-8")
+        .replace("{STYLE_V}", str(STYLE_CSS.stat().st_mtime_ns))
+        .replace("{APP_V}",   str(APP_JS.stat().st_mtime_ns))
+    )
 
 
-@app.on_event("startup")
-def _warm_caches() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     """Pre-load the parquet + 906 MB segment archive before serving traffic.
 
     Without this, the first /api/events/{id}/waveform request blocks the
     event loop for ~4 s while np.load(allow_pickle=True) materializes the
     archive — and any concurrent requests queue behind it, making the
-    page look broken / never fully loaded on a fresh server.
+    page look broken on a fresh server.
     """
-    import logging
     log = logging.getLogger("uvicorn.error")
     log.info("[QP] warming event table…")
     loaders.load_event_table()
     log.info("[QP] warming segment archive (906 MB)…")
     loaders._segment_array()
     log.info("[QP] warm-up complete")
+    yield
+
+
+app = FastAPI(
+    title="QP Event Review",
+    docs_url="/api/docs",
+    redoc_url=None,
+    lifespan=lifespan,
+)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.middleware("http")
@@ -49,9 +73,9 @@ async def disable_static_cache(request: Request, call_next):
 
 
 @app.get("/", include_in_schema=False)
-def index() -> FileResponse:
-    return FileResponse(
-        STATIC_DIR / "index.html",
+def index() -> HTMLResponse:
+    return HTMLResponse(
+        _render_index(),
         headers={"Cache-Control": "no-store, must-revalidate"},
     )
 

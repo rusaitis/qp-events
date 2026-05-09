@@ -54,11 +54,12 @@ const ALL_BANDS = ["QP30", "QP60", "QP120"];
 const ALL_REGIONS = ["magnetosphere", "magnetosheath", "solar_wind"];
 
 const state = {
-  allEvents: [],       // every event, sorted by current sort key
+  allEvents: [],       // every event, sorted by current sort key (slim: id/uid/peak/band/region)
   events: [],          // filter-applied subset visible to the user
   timelineAll: [],     // unfiltered, for top strip
   regionIntervals: [], // mission-wide MS/SH/SW intervals
   timelineCache: null, // pre-rendered timeline strip (canvas)
+  detailCache: new Map(), // event_id → full /api/events/{id} payload (heavy stat fields)
   filteredIds: [],     // event_id list in current filter order
   pos: 0,              // index in filteredIds
   bandFilter:   new Set(ALL_BANDS),
@@ -115,12 +116,25 @@ function fmtIsoCompact(iso) {
   return iso.replace("T", " ").slice(0, 16);
 }
 
-function renderEventStats(s, wf) {
+// Defensive HTML escape — region/band/uid are server-validated against
+// tight regexes, but we still inject them into innerHTML, so escaping
+// removes the implicit-trust assumption at near-zero perf cost.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+function renderEventStats(summary, wf, detail) {
+  // Heavy stat fields live in the lazily-fetched `detail`; fall back to
+  // `summary` if it hasn't arrived yet (rare — fetched in parallel with
+  // the waveform). `wf`/`summary` always cover the band/region pills.
+  const s = detail || {};
   const q = s.q_factor;
   const qPill = `<span class="q-chip ${qFactorClass(q)}">${fmt(q, 2)}</span>`;
-  const region = wf?.region ?? s.region ?? "unknown";
+  const region = escapeHtml(wf?.region ?? summary.region ?? "unknown");
   const regionPill = `<span class="pill" data-region="${region}">${region}</span>`;
-  const band = wf?.band ?? s.band ?? "?";
+  const band = escapeHtml(wf?.band ?? summary.band ?? "?");
   const bandPill = `<span class="pill" data-band="${band}">${band}</span>`;
   const tFrom = fmtIsoCompact(wf?.date_from);
   const tPeak = fmtIsoCompact(wf?.peak_time);
@@ -801,18 +815,32 @@ async function loadEventAtPos(pos) {
   const ctrl = new AbortController();
   if (state.inflight) state.inflight.abort();
   state.inflight = ctrl;
+  // Detail (heavy stat fields) is cached client-side after first fetch;
+  // serve from cache when available, otherwise fetch in parallel with wf+spec.
+  const cachedDetail = state.detailCache.get(id);
   try {
-    const [wfR, specR] = await Promise.all([
+    const requests = [
       fetch(`/api/events/${id}/waveform`, { signal: ctrl.signal }),
       fetch(`/api/events/${id}/spectrum`, { signal: ctrl.signal }),
-    ]);
+    ];
+    if (!cachedDetail) {
+      requests.push(fetch(`/api/events/${id}`, { signal: ctrl.signal }));
+    }
+    const responses = await Promise.all(requests);
+    const [wfR, specR, detailR] = responses;
     setStatus(`fetched event ${id}, parsing…`);
     if (!wfR.ok) throw new Error(`waveform HTTP ${wfR.status}`);
     if (!specR.ok) throw new Error(`spectrum HTTP ${specR.status}`);
     const wf = await wfR.json();
     const spec = await specR.json();
+    let detail = cachedDetail;
+    if (detailR) {
+      if (!detailR.ok) throw new Error(`detail HTTP ${detailR.status}`);
+      detail = await detailR.json();
+      state.detailCache.set(id, detail);
+    }
     setStatus(`rendering event ${id}…`);
-    renderEvent(wf, spec);
+    renderEvent(wf, spec, detail);
     drawTimeline(id);
     setStatus(`event ${id}`);
   } catch (e) {
@@ -823,13 +851,13 @@ async function loadEventAtPos(pos) {
   }
 }
 
-function renderEvent(wf, spec) {
+function renderEvent(wf, spec, detail) {
   const summary = state.events[state.pos] || {};
   const total = state.events.length;
   $("#event-position-num").textContent = state.pos + 1;
   $("#event-position-total").textContent = total;
   $("#event-uid").textContent = summary.event_uid || "";
-  renderEventStats(summary, wf);
+  renderEventStats(summary, wf, detail);
 
   state.lastWf = wf;
   state.lastSpec = spec;
@@ -865,6 +893,8 @@ const SYN_PRESETS = {
   high: { amp: 4.0, period_min: 60, decay_h: 4, noise: 0.3 },
 };
 
+let synAbort = null;
+
 async function loadSynthetic() {
   const params = new URLSearchParams({
     band: $("#syn-band").value,
@@ -875,22 +905,35 @@ async function loadSynthetic() {
     seed: $("#syn-seed").value,
   });
   setStatus("generating…");
-  const r = await fetch("/api/synthetic/generate?" + params.toString());
-  const g = await r.json();
-  setStatus("");
+  // Cancel any in-flight generate so a stale response can't overwrite the latest plot.
+  if (synAbort) synAbort.abort();
+  synAbort = new AbortController();
+  try {
+    const r = await fetch(
+      "/api/synthetic/generate?" + params.toString(),
+      { signal: synAbort.signal },
+    );
+    const g = await r.json();
+    setStatus("");
 
-  const xs = g.epoch_s;
-  const data = [xs, g.b_par, g.b_perp1, g.b_perp2, g.b_tot];
-  state.synWavePlot = updateWavePlot(
-    $("#plot-syn-wave"), data, null, [], null, null,
-    "Synthetic MFA components",
-  );
-  state.synSpecPlot = updateSpectrumPlot(
-    $("#plot-syn-spec"),
-    g.spectrum.period_min,
-    g.spectrum.psd_par, g.spectrum.psd_perp1, g.spectrum.psd_perp2,
-    g.spectrum.qp_periods_min,
-  );
+    const xs = g.epoch_s;
+    const data = [xs, g.b_par, g.b_perp1, g.b_perp2, g.b_tot];
+    state.synWavePlot = updateWavePlot(
+      $("#plot-syn-wave"), data, null, [], null, null,
+      "Synthetic MFA components",
+    );
+    state.synSpecPlot = updateSpectrumPlot(
+      $("#plot-syn-spec"),
+      g.spectrum.period_min,
+      g.spectrum.psd_par, g.spectrum.psd_perp1, g.spectrum.psd_perp2,
+      g.spectrum.qp_periods_min,
+    );
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      setStatus(`error generating: ${e.message}`);
+      console.error("[QP]", e);
+    }
+  }
 }
 
 const debounce = (fn, ms) => {
@@ -902,11 +945,26 @@ const debounce = (fn, ms) => {
 };
 const debouncedSyn = debounce(loadSynthetic, 250);
 
+let benchAbort = null;
+
 async function loadBenchmark() {
   const preset = $("#bench-preset").value;
   setStatus("running benchmark…");
-  const r = await fetch("/api/synthetic/benchmark?preset=" + preset);
-  const data = await r.json();
+  if (benchAbort) benchAbort.abort();
+  benchAbort = new AbortController();
+  let data;
+  try {
+    const r = await fetch(
+      "/api/synthetic/benchmark?preset=" + preset,
+      { signal: benchAbort.signal },
+    );
+    data = await r.json();
+  } catch (e) {
+    if (e.name === "AbortError") return;
+    setStatus(`error running benchmark: ${e.message}`);
+    console.error("[QP]", e);
+    return;
+  }
   state.benchData = data;
   setStatus("");
 

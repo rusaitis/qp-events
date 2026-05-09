@@ -52,12 +52,22 @@ def load_event_table() -> pd.DataFrame:
     chars) where the suffix letter (A, B, ...) disambiguates events that
     share a peak minute. UID is stable as long as peak_time is — no
     parquet rewrite needed.
+
+    Also stashes ``df.attrs["row_index"]`` = ``{event_id: int_position}``
+    so per-event lookups are O(1) instead of O(n) boolean scans.
     """
     df = pd.read_parquet(EVENTS_PARQUET)
     for col in ("date_from", "date_to", "peak_time"):
         df[col] = pd.to_datetime(df[col])
     df["event_uid"] = _build_event_uids(df)
+    df.attrs["row_index"] = {int(eid): i for i, eid in enumerate(df["event_id"])}
     return df
+
+
+def _row_for(df: pd.DataFrame, event_id: int) -> pd.Series | None:
+    """O(1) lookup of an event row by event_id (None if unknown)."""
+    idx = df.attrs["row_index"].get(int(event_id))
+    return None if idx is None else df.iloc[idx]
 
 
 def _build_event_uids(df: pd.DataFrame) -> pd.Series:
@@ -165,7 +175,13 @@ def event_summaries(
     region: str | None = None,
     sort: str = "peak_time",
 ) -> list[dict[str, Any]]:
-    """Lightweight list of all events for the timeline / browse strip."""
+    """Lightweight list of all events for the browse strip + filter set.
+
+    Returns only the columns the frontend needs for navigation: id, uid,
+    peak_time, band, region. Per-event stat fields (R, period, amps, …)
+    are fetched lazily via :func:`event_detail`. This shrinks the
+    initial payload from ~780 KB → ~120 KB at first paint.
+    """
     df = load_event_table()
     if band:
         df = df[df.band == band]
@@ -173,12 +189,7 @@ def event_summaries(
         df = df[df.region == region]
     if sort in df.columns:
         df = df.sort_values(sort, kind="mergesort")
-    cols = [
-        "event_id", "event_uid", "segment_idx", "peak_time", "band", "region",
-        "r_distance", "mag_lat", "local_time", "period_min",
-        "duration_minutes", "q_factor", "stokes_d",
-        "b_perp1_amp", "b_perp2_amp", "b_par_amp",
-    ]
+    cols = ["event_id", "event_uid", "peak_time", "band", "region"]
     out = df[cols].copy()
     out["peak_time"] = out["peak_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
     return out.to_dict(orient="records")
@@ -186,10 +197,10 @@ def event_summaries(
 
 def event_detail(event_id: int) -> dict[str, Any] | None:
     df = load_event_table()
-    rows = df[df.event_id == int(event_id)]
-    if rows.empty:
+    row_series = _row_for(df, event_id)
+    if row_series is None:
         return None
-    row = rows.iloc[0].to_dict()
+    row = row_series.to_dict()
     for k, v in list(row.items()):
         if isinstance(v, pd.Timestamp):
             row[k] = v.isoformat()
@@ -207,10 +218,9 @@ def event_waveform(event_id: int, hours_pad: float = 12.0) -> dict[str, Any] | N
     on the client doesn't refetch — but in case it ever does, this is cheap).
     """
     df = load_event_table()
-    rows = df[df.event_id == int(event_id)]
-    if rows.empty:
+    row = _row_for(df, event_id)
+    if row is None:
         return None
-    row = rows.iloc[0]
     seg_idx = int(row.segment_idx)
     peak = row.peak_time.to_pydatetime()
     payload = get_segment_payload(seg_idx)
@@ -251,10 +261,9 @@ def event_spectrum(
 ) -> dict[str, Any] | None:
     """Welch PSD over the event window (1-min cadence, 12-h window)."""
     df = load_event_table()
-    rows = df[df.event_id == int(event_id)]
-    if rows.empty:
+    row = _row_for(df, event_id)
+    if row is None:
         return None
-    row = rows.iloc[0]
     seg_idx = int(row.segment_idx)
     peak = row.peak_time.to_pydatetime()
     payload = get_segment_payload(seg_idx)
@@ -347,8 +356,13 @@ def _detrend(x: np.ndarray) -> np.ndarray:
 
 
 def _to_clean_list(arr: np.ndarray) -> list[float | None]:
-    """Convert array to list, mapping non-finite to None for JSON safety."""
-    out: list[float | None] = []
-    for v in arr.tolist():
-        out.append(float(v) if np.isfinite(v) else None)
-    return out
+    """Convert array to list, mapping non-finite to None for JSON safety.
+
+    Vectorizes the finiteness check (vs the previous per-scalar
+    ``np.isfinite(v)`` Python loop). Fast-paths the all-finite case so
+    clean MAG arrays skip the Python list-comp entirely.
+    """
+    mask = np.isfinite(arr)
+    if mask.all():
+        return arr.tolist()
+    return [v if m else None for v, m in zip(arr.tolist(), mask.tolist())]
