@@ -21,6 +21,24 @@ app = FastAPI(title="QP Event Review", docs_url="/api/docs", redoc_url=None)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
+@app.on_event("startup")
+def _warm_caches() -> None:
+    """Pre-load the parquet + 906 MB segment archive before serving traffic.
+
+    Without this, the first /api/events/{id}/waveform request blocks the
+    event loop for ~4 s while np.load(allow_pickle=True) materializes the
+    archive — and any concurrent requests queue behind it, making the
+    page look broken / never fully loaded on a fresh server.
+    """
+    import logging
+    log = logging.getLogger("uvicorn.error")
+    log.info("[QP] warming event table…")
+    loaders.load_event_table()
+    log.info("[QP] warming segment archive (906 MB)…")
+    loaders._segment_array()
+    log.info("[QP] warm-up complete")
+
+
 @app.middleware("http")
 async def disable_static_cache(request: Request, call_next):
     """Force the browser to revalidate every reload. ETag still gives 304s."""

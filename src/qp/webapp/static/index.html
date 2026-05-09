@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QP Event Review</title>
   <link rel="stylesheet" href="/static/uPlot.min.css">
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=22">
 </head>
 <body>
   <header class="topbar">
@@ -60,6 +60,12 @@
             <span class="pos-total" id="event-position-total"></span>
           </span>
           <button id="next-btn" class="nav-btn" title="→">▶</button>
+          <span class="uid-wrap">
+            <span class="uid-label">ID</span>
+            <span class="event-uid" id="event-uid"
+                  contenteditable="true" spellcheck="false"
+                  title="event UID — type and Enter to jump (filters auto-clear if needed)"></span>
+          </span>
         </div>
       </div>
     </div>
@@ -146,6 +152,6 @@
   </section>
 
   <script src="/static/uPlot.iife.min.js"></script>
-  <script src="/static/app.js?v=39"></script>
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>

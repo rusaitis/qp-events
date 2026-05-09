@@ -46,11 +46,26 @@ SEGMENTS_NPY: Path = qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy"
 
 @lru_cache(maxsize=1)
 def load_event_table() -> pd.DataFrame:
-    """Load the round-8 event catalogue once, parsing peak_time."""
+    """Load the round-8 event catalogue once, parsing peak_time.
+
+    Adds a derived ``event_uid`` column of the form ``YYMMDDHHMMX`` (11
+    chars) where the suffix letter (A, B, ...) disambiguates events that
+    share a peak minute. UID is stable as long as peak_time is — no
+    parquet rewrite needed.
+    """
     df = pd.read_parquet(EVENTS_PARQUET)
     for col in ("date_from", "date_to", "peak_time"):
         df[col] = pd.to_datetime(df[col])
+    df["event_uid"] = _build_event_uids(df)
     return df
+
+
+def _build_event_uids(df: pd.DataFrame) -> pd.Series:
+    base = df["peak_time"].dt.strftime("%y%m%d%H%M")
+    # Stable order within a peak minute → reproducible suffix mapping.
+    suffix_idx = df.groupby(base, sort=False).cumcount()
+    suffix = suffix_idx.map(lambda i: chr(ord("A") + int(i)))
+    return base + suffix
 
 
 @lru_cache(maxsize=1)
@@ -159,7 +174,7 @@ def event_summaries(
     if sort in df.columns:
         df = df.sort_values(sort, kind="mergesort")
     cols = [
-        "event_id", "segment_idx", "peak_time", "band", "region",
+        "event_id", "event_uid", "segment_idx", "peak_time", "band", "region",
         "r_distance", "mag_lat", "local_time", "period_min",
         "duration_minutes", "q_factor", "stokes_d",
         "b_perp1_amp", "b_perp2_amp", "b_par_amp",
@@ -214,6 +229,7 @@ def event_waveform(event_id: int, hours_pad: float = 12.0) -> dict[str, Any] | N
 
     return {
         "event_id": int(row.event_id),
+        "event_uid": str(row.event_uid),
         "segment_idx": seg_idx,
         "peak_time": peak.isoformat(),
         "date_from": row.date_from.isoformat(),

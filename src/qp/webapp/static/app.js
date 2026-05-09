@@ -767,6 +767,32 @@ function currentEventId() {
   return state.filteredIds[state.pos];
 }
 
+/** Jump to an event by its YYMMDDHHMMX UID. If the event is filtered
+ *  out, clear band+region filters so it becomes visible. Returns true
+ *  on success. Reflects pill state in the UI on filter reset. */
+function gotoEventByUid(uid) {
+  const target = (uid || "").trim().toUpperCase();
+  if (!target) return false;
+  const ev = state.allEvents.find((e) => (e.event_uid || "").toUpperCase() === target);
+  if (!ev) return false;
+  let pos = state.events.indexOf(ev);
+  if (pos < 0) {
+    // Not in current filter — reset bands and regions, reapply.
+    state.bandFilter   = new Set(ALL_BANDS);
+    state.regionFilter = new Set(ALL_REGIONS);
+    reflectFilterPills();
+    state.events = state.allEvents.filter(
+      (e) => state.bandFilter.has(e.band) && state.regionFilter.has(e.region)
+    );
+    state.filteredIds = state.events.map((e) => e.event_id);
+    state.timelineCache = null;
+    pos = state.events.indexOf(ev);
+  }
+  if (pos < 0) return false;
+  loadEventAtPos(pos);
+  return true;
+}
+
 async function loadEventAtPos(pos) {
   if (!state.filteredIds.length) { setStatus("no events"); return; }
   state.pos = (pos + state.filteredIds.length) % state.filteredIds.length;
@@ -802,6 +828,7 @@ function renderEvent(wf, spec) {
   const total = state.events.length;
   $("#event-position-num").textContent = state.pos + 1;
   $("#event-position-total").textContent = total;
+  $("#event-uid").textContent = summary.event_uid || "";
   renderEventStats(summary, wf);
 
   state.lastWf = wf;
@@ -1122,6 +1149,41 @@ function bindUI() {
     if (clamped - 1 !== state.pos) loadEventAtPos(clamped - 1);
     else posEl.textContent = state.pos + 1;
   });
+
+  const uidEl = $("#event-uid");
+  if (uidEl) {
+    uidEl.addEventListener("focus", () => {
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(uidEl);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
+    uidEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); uidEl.blur(); }
+      else if (e.key === "Escape") {
+        e.preventDefault();
+        const cur = state.events[state.pos];
+        uidEl.textContent = cur ? cur.event_uid || "" : "";
+        uidEl.blur();
+      }
+    });
+    uidEl.addEventListener("blur", () => {
+      const typed = (uidEl.textContent || "").trim();
+      const cur = state.events[state.pos];
+      const curUid = cur ? cur.event_uid || "" : "";
+      if (!typed || typed.toUpperCase() === curUid.toUpperCase()) {
+        uidEl.textContent = curUid;
+        return;
+      }
+      if (!gotoEventByUid(typed)) {
+        setStatus(`uid ${typed} not found`);
+        uidEl.textContent = curUid;
+      }
+    });
+  } else {
+    console.warn("[QP] #event-uid missing — stale HTML, hard-reload required.");
+  }
 
   document.querySelectorAll(".filter-pill[data-band]").forEach((b) => {
     b.addEventListener("click", () => toggleBand(b.dataset.band));
