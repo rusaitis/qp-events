@@ -216,33 +216,45 @@ button.filter-pill.active {
 .filter-pill[data-region=solar_wind]    { --pill-color: var(--r-sw); }
 
 .sort-group { display: inline-flex; align-items: center; gap: 6px; }
-.segmented {
-  display: inline-flex;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px;
-}
-.seg-btn {
+#sort-select {
   font-size: 11px;
-  font-weight: 500;
-  padding: 3px 12px;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  border-radius: 999px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  letter-spacing: 0.04em;
+  padding: 3px 22px 3px 10px;
+  background-color: var(--bg-soft);
+  background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position: calc(100% - 11px) 50%, calc(100% - 7px) 50%;
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  appearance: none;
+  -webkit-appearance: none;
 }
-.seg-btn:hover { color: var(--text); }
-.seg-btn.active,
-button.seg-btn.active {
-  background: #2b333b;
-  color: var(--text);
-  border: none;
+
+/* Range filter pills — share .filter-pill geometry, but always cyan accent
+   regardless of which property they filter; show the active range inline. */
+.range-pill {
+  --pill-color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.range-pill .pill-text { letter-spacing: 0.04em; }
+.range-pill .pill-range {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.30);
+}
+.range-pill .pill-caret {
+  font-size: 9px;
+  opacity: 0.7;
+  margin-left: 2px;
 }
 .reverse-btn,
 button.reverse-btn {
@@ -497,3 +509,207 @@ button.reverse-btn.active {
 .bench-tag { font-weight: 600; }
 .bench-tag.tp { color: #2bd07b; }
 .bench-tag.miss { color: #d04a4a; }
+
+/* ========================== Range filter popover ========================== */
+
+.popover {
+  position: absolute;
+  z-index: 100;
+  width: 540px;
+  padding: 14px 18px 12px;
+  background: var(--panel);
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+}
+.popover::before {
+  /* Upward arrow indicating the anchoring pill. */
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: var(--arrow-x, 24px);
+  width: 12px;
+  height: 12px;
+  background: var(--panel);
+  border-left: 1px solid #3a3a3a;
+  border-top: 1px solid #3a3a3a;
+  transform: rotate(45deg);
+}
+.popover .pop-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.popover .pop-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.popover .pop-row input[type="number"],
+.popover .pop-row input[type="date"] {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding: 3px 4px;
+}
+.popover .pop-row .dash { color: var(--muted); font-size: 11px; }
+.popover .reset-btn {
+  margin-top: 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.popover .reset-btn:hover { color: var(--text); }
+
+/* Dual-handle range slider — two stacked <input type=range>, with the
+   "active" segment between handles drawn by .range-fill via CSS vars. */
+.range-slider-wrap {
+  position: relative;
+  height: 28px;
+  margin: 6px 2px 0;
+}
+.range-track {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  background: #2c2c2c;
+  border-radius: 2px;
+}
+.range-fill {
+  position: absolute;
+  top: 50%;
+  height: 4px;
+  transform: translateY(-50%);
+  left:   var(--lo-pct, 0%);
+  right:  calc(100% - var(--hi-pct, 100%));
+  background: var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+.range-slider-wrap input[type="range"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: none;  /* let the per-thumb pseudo handle pointer */
+  margin: 0;
+  padding: 0;
+}
+.range-slider-wrap input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #0e0e0e;
+  cursor: grab;
+  margin-top: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.range-slider-wrap input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #0e0e0e;
+  cursor: grab;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+.range-slider-wrap input[type="range"]:active::-webkit-slider-thumb { cursor: grabbing; }
+.range-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
+  background: transparent;
+  height: 100%;
+}
+.range-slider-wrap input[type="range"]::-moz-range-track {
+  background: transparent;
+  height: 100%;
+}
+
+/* 2x2 cross-filter grid inside the popover. */
+.filter-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 22px;
+  margin-top: 2px;
+}
+.filter-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.filter-cell .cell-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.histogram-canvas {
+  width: 100%;
+  height: 36px;
+  display: block;
+  margin-bottom: -4px;  /* tuck slider track right under the bars */
+}
+.cell-reset {
+  align-self: flex-end;
+  margin-top: 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.cell-reset:hover { color: var(--text); }
+
+.popover-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #2a2a2a;
+}
+.popover-footer .match-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Active-count badge on the Filter button (pill). */
+.active-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--accent);
+  color: #0e0e0e;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-left: 4px;
+}

@@ -34,14 +34,23 @@
             <button class="filter-pill" data-region="magnetosheath">SH</button>
             <button class="filter-pill" data-region="solar_wind">SW</button>
           </div>
+          <div class="pill-group" id="range-filter-pills">
+            <button id="filter-btn" class="filter-pill range-pill"
+                    aria-haspopup="dialog" aria-expanded="false"
+                    title="Filter by Date / Amp / Q / Period">
+              <span class="pill-text">Filter</span>
+              <span class="active-count" id="filter-active-count" hidden></span>
+              <span class="pill-caret" aria-hidden="true">▾</span>
+            </button>
+          </div>
           <div class="sort-group">
             <span class="pill-group-label">Sort</span>
-            <div class="segmented" role="tablist">
-              <button class="seg-btn active" data-sort="peak_time">Date</button>
-              <button class="seg-btn" data-sort="b_perp1_amp">Amp</button>
-              <button class="seg-btn" data-sort="q_factor">Q</button>
-              <button class="seg-btn" data-sort="period_min">Period</button>
-            </div>
+            <select id="sort-select" title="sort key">
+              <option value="peak_time">Date</option>
+              <option value="b_perp1_amp">Amp</option>
+              <option value="q_factor">Q</option>
+              <option value="period_min">Period</option>
+            </select>
             <button id="reverse-btn" class="reverse-btn" title="reverse sort order">⇅</button>
           </div>
         </div>
@@ -90,6 +99,9 @@
     <div class="hint">
       ←/→ next · shift+←/→ jump 10 · 1/2/3 band filter · m/s/w region filter · g goto · z zoom · . detrend · t toggle tab
     </div>
+
+    <!-- Single shared popover; JS positions and re-fills it under the active range pill. -->
+    <div id="range-popover" class="popover hidden" role="dialog" aria-modal="false"></div>
   </section>
 
   <!-- ================= Synthetic tab ================= -->

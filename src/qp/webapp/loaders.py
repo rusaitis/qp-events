@@ -177,10 +177,11 @@ def event_summaries(
 ) -> list[dict[str, Any]]:
     """Lightweight list of all events for the browse strip + filter set.
 
-    Returns only the columns the frontend needs for navigation: id, uid,
-    peak_time, band, region. Per-event stat fields (R, period, amps, …)
-    are fetched lazily via :func:`event_detail`. This shrinks the
-    initial payload from ~780 KB → ~120 KB at first paint.
+    Includes the few numeric fields needed for client-side range-filter
+    sliders (amp / Q / period). Heavier per-event stats (R, mag_lat,
+    Stokes, etc.) still ship lazily via :func:`event_detail`. Payload
+    is ~270 KB — vs the original 780 KB pre-slim and the previous
+    219 KB id-only slim.
     """
     df = load_event_table()
     if band:
@@ -189,10 +190,19 @@ def event_summaries(
         df = df[df.region == region]
     if sort in df.columns:
         df = df.sort_values(sort, kind="mergesort")
-    cols = ["event_id", "event_uid", "peak_time", "band", "region"]
+    cols = [
+        "event_id", "event_uid", "peak_time", "band", "region",
+        "b_perp1_amp", "q_factor", "period_min",
+    ]
     out = df[cols].copy()
     out["peak_time"] = out["peak_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
-    return out.to_dict(orient="records")
+    # Round floats — slider/filter UI doesn't need full repr precision,
+    # and 4 decimals halves gzipped payload (~82 KB → ~49 KB).
+    for c in ("b_perp1_amp", "q_factor", "period_min"):
+        out[c] = out[c].round(4)
+    # NaN floats are not valid JSON; convert to None so JS can treat them
+    # as "missing" and exclude them from active range filters.
+    return out.where(pd.notna(out), None).to_dict(orient="records")
 
 
 @lru_cache(maxsize=512)

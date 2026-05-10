@@ -65,6 +65,19 @@ const state = {
   pos: 0,              // index in filteredIds
   bandFilter:   new Set(ALL_BANDS),
   regionFilter: new Set(ALL_REGIONS),
+  // Range filters: 4 numeric/date axes, each independently active.
+  // fmin/fmax = full data range (set once after fetch). min/max = current
+  // user selection. For dates the value space is unix epoch seconds.
+  rangeFilters: {
+    peak_time:   { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Date",   unit: "",    isDate: true,  step: null },
+    b_perp1_amp: { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Amp",    unit: "nT",  isDate: false, step: null },
+    q_factor:    { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Q",      unit: "",    isDate: false, step: null },
+    period_min:  { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Period", unit: "min", isDate: false, step: 1 },
+  },
   sort: "peak_time",
   sortReverse: false,
   hoverEventId: null,  // event hovered on the timeline canvas
@@ -780,15 +793,49 @@ async function fetchEvents() {
       state.timelineAll.map((e) => [e.event_id, e]),
     );
   }
+  // Establish each range filter's full bounds — this is the slider's
+  // "no narrowing" default position. Resort doesn't change bounds, so
+  // we only need to do this once per allEvents fetch.
+  computeRangeBounds();
+  reflectFilterButton();
   setStatus("");
   applyFilter({ keepPos: false });
 }
 
+function computeRangeBounds() {
+  for (const [key, rf] of Object.entries(state.rangeFilters)) {
+    let mn = +Infinity, mx = -Infinity;
+    for (const e of state.allEvents) {
+      const v = rf.isDate ? toEpoch(e.peak_time) : e[key];
+      if (v == null || !Number.isFinite(v)) continue;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    if (Number.isFinite(mn) && Number.isFinite(mx)) {
+      rf.fmin = mn; rf.fmax = mx;
+      rf.min = mn;  rf.max = mx;
+    }
+  }
+}
+
 function applyFilter({ keepPos = true } = {}) {
   const bf = state.bandFilter, rf = state.regionFilter;
-  state.events = state.allEvents.filter((e) =>
-    bf.has(e.band) && rf.has(e.region)
-  );
+  const ranges = state.rangeFilters;
+  // Pre-extract just the active range filters so the inner loop avoids
+  // re-iterating all four every event.
+  const activeRanges = [];
+  for (const key in ranges) {
+    if (ranges[key].active) activeRanges.push([key, ranges[key]]);
+  }
+  state.events = state.allEvents.filter((e) => {
+    if (!bf.has(e.band) || !rf.has(e.region)) return false;
+    for (const [key, r] of activeRanges) {
+      const v = r.isDate ? toEpoch(e.peak_time) : e[key];
+      if (v == null || !Number.isFinite(v)) return false;
+      if (v < r.min || v > r.max) return false;
+    }
+    return true;
+  });
   state.filteredIds = state.events.map((e) => e.event_id);
   state.timelineCache = null;  // events on timeline depend on current filter
   $("#event-position-total").textContent = state.events.length;
@@ -815,13 +862,13 @@ function gotoEventByUid(uid) {
   if (!ev) return false;
   let pos = state.events.indexOf(ev);
   if (pos < 0) {
-    // Not in current filter — reset bands and regions, reapply.
+    // Not in current filter — reset bands, regions, and range filters,
+    // then reapply (no narrowing left).
     state.bandFilter   = new Set(ALL_BANDS);
     state.regionFilter = new Set(ALL_REGIONS);
     reflectFilterPills();
-    state.events = state.allEvents.filter(
-      (e) => state.bandFilter.has(e.band) && state.regionFilter.has(e.region)
-    );
+    clearAllRangeFilters();
+    state.events = state.allEvents.slice();
     state.filteredIds = state.events.map((e) => e.event_id);
     state.timelineCache = null;
     pos = state.events.indexOf(ev);
@@ -1104,9 +1151,8 @@ function reflectFilterPills() {
 }
 
 function reflectSortButtons() {
-  document.querySelectorAll(".seg-btn[data-sort]").forEach((b) => {
-    b.classList.toggle("active", b.dataset.sort === state.sort);
-  });
+  const sel = $("#sort-select");
+  if (sel && sel.value !== state.sort) sel.value = state.sort;
   $("#reverse-btn").classList.toggle("active", state.sortReverse);
 }
 
@@ -1150,6 +1196,437 @@ function toggleRegion(r) {
   else state.regionFilter.add(r);
   reflectFilterPills();
   applyFilter();
+}
+
+/* ============== Filter popover (single button → 2×2 grid) ============== */
+//
+// One Filter button opens a popover with a 2×2 grid of cells (Date /
+// Amp / Q / Period). Each cell pairs a small distribution histogram
+// with a dual-handle slider that brushes a range over it. Histograms
+// cross-filter: brushing axis X reshapes the histograms of the OTHER
+// axes to reflect the joint event population that passes the active
+// constraints — but axis X's own histogram stays fixed while you drag
+// it, giving a stable scaffold for brushing.
+
+const POPOVER_HOVER_OPEN_MS  = 200;
+const POPOVER_HOVER_CLOSE_MS = 300;
+const HIST_BINS = { peak_time: 60, b_perp1_amp: 40, q_factor: 40, period_min: 40 };
+const HIST_BAR_GREY = "#3a3a3a";
+const HIST_BAR_ACTIVE = "#4dd2ff";  // matches --accent
+
+let popOpen = false;
+let popPinned = false;
+let popOpenT = null;
+let popCloseT = null;
+const cellRenderers = new Map();  // key → { repaintHist, syncSlider }
+
+function formatRangeValue(rf, v) {
+  if (rf.isDate) return new Date(v * 1000).toISOString().slice(0, 10);
+  if (rf.step === 1) return Math.round(v).toString();
+  const abs = Math.abs(v);
+  if (abs >= 100) return v.toFixed(0);
+  if (abs >= 10)  return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+function epochToDateInput(epoch) {
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}
+function dateInputToEpoch(s) {
+  const t = Date.parse(s + "T00:00:00Z");
+  return Number.isFinite(t) ? t / 1000 : null;
+}
+
+function buildSliderUI(rf, onChange) {
+  const wrap = document.createElement("div");
+  wrap.className = "range-slider-wrap";
+  const track = document.createElement("div");
+  track.className = "range-track";
+  const fill = document.createElement("div");
+  fill.className = "range-fill";
+  const lo = document.createElement("input");
+  const hi = document.createElement("input");
+  lo.type = hi.type = "range";
+  lo.min  = hi.min  = String(rf.fmin);
+  lo.max  = hi.max  = String(rf.fmax);
+  const span = rf.fmax - rf.fmin;
+  const step = rf.step ?? (span > 0 ? span / 200 : 1);
+  lo.step = hi.step = String(step);
+  lo.value = String(rf.min);
+  hi.value = String(rf.max);
+  lo.className = "rs-low";
+  hi.className = "rs-high";
+  wrap.append(track, fill, lo, hi);
+  function pct(v) { return ((v - rf.fmin) / span) * 100; }
+  function paint() {
+    fill.style.setProperty("--lo-pct", pct(parseFloat(lo.value)) + "%");
+    fill.style.setProperty("--hi-pct", pct(parseFloat(hi.value)) + "%");
+  }
+  paint();
+  lo.addEventListener("input", () => {
+    if (parseFloat(lo.value) > parseFloat(hi.value)) lo.value = hi.value;
+    paint(); onChange(parseFloat(lo.value), parseFloat(hi.value));
+  });
+  hi.addEventListener("input", () => {
+    if (parseFloat(hi.value) < parseFloat(lo.value)) hi.value = lo.value;
+    paint(); onChange(parseFloat(lo.value), parseFloat(hi.value));
+  });
+  return { el: wrap, syncFromState: () => {
+    lo.value = String(rf.min); hi.value = String(rf.max); paint();
+  }};
+}
+
+/* ---- histogram compute + render ---- */
+
+function computeHistogram(key, events) {
+  const rf = state.rangeFilters[key];
+  const nb = HIST_BINS[key];
+  const fmin = rf.fmin, fmax = rf.fmax;
+  const span = fmax - fmin;
+  const counts = new Uint32Array(nb);
+  if (span <= 0) return { fmin, fmax, counts };
+  for (const e of events) {
+    const v = rf.isDate ? toEpoch(e.peak_time) : e[key];
+    if (v == null || !Number.isFinite(v)) continue;
+    let i = Math.floor(((v - fmin) / span) * nb);
+    if (i < 0) i = 0; else if (i >= nb) i = nb - 1;
+    counts[i]++;
+  }
+  return { fmin, fmax, counts };
+}
+
+function eventsForHistogram(excludeKey) {
+  // Cross-filter: events that pass band, region, and every active range
+  // filter EXCEPT the one we're computing the histogram for. That's why
+  // the dragged axis's own histogram stays put — we exclude it from the
+  // constraint set so its bars never shrink under their own brush.
+  const bf = state.bandFilter, rfs = state.regionFilter;
+  const active = [];
+  for (const k in state.rangeFilters) {
+    if (k === excludeKey) continue;
+    const r = state.rangeFilters[k];
+    if (r.active) active.push([k, r]);
+  }
+  return state.allEvents.filter((e) => {
+    if (!bf.has(e.band) || !rfs.has(e.region)) return false;
+    for (const [k, r] of active) {
+      const v = r.isDate ? toEpoch(e.peak_time) : e[k];
+      if (v == null || !Number.isFinite(v)) return false;
+      if (v < r.min || v > r.max) return false;
+    }
+    return true;
+  });
+}
+
+function renderHistogram(canvas, hist, rf) {
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
+  if (!cssW || !cssH) return;
+  if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
+    canvas.width  = cssW * dpr;
+    canvas.height = cssH * dpr;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+  const nb = hist.counts.length;
+  let mx = 0;
+  for (let i = 0; i < nb; i++) if (hist.counts[i] > mx) mx = hist.counts[i];
+  if (mx === 0) return;
+  const barW = cssW / nb;
+  const span = hist.fmax - hist.fmin;
+  const inMin = (rf.min - hist.fmin) / span;
+  const inMax = (rf.max - hist.fmin) / span;
+  for (let i = 0; i < nb; i++) {
+    const h = (hist.counts[i] / mx) * (cssH - 2);
+    const x = i * barW;
+    const binCenter = (i + 0.5) / nb;
+    const inRange = binCenter >= inMin && binCenter <= inMax;
+    ctx.fillStyle = inRange ? HIST_BAR_ACTIVE : HIST_BAR_GREY;
+    ctx.fillRect(x + 0.5, cssH - h, Math.max(1, barW - 1), h);
+  }
+}
+
+/* ---- popover content (2×2 grid) ---- */
+
+function buildFilterCell(key) {
+  const rf = state.rangeFilters[key];
+  const cell = document.createElement("div");
+  cell.className = "filter-cell";
+  cell.dataset.range = key;
+
+  const title = document.createElement("div");
+  title.className = "cell-title";
+  title.textContent = rf.unit ? `${rf.label} (${rf.unit})` : rf.label;
+  cell.appendChild(title);
+
+  const canvas = document.createElement("canvas");
+  canvas.className = "histogram-canvas";
+  cell.appendChild(canvas);
+
+  let inLo, inHi;
+  const slider = buildSliderUI(rf, (lo, hi) => {
+    if (rf.isDate) {
+      inLo.value = epochToDateInput(lo);
+      inHi.value = epochToDateInput(hi);
+    } else {
+      inLo.value = formatRangeValue(rf, lo);
+      inHi.value = formatRangeValue(rf, hi);
+    }
+    onCellSliderChange(key, lo, hi);
+  });
+  cell.appendChild(slider.el);
+
+  const numRow = document.createElement("div");
+  numRow.className = "pop-row";
+  inLo = document.createElement("input");
+  inHi = document.createElement("input");
+  if (rf.isDate) {
+    inLo.type = inHi.type = "date";
+    inLo.value = epochToDateInput(rf.min);
+    inHi.value = epochToDateInput(rf.max);
+  } else {
+    inLo.type = inHi.type = "number";
+    inLo.step = inHi.step = "any";
+    inLo.value = formatRangeValue(rf, rf.min);
+    inHi.value = formatRangeValue(rf, rf.max);
+  }
+  const dash = document.createElement("span");
+  dash.className = "dash";
+  dash.textContent = rf.isDate ? "→" : "–";
+  numRow.append(inLo, dash, inHi);
+  cell.appendChild(numRow);
+
+  const reset = document.createElement("button");
+  reset.type = "button";
+  reset.className = "cell-reset";
+  reset.textContent = "reset";
+  reset.addEventListener("click", () => {
+    rf.min = rf.fmin; rf.max = rf.fmax; rf.active = false;
+    if (rf.isDate) {
+      inLo.value = epochToDateInput(rf.fmin);
+      inHi.value = epochToDateInput(rf.fmax);
+    } else {
+      inLo.value = formatRangeValue(rf, rf.fmin);
+      inHi.value = formatRangeValue(rf, rf.fmax);
+    }
+    slider.syncFromState();
+    reflectFilterButton();
+    refreshAllHistograms();
+    applyFilter();
+    updateMatchCount();
+  });
+  cell.appendChild(reset);
+
+  // Numeric / date input → state, then sync slider + redraw.
+  const onNum = () => {
+    let lo, hi;
+    if (rf.isDate) {
+      lo = dateInputToEpoch(inLo.value); hi = dateInputToEpoch(inHi.value);
+    } else {
+      lo = parseFloat(inLo.value); hi = parseFloat(inHi.value);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi < lo) return;
+    lo = Math.max(rf.fmin, Math.min(rf.fmax, lo));
+    hi = Math.max(rf.fmin, Math.min(rf.fmax, hi));
+    onCellSliderChange(key, lo, hi);
+    slider.syncFromState();
+  };
+  inLo.addEventListener("change", onNum);
+  inHi.addEventListener("change", onNum);
+
+  cellRenderers.set(key, {
+    repaintHist: () => renderHistogram(canvas, computeHistogram(key, eventsForHistogram(key)), rf),
+    syncSlider:  () => slider.syncFromState(),
+  });
+  return cell;
+}
+
+function buildFilterGridContent() {
+  const root = $("#range-popover");
+  root.innerHTML = "";
+  cellRenderers.clear();
+  const grid = document.createElement("div");
+  grid.className = "filter-grid";
+  for (const key of Object.keys(state.rangeFilters)) {
+    grid.appendChild(buildFilterCell(key));
+  }
+  root.appendChild(grid);
+
+  const footer = document.createElement("div");
+  footer.className = "popover-footer";
+  const count = document.createElement("span");
+  count.className = "match-count";
+  count.id = "popover-match-count";
+  const resetAll = document.createElement("button");
+  resetAll.type = "button";
+  resetAll.className = "reset-btn";
+  resetAll.textContent = "reset all";
+  resetAll.addEventListener("click", () => {
+    clearAllRangeFilters();
+    syncAllSliders();
+    refreshAllHistograms();
+    applyFilter();
+    updateMatchCount();
+  });
+  footer.append(count, resetAll);
+  root.appendChild(footer);
+}
+
+/* ---- cross-filter update flow ---- */
+
+function refreshAllHistograms() {
+  for (const [, r] of cellRenderers) r.repaintHist();
+}
+function refreshOtherHistograms(key) {
+  for (const [k, r] of cellRenderers) if (k !== key) r.repaintHist();
+}
+function syncAllSliders() {
+  for (const [, r] of cellRenderers) r.syncSlider();
+}
+function updateMatchCount() {
+  const el = document.getElementById("popover-match-count");
+  if (el) el.textContent = `${state.events.length} of ${state.allEvents.length} match`;
+}
+
+let crossUpdatePending = false;
+let crossUpdateExcludeKey = null;
+function scheduleCrossFilterUpdate(excludeKey) {
+  crossUpdateExcludeKey = excludeKey;
+  if (crossUpdatePending) return;
+  crossUpdatePending = true;
+  requestAnimationFrame(() => {
+    crossUpdatePending = false;
+    applyFilter();
+    refreshOtherHistograms(crossUpdateExcludeKey);
+    updateMatchCount();
+  });
+}
+
+function onCellSliderChange(key, lo, hi) {
+  const rf = state.rangeFilters[key];
+  rf.min = lo; rf.max = hi;
+  const eps = (rf.fmax - rf.fmin) * 1e-6;
+  rf.active = (lo > rf.fmin + eps) || (hi < rf.fmax - eps);
+  reflectFilterButton();
+  // The dragged axis repaints synchronously so the cyan brush-overlay
+  // tracks the handle without lag. Other cells + applyFilter happen in
+  // requestAnimationFrame to coalesce rapid `input` events.
+  cellRenderers.get(key)?.repaintHist();
+  scheduleCrossFilterUpdate(key);
+}
+
+/* ---- filter-button display + popover lifecycle ---- */
+
+function reflectFilterButton() {
+  const btn = $("#filter-btn");
+  if (!btn) return;
+  let n = 0;
+  for (const k in state.rangeFilters) if (state.rangeFilters[k].active) n++;
+  btn.classList.toggle("active", n > 0);
+  const badge = $("#filter-active-count");
+  if (n > 0) { badge.hidden = false; badge.textContent = String(n); }
+  else       { badge.hidden = true;  badge.textContent = ""; }
+}
+
+function positionPopover(anchor) {
+  const pop = $("#range-popover");
+  const ar = anchor.getBoundingClientRect();
+  // Align the popover under the anchor, but keep it inside the viewport
+  // horizontally — for a 540 px popover the right edge would otherwise
+  // clip on narrower windows.
+  const popW = pop.offsetWidth || 540;
+  const margin = 8;
+  let left = window.scrollX + ar.left;
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - popW - margin;
+  if (left > maxLeft) left = Math.max(margin + window.scrollX, maxLeft);
+  pop.style.left = left + "px";
+  pop.style.top  = (window.scrollY + ar.bottom + 10) + "px";
+  // Arrow points up at the anchor's centre, clamped to the popover bounds.
+  const anchorCenterPage = window.scrollX + ar.left + ar.width / 2;
+  const arrowX = Math.max(12, Math.min(popW - 24, anchorCenterPage - left - 6));
+  pop.style.setProperty("--arrow-x", arrowX + "px");
+}
+
+function openFilterPopover(pinned) {
+  const btn = $("#filter-btn");
+  if (!popOpen) buildFilterGridContent();
+  popOpen = true;
+  popPinned = popPinned || pinned;
+  const pop = $("#range-popover");
+  pop.classList.remove("hidden");
+  positionPopover(btn);
+  btn.setAttribute("aria-expanded", "true");
+  // Histograms need the canvas to have a non-zero clientWidth — paint
+  // after the popover is visible & laid out.
+  requestAnimationFrame(() => {
+    refreshAllHistograms();
+    updateMatchCount();
+  });
+}
+
+function closeFilterPopover() {
+  popOpen = false;
+  popPinned = false;
+  if (popOpenT)  { clearTimeout(popOpenT);  popOpenT = null; }
+  if (popCloseT) { clearTimeout(popCloseT); popCloseT = null; }
+  $("#range-popover").classList.add("hidden");
+  const btn = $("#filter-btn");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function bindFilterButton() {
+  const btn = $("#filter-btn");
+  const pop = $("#range-popover");
+  if (!btn || !pop) return;
+
+  btn.addEventListener("mouseenter", () => {
+    if (popCloseT) { clearTimeout(popCloseT); popCloseT = null; }
+    if (popOpen) return;
+    if (popOpenT) clearTimeout(popOpenT);
+    popOpenT = setTimeout(() => openFilterPopover(false), POPOVER_HOVER_OPEN_MS);
+  });
+  btn.addEventListener("mouseleave", () => {
+    if (popOpenT) { clearTimeout(popOpenT); popOpenT = null; }
+    if (popPinned) return;
+    popCloseT = setTimeout(closeFilterPopover, POPOVER_HOVER_CLOSE_MS);
+  });
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (popOpen && popPinned) { closeFilterPopover(); return; }
+    openFilterPopover(true);
+  });
+
+  pop.addEventListener("mouseenter", () => {
+    if (popCloseT) { clearTimeout(popCloseT); popCloseT = null; }
+  });
+  pop.addEventListener("mouseleave", () => {
+    if (popPinned) return;
+    popCloseT = setTimeout(closeFilterPopover, POPOVER_HOVER_CLOSE_MS);
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!popPinned) return;
+    if (pop.contains(e.target)) return;
+    if (btn.contains(e.target)) return;
+    closeFilterPopover();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && popOpen) {
+      e.preventDefault();
+      closeFilterPopover();
+    }
+  });
+  window.addEventListener("resize", debounce(() => {
+    if (popOpen) positionPopover(btn);
+  }, 100));
+}
+
+function clearAllRangeFilters() {
+  for (const [, rf] of Object.entries(state.rangeFilters)) {
+    rf.min = rf.fmin; rf.max = rf.fmax; rf.active = false;
+  }
+  reflectFilterButton();
 }
 
 function reflectToggles() {
@@ -1272,12 +1749,11 @@ function bindUI() {
   document.querySelectorAll(".filter-pill[data-region]").forEach((b) => {
     b.addEventListener("click", () => toggleRegion(b.dataset.region));
   });
-  document.querySelectorAll(".seg-btn[data-sort]").forEach((b) => {
-    b.addEventListener("click", () => setSort(b.dataset.sort));
-  });
+  $("#sort-select").addEventListener("change", (e) => setSort(e.target.value));
   $("#reverse-btn").addEventListener("click", toggleReverse);
   reflectFilterPills();
   reflectSortButtons();
+  bindFilterButton();
 
   $("#zoom-btn").addEventListener("click", toggleZoom);
   $("#detrend-btn").addEventListener("click", toggleDetrend);
