@@ -57,6 +57,7 @@ const state = {
   allEvents: [],       // every event, sorted by current sort key (slim: id/uid/peak/band/region)
   events: [],          // filter-applied subset visible to the user
   timelineAll: [],     // unfiltered, for top strip
+  timelineAllById: null, // Map<event_id, event> built once after fetch
   regionIntervals: [], // mission-wide MS/SH/SW intervals
   timelineCache: null, // pre-rendered timeline strip (canvas)
   detailCache: new Map(), // event_id → full /api/events/{id} payload (heavy stat fields)
@@ -67,6 +68,7 @@ const state = {
   sort: "peak_time",
   sortReverse: false,
   hoverEventId: null,  // event hovered on the timeline canvas
+  hoverEvent: null,    // full hit object: {x, id, band, peak_time}
   zoom: true,          // focus on event window ± 1h (default on)
   detrend: false,      // subtract band-aware rolling mean
   showSpan: true,      // draw event-window highlight
@@ -124,6 +126,14 @@ function escapeHtml(s) {
     { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
   ));
 }
+
+const debounce = (fn, ms) => {
+  let h;
+  return (...a) => {
+    clearTimeout(h);
+    h = setTimeout(() => fn(...a), ms);
+  };
+};
 
 function renderEventStats(summary, wf, detail) {
   // Heavy stat fields live in the lazily-fetched `detail`; fall back to
@@ -294,9 +304,11 @@ function buildTimelineCache(cssW, dpr) {
     eventsXs.push({ x, id: ev.event_id, band: ev.band, peak_time: ev.peak_time });
   }
   c.globalAlpha = 1;
-  // Sort by x for fast nearest-x lookup.
+  // Sort by x for fast nearest-x lookup; also expose an id→entry Map so
+  // drawTimeline's hover overlay is O(1) instead of an Array.find scan.
   eventsXs.sort((a, b) => a.x - b.x);
-  return { canvas: off, cssW, dpr, xOf, eventsXs };
+  const eventsXsById = new Map(eventsXs.map((e) => [e.id, e]));
+  return { canvas: off, cssW, dpr, xOf, eventsXs, eventsXsById };
 }
 
 function nearestTimelineEvent(xCss, tolPx = 12) {
@@ -345,9 +357,12 @@ function drawTimeline(currentId) {
   ctx.drawImage(tc.canvas, 0, 0);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Hover highlight: emphasize the hovered event tick.
+  // Hover highlight: emphasize the hovered event tick. The mousemove
+  // handler stashes the full hit object on state.hoverEvent, but the
+  // tick's x position lives on the cache (which rebuilds on resize/
+  // filter), so we look it up on the cache by id.
   if (state.hoverEventId != null) {
-    const hov = tc.eventsXs.find((e) => e.id === state.hoverEventId);
+    const hov = tc.eventsXsById.get(state.hoverEventId);
     if (hov) {
       ctx.fillStyle = BAND_COLORS[hov.band] || "#666";
       ctx.globalAlpha = 1;
@@ -360,7 +375,7 @@ function drawTimeline(currentId) {
 
   // Current event marker spans both strips (cheap, ~5 ops).
   if (currentId != null) {
-    const cur = state.timelineAll.find((e) => e.event_id === currentId);
+    const cur = state.timelineAllById?.get(currentId);
     if (cur) {
       const x = tc.xOf(toEpoch(cur.peak_time));
       ctx.strokeStyle = "#fff";
@@ -377,9 +392,11 @@ function drawTimeline(currentId) {
   }
 }
 
-window.addEventListener("resize", () => {
+// Debounced so a single drag fires drawTimeline once when the user lets
+// go, instead of rebuilding the offscreen cache every pixel of resize.
+window.addEventListener("resize", debounce(() => {
   drawTimeline(currentEventId());
-});
+}, 100));
 
 function bindTimelineInteraction() {
   const cv = $("#timeline");
@@ -391,6 +408,7 @@ function bindTimelineInteraction() {
     const newId = hit?.id ?? null;
     if (newId !== state.hoverEventId) {
       state.hoverEventId = newId;
+      state.hoverEvent = hit;
       cv.style.cursor = newId != null ? "pointer" : "crosshair";
       cv.title = hit ? `event ${hit.id} · ${hit.band} · ${hit.peak_time.replace("T", " ")}` : "";
       drawTimeline(currentEventId());
@@ -399,6 +417,7 @@ function bindTimelineInteraction() {
   cv.addEventListener("mouseleave", () => {
     if (state.hoverEventId != null) {
       state.hoverEventId = null;
+      state.hoverEvent = null;
       cv.style.cursor = "crosshair";
       cv.title = "";
       drawTimeline(currentEventId());
@@ -712,9 +731,7 @@ function ensureSpectrumPlot(target) {
         labelFont: "12px ui-monospace, monospace",
         grid:  { stroke: "rgba(235,235,235,0.05)", width: 1 },
         ticks: { stroke: "rgba(235,235,235,0.18)", width: 1, size: 5 },
-        values: (u, splits) => splits.map((v) =>
-          v == null ? "" : v >= 1 ? v.toExponential(0) : v.toExponential(0)
-        ),
+        values: (u, splits) => splits.map((v) => v == null ? "" : v.toExponential(0)),
       },
     ],
     plugins: [periodMarkerPlugin],
@@ -746,15 +763,22 @@ async function fetchEvents() {
   setStatus("loading events…");
   const params = new URLSearchParams();
   if (state.sort) params.set("sort", state.sort);
-  const r = await fetch("/api/events?" + params.toString());
-  state.allEvents = await r.json();
-  if (!state.timelineAll.length) {
-    const [tr, rr] = await Promise.all([
-      fetch("/api/timeline"),
-      fetch("/api/regions"),
-    ]);
-    state.timelineAll = await tr.json();
-    state.regionIntervals = await rr.json();
+  // Parallel-fan-out the three independent boot fetches: previously the
+  // events response had to land before timeline/regions even started.
+  const needTimeline = !state.timelineAll.length;
+  const reqs = [fetch("/api/events?" + params.toString())];
+  if (needTimeline) {
+    reqs.push(fetch("/api/timeline"), fetch("/api/regions"));
+  }
+  const [evR, tR, rR] = await Promise.all(reqs);
+  state.allEvents = await evR.json();
+  if (needTimeline) {
+    state.timelineAll = await tR.json();
+    state.regionIntervals = await rR.json();
+    // O(1) id→event lookup for drawTimeline's white "current" indicator.
+    state.timelineAllById = new Map(
+      state.timelineAll.map((e) => [e.event_id, e]),
+    );
   }
   setStatus("");
   applyFilter({ keepPos: false });
@@ -936,13 +960,6 @@ async function loadSynthetic() {
   }
 }
 
-const debounce = (fn, ms) => {
-  let h;
-  return (...a) => {
-    clearTimeout(h);
-    h = setTimeout(() => fn(...a), ms);
-  };
-};
 const debouncedSyn = debounce(loadSynthetic, 250);
 
 let benchAbort = null;
@@ -1045,6 +1062,10 @@ function showSubtab(name) {
   if (name === "benchmark" && !state.benchData) loadBenchmark();
 }
 
+// Hoisted by bindUI(); used by bindKeys to avoid two DOM lookups + two
+// classList reads on every keystroke.
+let tabEventsEl = null;
+
 function bindKeys() {
   document.addEventListener("keydown", (e) => {
     if (
@@ -1052,7 +1073,8 @@ function bindKeys() {
       || e.target.tagName === "TEXTAREA"
       || e.target.isContentEditable
     ) return;
-    if (!$("#tab-events").classList.contains("hidden")) {
+    const eventsTabActive = !tabEventsEl.classList.contains("hidden");
+    if (eventsTabActive) {
       const step = e.shiftKey ? 10 : 1;
       if (e.key === "ArrowLeft")  { e.preventDefault(); loadEventAtPos(state.pos - step); }
       if (e.key === "ArrowRight") { e.preventDefault(); loadEventAtPos(state.pos + step); }
@@ -1067,8 +1089,7 @@ function bindKeys() {
       if (e.key === ".") { e.preventDefault(); toggleDetrend(); }
     }
     if (e.key === "t") {
-      const cur = $("#tab-events").classList.contains("hidden") ? "events" : "synthetic";
-      showTab(cur);
+      showTab(eventsTabActive ? "synthetic" : "events");
     }
   });
 }
@@ -1140,7 +1161,8 @@ function reflectToggles() {
 
 function rerenderCurrent() {
   if (state.lastWf && state.lastSpec) {
-    renderEvent(state.lastWf, state.lastSpec);
+    const id = state.filteredIds[state.pos];
+    renderEvent(state.lastWf, state.lastSpec, state.detailCache.get(id));
   }
 }
 
@@ -1171,6 +1193,7 @@ function togglePeak() {
 /* ================================ Init ================================ */
 
 function bindUI() {
+  tabEventsEl = $("#tab-events");
   document.querySelectorAll(".tab").forEach(
     (t) => t.addEventListener("click", () => showTab(t.dataset.tab)),
   );

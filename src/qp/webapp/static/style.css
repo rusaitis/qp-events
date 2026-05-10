@@ -49,7 +49,6 @@ button { cursor: pointer; }
 button:hover { border-color: #555; }
 button.active { background: var(--accent); color: #000; border-color: var(--accent); }
 
-.toggles { display: inline-flex; gap: 4px; margin-left: 8px; }
 .toggle {
   font-size: 11px;
   padding: 3px 10px;
@@ -139,26 +138,6 @@ label {
   width: 100%;
   display: block;
 }
-.timeline-legend {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 2px; }
-.dot.qp30  { background: var(--b-qp30); }
-.dot.qp60  { background: var(--b-qp60); }
-.dot.qp120 { background: var(--b-qp120); }
-.sep { width: 12px; }
-.region-swatch {
-  display: inline-block; width: 14px; height: 8px; border-radius: 2px; opacity: 0.6;
-}
-.region-swatch.ms { background: var(--r-ms); }
-.region-swatch.sh { background: var(--r-sh); }
-.region-swatch.sw { background: var(--r-sw); }
-
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -168,15 +147,6 @@ label {
 }
 .filters .count { color: var(--muted); margin-left: auto; }
 .filters .presets { display: flex; gap: 4px; }
-
-.meta-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 6px 0;
-  flex-wrap: wrap;
-}
-.meta-secondary { color: var(--muted); font-size: 12px; }
 
 .selection-envelope {
   display: grid;
@@ -452,23 +422,6 @@ button.reverse-btn.active {
 .q-chip.q-mid  { background: #f5b800; }   /* 2.5 ≤ Q < 4 */
 .q-chip.q-low  { background: #f29539; }   /* Q < 2.5 */
 .q-chip.q-unknown { background: var(--r-uk); color: #ddd; }
-
-.band-pill, .region-pill {
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #000;
-  font-weight: 600;
-}
-.band-pill[data-band=QP30]  { background: var(--b-qp30); }
-.band-pill[data-band=QP60]  { background: var(--b-qp60); }
-.band-pill[data-band=QP120] { background: var(--b-qp120); }
-.region-pill[data-region=magnetosphere] { background: var(--r-ms); }
-.region-pill[data-region=magnetosheath] { background: var(--r-sh); }
-.region-pill[data-region=solar_wind]    { background: var(--r-sw); }
-.region-pill[data-region=unknown]       { background: var(--r-uk); color: #ddd; }
 
 .plot {
   background: var(--panel);

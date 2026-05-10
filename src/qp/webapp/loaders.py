@@ -195,6 +195,7 @@ def event_summaries(
     return out.to_dict(orient="records")
 
 
+@lru_cache(maxsize=512)
 def event_detail(event_id: int) -> dict[str, Any] | None:
     df = load_event_table()
     row_series = _row_for(df, event_id)
@@ -211,7 +212,7 @@ def event_detail(event_id: int) -> dict[str, Any] | None:
     return row
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def event_waveform(event_id: int, hours_pad: float = 12.0) -> dict[str, Any] | None:
     """Return MFA waveform window centered on peak_time. LRU cached so the
     same event is served instantly on revisit (e.g., toggling zoom/detrend
@@ -255,7 +256,7 @@ def event_waveform(event_id: int, hours_pad: float = 12.0) -> dict[str, Any] | N
     }
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=2048)
 def event_spectrum(
     event_id: int, hours_pad: float = 12.0,
 ) -> dict[str, Any] | None:
@@ -296,6 +297,7 @@ def event_spectrum(
     }
 
 
+@lru_cache(maxsize=1)
 def timeline_summary() -> list[dict[str, Any]]:
     """Per-event minimal record for the top timeline strip."""
     df = load_event_table()
