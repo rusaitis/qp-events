@@ -162,7 +162,34 @@ const HELP_TEXT = {
   bpar:     "Component parallel to the mean field. Compressional / fast-mode wave power lives here.",
   stokes_d: "Degree of circular polarization. +1 = right-handed circular, −1 = left-handed circular, 0 = linear. Computed from the cross-correlation of B⊥₁ and B⊥₂.",
   l_shell:  "Dipole L-shell parameter L = R / cos²(λ_mag). Equatorial radius of the field line through the spacecraft, in Rs. Derived from r_distance and mag_lat.",
+  mva_par:  "MVA major-axis parallel fraction: (ê_max · b̂∥)². The minimum-variance principal axis of the bandpass-filtered field. Lower = more transverse. Detector requires ≤ 0.5.",
+  sigma_pk: "Robust σ above the per-row CWT background. Each frequency row's noise model is the median + MAD × 1.4826 (Gaussian-equivalent σ) computed on out-of-band period rows only, then interpolated in log-period to the in-band rows so QP signal cannot inflate its own noise estimate. The threshold itself is set by Bonferroni FWER control over the effective number of independent time-frequency cells in the search volume (α = 0.01, n_σ ≈ 4.6 for a 36-h segment). Not a fixed 3σ or 5σ — derived from the search volume.",
+  co_bands: "Other QP bands whose detection window overlaps this event's [date_from, date_to] inside the same 36-h MFA segment. Multi-harmonic events (e.g., simultaneous QP60 + QP120) flag the FLR's even-mode comb directly.",
 };
+
+// Gate-summary classifier: returns CSS class for a value compared to its
+// threshold. "Marginal" = within 10 % of the gate. Direction encodes
+// which side of the threshold "passes" — ">" means larger passes, "<"
+// means smaller passes.
+function gateClass(value, threshold, direction) {
+  if (value == null || !Number.isFinite(value)) return "gate-unknown";
+  const margin = 0.10 * Math.abs(threshold);
+  if (direction === ">") {
+    if (value < threshold) return "gate-fail";
+    if (value < threshold + margin) return "gate-marginal";
+    return "gate-pass";
+  }
+  // direction "<"
+  if (value > threshold) return "gate-fail";
+  if (value > threshold - margin) return "gate-marginal";
+  return "gate-pass";
+}
+
+function gateChip(value, threshold, direction, digits = 2) {
+  const cls = gateClass(value, threshold, direction);
+  const v = (value == null || !Number.isFinite(value)) ? "—" : value.toFixed(digits);
+  return `<span class="gate-chip ${cls}">${v}</span>`;
+}
 
 function helpHintHTML(text) {
   return ` <span class="help-hint" title="${escapeHtml(text)}">?</span>`;
@@ -212,13 +239,32 @@ const debounce = (fn, ms) => {
   };
 };
 
-function renderEventStats(summary, wf, detail) {
+function renderEventStats(summary, wf, detail, wavelet) {
   // Heavy stat fields live in the lazily-fetched `detail`; fall back to
   // `summary` if it hasn't arrived yet (rare — fetched in parallel with
   // the waveform). `wf`/`summary` always cover the band/region pills.
+  // `wavelet` (also lazily fetched) carries σ-at-peak and the canonical
+  // gate thresholds for the gate-summary chips.
   const s = detail || {};
   const q = s.q_factor;
   const qPill = `<span class="q-chip ${qFactorClass(q)}">${fmt(q, 2)}</span>`;
+  const w = wavelet || {};
+  const thr = w.thresholds || {};
+  // Co-occurring sibling bands — string field on the parquet row.
+  const coRaw = (detail && detail.co_bands) || summary.co_bands || "";
+  const coBands = (coRaw && coRaw !== "" )
+    ? String(coRaw).split(",").map(b => b.trim()).filter(Boolean)
+    : [];
+  const coBandsHtml = coBands.length
+    ? coBands.map(b => `<span class="pill" data-band="${escapeHtml(b)}">${escapeHtml(b)}</span>`).join(" ")
+    : '—';
+  // Fall back to the canonical detector defaults so the gate chips
+  // colour correctly even before the wavelet fetch has resolved.
+  const Q_MIN     = thr.q_factor_min     ?? 3.0;
+  const MVA_MAX   = thr.mva_par_frac_max ?? 0.5;
+  const STOKES_MIN= thr.stokes_d_min     ?? 0.7;
+  const FWER_THR  = w.n_sigma_threshold  ?? null;
+  const SIGMA_PK  = w.sigma_at_peak      ?? null;
   const region = escapeHtml(wf?.region ?? summary.region ?? "unknown");
   const regionPill = `<span class="pill" data-region="${region}">${region}</span>`;
   const band = escapeHtml(wf?.band ?? summary.band ?? "?");
@@ -260,6 +306,21 @@ function renderEventStats(summary, wf, detail) {
             <span class="stat-val">${qPill}</span></div>
           ${statTile("Stokes d", fmt(s.stokes_d, 2), "", null, HELP_TEXT.stokes_d)}
         </div>
+      </div>
+    </div>
+    <div class="stat-group">
+      <div class="stat-group-title">Gates</div>
+      <div class="stat-grid stack">
+        <div class="stat"><span class="stat-label">Q ≥ ${Q_MIN}${helpHintHTML(HELP_TEXT.q_factor)}</span>
+          <span class="stat-val">${gateChip(q, Q_MIN, ">")}</span></div>
+        <div class="stat"><span class="stat-label">MVA∥ ≤ ${MVA_MAX}${helpHintHTML(HELP_TEXT.mva_par)}</span>
+          <span class="stat-val">${gateChip(s.mva_par_frac, MVA_MAX, "<")}</span></div>
+        <div class="stat"><span class="stat-label">Stokes d ≥ ${STOKES_MIN}${helpHintHTML(HELP_TEXT.stokes_d)}</span>
+          <span class="stat-val">${gateChip(s.stokes_d, STOKES_MIN, ">")}</span></div>
+        <div class="stat"><span class="stat-label">σ-peak ≥ ${FWER_THR != null ? FWER_THR.toFixed(2) : "—"}${helpHintHTML(HELP_TEXT.sigma_pk)}</span>
+          <span class="stat-val">${FWER_THR != null ? gateChip(SIGMA_PK, FWER_THR, ">") : '<span class="gate-chip gate-unknown">…</span>'}</span></div>
+        <div class="stat"><span class="stat-label">Co-occurs with${helpHintHTML(HELP_TEXT.co_bands)}</span>
+          <span class="stat-val">${coBandsHtml}</span></div>
       </div>
     </div>
   `;
@@ -1363,17 +1424,21 @@ async function loadEventAtPos(pos) {
     const requests = [
       fetch(`/api/events/${id}/waveform`, { signal: ctrl.signal }),
       fetch(`/api/events/${id}/spectrum`, { signal: ctrl.signal }),
+      fetch(`/api/events/${id}/wavelet`,  { signal: ctrl.signal }),
     ];
     if (!cachedDetail) {
       requests.push(fetch(`/api/events/${id}`, { signal: ctrl.signal }));
     }
     const responses = await Promise.all(requests);
-    const [wfR, specR, detailR] = responses;
+    const [wfR, specR, wvltR, detailR] = responses;
     setStatus(`fetched event ${id}, parsing…`);
     if (!wfR.ok) throw new Error(`waveform HTTP ${wfR.status}`);
     if (!specR.ok) throw new Error(`spectrum HTTP ${specR.status}`);
+    // Wavelet gate JSON is a nice-to-have — a failure shouldn't block
+    // the wf/spec render. Fall back to null so the gate chips show "—".
     const wf = await wfR.json();
     const spec = await specR.json();
+    const wavelet = wvltR.ok ? await wvltR.json() : null;
     let detail = cachedDetail;
     if (detailR) {
       if (!detailR.ok) throw new Error(`detail HTTP ${detailR.status}`);
@@ -1381,7 +1446,7 @@ async function loadEventAtPos(pos) {
       state.detailCache.set(id, detail);
     }
     setStatus(`rendering event ${id}…`);
-    renderEvent(wf, spec, detail);
+    renderEvent(wf, spec, detail, wavelet);
     drawTimeline(id);
     setStatus(`event ${id}`);
   } catch (e) {
@@ -1392,13 +1457,13 @@ async function loadEventAtPos(pos) {
   }
 }
 
-function renderEvent(wf, spec, detail) {
+function renderEvent(wf, spec, detail, wavelet) {
   const summary = state.events[state.pos] || {};
   const total = state.events.length;
   $("#event-position-num").textContent = state.pos + 1;
   $("#event-position-total").textContent = total;
   $("#event-uid").textContent = summary.event_uid || "";
-  renderEventStats(summary, wf, detail);
+  renderEventStats(summary, wf, detail, wavelet);
 
   state.lastWf = wf;
   state.lastSpec = spec;
@@ -1439,6 +1504,21 @@ function renderEvent(wf, spec, detail) {
     spec.qp_periods_min,
     detail,
   );
+  updateWaveletPanel(summary.event_id);
+}
+
+function updateWaveletPanel(eventId) {
+  // Server-rendered CWT scalogram + σ-mask. Setting `src` triggers the
+  // browser to fetch; HTTP cache + endpoint Cache-Control gives instant
+  // navigation on revisit. The wrapping div shows a "loading" tint until
+  // onload fires.
+  const wrap = $("#plot-wavelet");
+  const img  = $("#wavelet-img");
+  if (!wrap || !img || eventId == null) return;
+  wrap.classList.add("loading");
+  img.onload = () => wrap.classList.remove("loading");
+  img.onerror = () => wrap.classList.remove("loading");
+  img.src = `/api/events/${eventId}/wavelet.png`;
 }
 
 /* =============================== Synthetic ============================== */

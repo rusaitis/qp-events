@@ -14,13 +14,24 @@ QP120             ~120            m=2 (2nd even)
 Band edges are *symmetric in log-period* about the nominal centroid
 and were chosen to give clean separation between bands while still
 catching the natural spread observed in the FFT power-ratio plots
-(Figs 4-5 of the paper).
+(Figs 4-5 of the paper). The 5-min gap between QP30 and QP60 (40-45 min)
+and the 10-min gap between QP60 and QP120 (80-90 min) are dead zones
+where ``classify_period`` returns ``None``.
+
+The gaps are empirically justified. A contiguous sensitivity sweep
+across 111 representative segments (1 in 43 of the mission) by
+``scripts/diag_band_sensitivity.py`` found **zero detections** in the
+40-45 min and 80-90 min gap zones (out of 43 events total). The gaps
+genuinely separate the three FLR even-mode harmonics. See
+``Output/figures/diag_p2_band_gap_sensitivity.png``.
 
 The :data:`SEARCH_BAND_EXTENDED` covers the diagnostic 5 min - 12 h
 range. The :data:`REJECT_BAND_HF` and :data:`REJECT_BAND_LF` constants
 mark the Nyquist guard (10 min for 1-min data) and the Welch-window
 upper bound (12 h) respectively — used by the threshold module to
-mask edge bins of the wavelet scalogram.
+mask edge bins of the wavelet scalogram. The same sensitivity sweep
+also finds zero detections above 150 min, supporting the upper cutoff
+of QP120.
 """
 
 from __future__ import annotations

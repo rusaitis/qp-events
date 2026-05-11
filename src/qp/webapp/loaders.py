@@ -196,6 +196,10 @@ def event_summaries(
         "q_factor", "period_min", "stokes_d",
         "r_distance", "local_time", "mag_lat",
     ]
+    if "is_duplicate" in df.columns:
+        cols.append("is_duplicate")
+    if "co_bands" in df.columns:
+        cols.append("co_bands")
     out = df[cols].copy()
     out["peak_time"] = out["peak_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
     # Dipole L-shell L = R / cos²(λ_mag); computed once here so the JS

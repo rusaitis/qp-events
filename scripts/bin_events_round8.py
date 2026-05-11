@@ -310,6 +310,15 @@ def main() -> None:
         "--trace-workers", type=int, default=8,
         help="Multiprocessing workers for KMAG tracing.",
     )
+    parser.add_argument(
+        "--keep-duplicates",
+        action="store_true",
+        help=(
+            "Bin every row in the parquet. Default behaviour drops rows "
+            "tagged by qp.events.dedup (cross- and intra-segment "
+            "duplicates), if the column is present."
+        ),
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -323,6 +332,10 @@ def main() -> None:
     log.info("loading events: %s", args.events)
     df = pd.read_parquet(args.events)
     log.info("  %d events", len(df))
+    if "is_duplicate" in df.columns and not args.keep_duplicates:
+        n_drop = int(df["is_duplicate"].sum())
+        df = df.loc[~df["is_duplicate"]].reset_index(drop=True)
+        log.info("  dropped %d duplicate rows (post-hoc dedup)", n_drop)
 
     # 2. Load trajectory + regions
     t_load = time.perf_counter()

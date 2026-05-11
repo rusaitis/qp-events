@@ -11,11 +11,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import loaders, synthetic
+from . import loaders, synthetic, wavelet_panel
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
@@ -119,6 +119,34 @@ def event_spectrum(
     if spec is None:
         raise HTTPException(404, f"spectrum unavailable for event {event_id}")
     return spec
+
+
+@app.get("/api/events/{event_id}/wavelet")
+def event_wavelet_gates(
+    event_id: int,
+    hours: float = Query(12.0, gt=0.5, le=18.0),
+) -> dict:
+    """Gate-summary JSON for the wavelet evidence panel."""
+    gates = wavelet_panel.wavelet_gates(event_id, hours_pad=hours)
+    if gates is None:
+        raise HTTPException(404, f"wavelet panel unavailable for event {event_id}")
+    return gates
+
+
+@app.get("/api/events/{event_id}/wavelet.png")
+def event_wavelet_png(
+    event_id: int,
+    hours: float = Query(12.0, gt=0.5, le=18.0),
+) -> Response:
+    """Server-side rendered scalogram + σ-mask + detection peak."""
+    png = wavelet_panel.render_wavelet_png(event_id, hours_pad=hours)
+    if png is None:
+        raise HTTPException(404, f"wavelet panel unavailable for event {event_id}")
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.get("/api/timeline")

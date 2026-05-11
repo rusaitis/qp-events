@@ -575,6 +575,35 @@ SEGMENT_FWER_ALPHA: float = 0.01
 MIN_Q_FACTOR: float = 3.0
 
 #: Minimum Stokes degree of polarization over the in-band TF window.
+#:
+#: ``d = sqrt(Q^2 + U^2 + V^2) / I`` is computed from the cross-Stokes
+#: parameters of the b_perp1 / b_perp2 Morlet-CWT analytic-signal
+#: coefficients, averaged over the band's frequency rows and the
+#: event's time window (see
+#: :func:`qp.signal.polarization.degree_of_polarization`). ``d = 1``
+#: is a fully polarized wave — circular, linear, or elliptical alike;
+#: ``d = 0`` is unpolarized broadband noise, where the cross-terms
+#: :math:`\langle z_1 z_2^* \rangle` average to zero.
+#:
+#: Community convention. The 0.6–0.8 range is standard for "polarized
+#: event" identification in magnetospheric ULF-wave catalogues (Samson
+#: 1973, *Geophys. J. R. Astr. Soc.* 34, 403; Anderson et al. 1990,
+#: *JGR* 95 A6; Bortnik et al. 2007, *JGR* 112 A11; Engebretson et al.
+#: 1986, *JGR* 91 A7); 0.7 is the most frequently adopted single value.
+#:
+#: Empirical justification for 0.7 in this catalogue —
+#: ``scripts/diag_stokes_distribution.py`` re-runs the detector on 111
+#: representative segments with the Stokes gate disabled and records
+#: ``d`` for every candidate that survives the σ-mask + Q-factor + MVA
+#: gates (83 candidates total). The distribution is bimodal-ish: a long
+#: "mixed/ambiguous" tail centred near 0.55 and a sharp "clean
+#: transverse Alfvén" peak near 0.9
+#: (see ``Output/figures/diag_p4_stokes_distribution.png``). The 0.7
+#: cut sits at the natural shoulder between the two populations — the
+#: catalogue would grow by ~30 % at 0.6 (mixing in linear / partly
+#: compressional candidates) and shrink by ~30 % at 0.8 (excluding
+#: moderately polarized real waves). 0.7 is therefore both the most
+#: defensible single value here and aligned with community convention.
 MIN_DEGREE_OF_POLARIZATION: float = 0.7
 
 #: Maximum allowed parallel fraction of the MVA major axis. Closer to

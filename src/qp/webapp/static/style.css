@@ -597,6 +597,20 @@ button.reverse-btn.active {
 .q-chip.q-low  { background: #f29539; }   /* Q < 2.5 */
 .q-chip.q-unknown { background: var(--r-uk); color: #ddd; }
 
+/* Pass/fail chips for the gate-summary tile (Q, MVA, Stokes, σ). */
+.gate-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #000;
+}
+.gate-chip.gate-pass     { background: #2bd07b; }
+.gate-chip.gate-marginal { background: #f5b800; }
+.gate-chip.gate-fail     { background: #f29539; color: #fff; }
+.gate-chip.gate-unknown  { background: var(--r-uk); color: #ddd; }
+
 .plot {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -608,6 +622,16 @@ button.reverse-btn.active {
 }
 .plot .uplot { width: 100%; }
 .plot.small .u-wrap { height: 200px !important; }
+
+/* Server-rendered scalogram panel — match the .plot envelope. */
+.plot-wavelet img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 3px;
+}
+.plot-wavelet img:not([src]) { display: none; }
+.plot-wavelet.loading { opacity: 0.5; }
 
 .hint {
   margin-top: 8px;

@@ -65,6 +65,10 @@ def main() -> None:
 
     df = pd.read_parquet(parquet)
     log.info("loaded %d events from %s", len(df), parquet.name)
+    if "is_duplicate" in df.columns:
+        n_dup = int(df["is_duplicate"].sum())
+        df = df.loc[~df["is_duplicate"]].reset_index(drop=True)
+        log.info("dropped %d duplicate rows (post-hoc dedup)", n_dup)
 
     by_band = {b: df[df["band"] == b] for b in BANDS}
     bins = np.linspace(0, 360, 25)  # 15 deg bins

@@ -302,6 +302,10 @@ def main() -> None:
     parquet = qp.OUTPUT_DIR / "events_round8.parquet"
     df = pd.read_parquet(parquet)
     log.info("loaded %d events from %s", len(df), parquet)
+    if "is_duplicate" in df.columns:
+        n_dup = int(df["is_duplicate"].sum())
+        df = df.loc[~df["is_duplicate"]].reset_index(drop=True)
+        log.info("dropped %d duplicate rows (post-hoc dedup)", n_dup)
 
     # Cut the proximal-orbit pathology (events at r < 3 R_S have unphysical
     # >10 kT amplitudes from the rotating ambient dipole field).
