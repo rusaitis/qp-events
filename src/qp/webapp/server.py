@@ -15,7 +15,11 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
+from qp.events.bands import QP_BAND_NAMES
+
 from . import loaders, synthetic, wavelet_panel
+
+_BAND_PATTERN = "^(" + "|".join(QP_BAND_NAMES) + ")$"
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
@@ -82,7 +86,7 @@ def index() -> HTMLResponse:
 
 @app.get("/api/events")
 def list_events(
-    band: str | None = Query(None, pattern="^(QP30|QP60|QP120)$"),
+    band: str | None = Query(None, pattern=_BAND_PATTERN),
     region: str | None = Query(
         None, pattern="^(magnetosphere|magnetosheath|solar_wind|unknown)$",
     ),
@@ -161,7 +165,7 @@ def regions() -> list[dict]:
 
 @app.get("/api/synthetic/generate")
 def synthetic_generate(
-    band: str = Query("QP60", pattern="^(QP30|QP60|QP120)$"),
+    band: str = Query("QP60", pattern=_BAND_PATTERN),
     amp: float = Query(2.0, gt=0.0, le=20.0),
     period_min: float | None = Query(None, gt=1.0, le=600.0),
     decay_h: float = Query(4.0, gt=0.1, le=24.0),
@@ -188,7 +192,7 @@ def synthetic_benchmark(
 @app.get("/api/synthetic/benchmark/event")
 def synthetic_benchmark_event(
     preset: str = Query("med_snr", pattern="^(low_snr|med_snr|high_snr)$"),
-    band: str = Query(..., pattern="^(QP30|QP60|QP120)$"),
+    band: str = Query(..., pattern=_BAND_PATTERN),
     amp: float = Query(..., gt=0.0, le=20.0),
     seed: int = Query(0, ge=0),
 ) -> dict:

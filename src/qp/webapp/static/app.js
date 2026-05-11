@@ -21,7 +21,7 @@ const REGION_COLORS = {
   solar_wind:    "#f26b59",
   unknown:       "#555555",
 };
-const BAND_COLORS = { QP30: "#80c0ff", QP60: "#ffb000", QP120: "#f06090" };
+const BAND_COLORS = { QP15: "#4ecdc4", QP30: "#80c0ff", QP60: "#ffb000", QP120: "#f06090" };
 // Indexed by uPlot series index (0 = x). Used by cursor.points.fill — uPlot
 // wraps series.stroke into a function internally, so we cannot read it back
 // at runtime; we keep the literal hex strings here instead.
@@ -32,7 +32,7 @@ const WAVE_CURSOR_COLORS = [
 // Rolling-mean window per band (minutes ≈ 4× central period). Removing
 // this trend makes the small QP perturbations visible against the
 // dominant background field, especially in |B|.
-const DETREND_WINDOW_MIN = { QP30: 120, QP60: 240, QP120: 480 };
+const DETREND_WINDOW_MIN = { QP15: 60, QP30: 120, QP60: 240, QP120: 480 };
 const DEFAULT_DETREND_MIN = 240;
 
 // Each uPlot instance carries its own mutable plugin context at
@@ -46,11 +46,11 @@ function _qpCtx(u) {
     eventWindow: null,
     xRange: null,
     yRange: null,
-    periods: [30, 60, 120],
+    periods: [15, 30, 60, 120],
   });
 }
 
-const ALL_BANDS = ["QP30", "QP60", "QP120"];
+const ALL_BANDS = ["QP15", "QP30", "QP60", "QP120"];
 const ALL_REGIONS = ["magnetosphere", "magnetosheath", "solar_wind"];
 
 const state = {
@@ -334,9 +334,10 @@ const WAVE_HIST_MIN = 10;       // log10(10)  = 1.000
 const WAVE_HIST_MAX = 180;      // log10(180) = 2.255
 const WAVE_HIST_NBINS = 60;
 const WAVE_BAND_RANGES = [      // (band, lo_min, hi_min, css-var)
+  ["QP15",  10, 20,  "--b-qp15"],
   ["QP30",  20, 40,  "--b-qp30"],
-  ["QP60",  45, 80,  "--b-qp60"],
-  ["QP120", 90, 150, "--b-qp120"],
+  ["QP60",  40, 80,  "--b-qp60"],
+  ["QP120", 80, 160, "--b-qp120"],
 ];
 const WAVE_HIST_TICKS = [10, 20, 30, 60, 120, 180];
 
@@ -1690,9 +1691,10 @@ function bindKeys() {
       const step = e.shiftKey ? 10 : 1;
       if (e.key === "ArrowLeft")  { e.preventDefault(); loadEventAtPos(state.pos - step); }
       if (e.key === "ArrowRight") { e.preventDefault(); loadEventAtPos(state.pos + step); }
-      if (e.key === "1") { toggleBand("QP30"); }
-      if (e.key === "2") { toggleBand("QP60"); }
-      if (e.key === "3") { toggleBand("QP120"); }
+      if (e.key === "1") { toggleBand("QP15"); }
+      if (e.key === "2") { toggleBand("QP30"); }
+      if (e.key === "3") { toggleBand("QP60"); }
+      if (e.key === "4") { toggleBand("QP120"); }
       if (e.key === "m") { toggleRegion("magnetosphere"); }
       if (e.key === "s") { toggleRegion("magnetosheath"); }
       if (e.key === "w") { toggleRegion("solar_wind"); }

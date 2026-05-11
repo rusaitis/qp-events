@@ -129,8 +129,9 @@ def estimate_observed_bands():
     bands = {}
     for name, center_min, search_range_min in [
         ("QP120", 120, (80, 200)),
-        ("QP60", 55, (35, 80)),
+        ("QP60", 60, (40, 80)),
         ("QP30", 30, (20, 40)),
+        ("QP15", 15, (10, 20)),
     ]:
         f_lo = 1000.0 / (search_range_min[1] * 60)
         f_hi = 1000.0 / (search_range_min[0] * 60)
@@ -157,13 +158,14 @@ def estimate_observed_bands():
 def _default_bands():
     """Fallback band widths from visual estimation of the paper's Figure 5."""
     return {
+        "QP15": (0.95, 1.40),   # mHz (~12-17 min, exploratory)
         "QP30": (0.45, 0.65),   # mHz
         "QP60": (0.22, 0.35),   # mHz
         "QP120": (0.10, 0.18),  # mHz
     }
 
 
-QP_BAND_COLORS = {"QP30": "grey", "QP60": "#FFD700", "QP120": "#FF69B4"}
+from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 
 
 def plot_panel(ax, title, eigen_tor, eigen_pol, bands, lat_range=(72, 76),
@@ -353,7 +355,7 @@ def main():
         plt.Line2D([0], [0], color="grey", lw=1.0, alpha=0.35, label="Published")
     )
     handles_obs = [mpatches.Patch(color=QP_BAND_COLORS[n], alpha=0.4, label=n)
-                   for n in ["QP30", "QP60", "QP120"]]
+                   for n in QP_BAND_NAMES]
 
     ax_a.legend(handles=handles_model, loc="upper right", title="MODELED",
                 frameon=True, fontsize=9, title_fontsize=10)

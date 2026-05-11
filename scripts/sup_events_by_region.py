@@ -30,6 +30,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 import matplotlib.pyplot as plt  # noqa: E402
 
 import qp  # noqa: E402
+from qp.events.bands import QP_BAND_NAMES  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -85,13 +86,15 @@ def summary_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
             ks_mva = stats.ks_2samp(ref.mva_par_frac.values, g.mva_par_frac.values)
             ks_ratio = stats.ks_2samp(ratio_ref.values, ratio)
 
+        row = {
+            "region": name,
+            "n": len(g),
+        }
+        for b in QP_BAND_NAMES:
+            row[f"{b} [%]"] = 100 * (g.band == b).mean()
         rows.append(
             {
-                "region": name,
-                "n": len(g),
-                "QP30 [%]": 100 * (g.band == "QP30").mean(),
-                "QP60 [%]": 100 * (g.band == "QP60").mean(),
-                "QP120 [%]": 100 * (g.band == "QP120").mean(),
+                **row,
                 "period [min]": float(np.median(g.period_min)),
                 "Q-factor": float(np.median(g.q_factor)),
                 "MVA |e·b̂‖|²": float(np.median(g.mva_par_frac)),
@@ -138,13 +141,17 @@ def make_figure(groups: dict[str, pd.DataFrame], out_path: Path) -> None:
     step_hist(
         axes[0, 0],
         lambda g: g.period_min.values,
-        bins=np.linspace(15, 180, 50),
-        xlim=(15, 180),
+        bins=np.linspace(10, 180, 50),
+        xlim=(10, 180),
         xlabel="period  [min]",
         title="period distribution",
     )
-    for p, c in zip((30, 60, 120), ("grey", "#FFB000", "#DC267F"), strict=True):
-        axes[0, 0].axvline(p, color=c, ls=":", alpha=0.7)
+    from qp.events.bands import QP_BAND_COLORS, get_band
+    for b in QP_BAND_NAMES:
+        axes[0, 0].axvline(
+            get_band(b).period_centroid_minutes,
+            color=QP_BAND_COLORS[b], ls=":", alpha=0.7,
+        )
     axes[0, 0].legend(fontsize=8, loc="upper right", framealpha=0.5)
 
     # 2. MVA major-axis transversality
@@ -215,7 +222,10 @@ def write_csv_and_latex(table: pd.DataFrame, csv_path: Path, tex_path: Path) -> 
     table.to_csv(csv_path, float_format="%.3g")
     log.info("wrote %s", csv_path)
 
-    # LaTeX table — pick the most informative subset of columns
+    # LaTeX table — pick the most informative subset of columns. We include
+    # the two most-populous QP bands by default (QP60 and QP120 in the
+    # canonical scheme); for the QP15/QP30 exploratory rows, the full CSV
+    # carries every band column.
     cols = [
         "n",
         "QP60 [%]",

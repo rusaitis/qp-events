@@ -29,6 +29,7 @@
   --r-sw: #f26b59;
   --r-uk: #555;
 
+  --b-qp15:  #4ecdc4;
   --b-qp30:  #80c0ff;
   --b-qp60:  #ffb000;
   --b-qp120: #f06090;
@@ -243,6 +244,7 @@ button.filter-pill.active {
   border-color: var(--pill-color);
   color: #0e0e0e;
 }
+.filter-pill[data-band=QP15]            { --pill-color: var(--b-qp15); }
 .filter-pill[data-band=QP30]            { --pill-color: var(--b-qp30); }
 .filter-pill[data-band=QP60]            { --pill-color: var(--b-qp60); }
 .filter-pill[data-band=QP120]           { --pill-color: var(--b-qp120); }
@@ -475,6 +477,7 @@ button.reverse-btn.active {
   font-weight: 600;
   color: #000;
 }
+.stat-val .pill[data-band=QP15]  { background: var(--b-qp15); }
 .stat-val .pill[data-band=QP30]  { background: var(--b-qp30); }
 .stat-val .pill[data-band=QP60]  { background: var(--b-qp60); }
 .stat-val .pill[data-band=QP120] { background: var(--b-qp120); }

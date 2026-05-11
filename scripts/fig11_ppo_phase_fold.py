@@ -30,12 +30,13 @@ import pandas as pd  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-BANDS = ("QP30", "QP60", "QP120")
-BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
+BANDS = QP_BAND_NAMES
+BAND_COLORS = QP_BAND_COLORS
 
 
 def _rayleigh_p(phases_deg: np.ndarray) -> float:
@@ -75,8 +76,8 @@ def main() -> None:
 
     use_paper_style()
     fig, axes = plt.subplots(
-        2, len(BANDS), figsize=(13, 7), sharex=True, sharey="row",
-        constrained_layout=True,
+        2, len(BANDS), figsize=(4.3 * len(BANDS), 7),
+        sharex=True, sharey="row", constrained_layout=True,
     )
 
     for col, band in enumerate(BANDS):

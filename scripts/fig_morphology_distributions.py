@@ -25,10 +25,11 @@ import pandas as pd
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
-BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
-BANDS = ["QP30", "QP60", "QP120"]
+BAND_COLORS = QP_BAND_COLORS
+BANDS = list(QP_BAND_NAMES)
 
 
 def _violin_panel(

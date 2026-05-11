@@ -28,7 +28,7 @@ register_legacy_pickle_stubs()
 
 import datetime  # noqa: E402
 
-from qp.events.bands import QP_BANDS  # noqa: E402
+from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES, QP_BANDS  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 from qp.signal.morphology import (  # noqa: E402
     band_envelope,
@@ -38,7 +38,7 @@ from qp.signal.morphology import (  # noqa: E402
 from qp.events.sweep_loader import load_segments, segment_to_payload  # noqa: E402
 
 DT = 60.0
-BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
+BAND_COLORS = QP_BAND_COLORS
 
 
 def _make_panel(
@@ -190,7 +190,7 @@ def main() -> None:
     out_dir = _PROJECT_ROOT / "Output" / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for band in ["QP30", "QP60", "QP120"]:
+    for band in QP_BAND_NAMES:
         print(f"Processing {band}...")
         make_gallery(band, df, segments, out_dir)
 

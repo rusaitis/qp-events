@@ -40,7 +40,7 @@ import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-from qp.events.bands import QP_BANDS
+from qp.events.bands import QP_BAND_NAMES, QP_BANDS
 from qp.events.catalog import WaveTemplate
 from qp.events.detector import detect_with_gate
 from qp.events.threshold import GateConfig
@@ -220,8 +220,11 @@ def write_csv(rows: list[CalibrationRow], path: Path) -> None:
 
 
 def plot_curves(rows: list[CalibrationRow], path: Path) -> None:
-    fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharey="row")
-    for col, band in enumerate(("QP30", "QP60", "QP120")):
+    n_bands = len(QP_BAND_NAMES)
+    fig, axes = plt.subplots(
+        2, n_bands, figsize=(4.3 * n_bands, 7), sharey="row",
+    )
+    for col, band in enumerate(QP_BAND_NAMES):
         ax_r = axes[0, col]
         ax_f = axes[1, col]
         band_rows = [r for r in rows if r.band == band]
@@ -286,7 +289,7 @@ def write_summary(
     lines.append("")
     lines.append("| Band | Chosen n_sigma | Recall | FPR | Note |")
     lines.append("|------|---------------:|-------:|----:|------|")
-    for band in ("QP30", "QP60", "QP120"):
+    for band in QP_BAND_NAMES:
         if band in chosen:
             sigma, recall, fpr, note = chosen[band]
             lines.append(
@@ -307,11 +310,7 @@ def main() -> None:
     out_dir = _PROJECT_ROOT / "Output" / "diagnostics"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    band_amplitudes = {
-        "QP30": [0.10, 0.20, 0.40, 0.80],
-        "QP60": [0.10, 0.20, 0.40, 0.80],
-        "QP120": [0.10, 0.20, 0.40, 0.80],
-    }
+    band_amplitudes = {b: [0.10, 0.20, 0.40, 0.80] for b in QP_BAND_NAMES}
     sigma_values = [3.0, 4.0, 5.0, 6.0, 7.0, 8.0]
 
     rows: list[CalibrationRow] = []
@@ -332,7 +331,7 @@ def main() -> None:
     print(f"Calibration finished in {duration:.1f} s ({len(rows)} rows)")
 
     chosen = {}
-    for band in ("QP30", "QP60", "QP120"):
+    for band in QP_BAND_NAMES:
         c = pick_best_sigma(rows, band)
         if c is not None:
             chosen[band] = c

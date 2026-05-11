@@ -143,24 +143,36 @@ def screen_spectral_result(
 MAD_TO_SIGMA: float = 1.4826
 
 
-def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
-    """Indices of CWT rows that fall *outside* every QP band.
+#: Lower period bound for the σ-mask noise pool, in seconds. Wider than
+#: REJECT_BAND_HF (10 min): rows in [5, 10) min are not suitable for
+#: *detection* (sub-5× Nyquist for 1-min data) but their per-row
+#: median+MAD on the segment's time series remains a valid noise
+#: estimate, and including them anchors the log-period interpolation
+#: on the short-period side of QP15. Without this anchor, in-band
+#: thresholds at 15-30 min get extrapolated from the [160 min, 12 h)
+#: bg pool — a region of higher CWT power for a red-noise background
+#: — which inflates the threshold and starves detection.
+_NOISE_POOL_PERIOD_MIN_SEC: float = 5 * 60.0
 
-    These rows feed the noise model. Rows in the rejection guard bands
-    (above 12 h or below 10 min) are also excluded since their power
-    is dominated by edge effects and aliasing.
+
+def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
+    """Indices of CWT rows that anchor the σ-mask noise model.
+
+    The pool is rows in ``[5 min, 12 h)`` that fall outside every QP
+    band. Rows below 5 min (in the wavelet's aliasing zone) and above
+    12 h (the Welch-window edge) are excluded.
     """
     periods_sec = freq_to_period(cwt_freq)
     keep = np.ones_like(cwt_freq, dtype=bool)
-    # exclude QP bands
+    # exclude QP bands (signal would inflate self-row median+MAD)
     for band in QP_BANDS.values():
         in_band = (
             (periods_sec >= band.period_min_sec)
             & (periods_sec < band.period_max_sec)
         )
         keep &= ~in_band
-    # exclude rejection guards
-    keep &= periods_sec >= REJECT_BAND_HF.period_max_sec
+    # period bounds for the noise pool
+    keep &= periods_sec >= _NOISE_POOL_PERIOD_MIN_SEC
     keep &= periods_sec < REJECT_BAND_LF.period_min_sec
     return np.flatnonzero(keep)
 
@@ -220,11 +232,14 @@ def wavelet_sigma_mask(
     # Interpolate the threshold to every row of the CWT in log-period
     # space. Periods are monotonically *decreasing* with frequency,
     # so interp wants strictly increasing x — work in log10(period).
+    # Under the octave-tiled QP scheme, bg coverage sits at [5, 10) min
+    # and [160 min, 12 h); _background_row_indices is configured to
+    # anchor both ends so QP-band rows fall inside the bg log-period
+    # range and the interpolation is well-defined (no extrapolation).
     periods_sec = freq_to_period(cwt_freq)
     log_p_bg = np.log10(periods_sec[bg_rows])
     log_p_all = np.log10(periods_sec)
 
-    # np.interp needs sorted xp; sort by log_p_bg ascending
     order = np.argsort(log_p_bg)
     log_p_bg_sorted = log_p_bg[order]
     bg_thr_sorted = bg_thr[order]

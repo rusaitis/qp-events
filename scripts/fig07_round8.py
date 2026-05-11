@@ -28,6 +28,7 @@ import numpy as np  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 from qp.events.normalization import collapse_to_latitude, slice_lt_sector  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
@@ -40,8 +41,8 @@ LT_SECTORS = [
     (18.0, 3.0, "Dusk (18 ± 3 h)"),
 ]
 
-BANDS = ["QP30", "QP60", "QP120"]
-BAND_COLORS = {"QP30": "#4ecdc4", "QP60": "#ff6b6b", "QP120": "#ffd93d"}
+BANDS = list(QP_BAND_NAMES)
+BAND_COLORS = QP_BAND_COLORS
 
 #: Floor on summed dwell time per latitude bin. Bins below this floor
 #: produce ratio NaN — they have too little Cassini coverage to be

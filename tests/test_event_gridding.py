@@ -96,11 +96,12 @@ class TestSchemaShape:
         seg = _make_segment()
         ev = _make_event(seg, band="QP60")
         grids = accumulate_full_mirror([ev], {0: seg})
-        # 4 bands (QP30 + QP60 + QP120 + total) × 5 regions × 3 schemas
-        assert "QP60_total" in grids
-        assert "QP60_magnetosphere" in grids
-        assert "QP60_dipole_inv_lat_total" in grids
-        assert "QP60_weak_field_total" in grids
+        # 5 bands (QP15 + QP30 + QP60 + QP120 + total) × 5 regions × 3 schemas
+        for b in ("QP15", "QP30", "QP60", "QP120"):
+            assert f"{b}_total" in grids
+            assert f"{b}_magnetosphere" in grids
+            assert f"{b}_dipole_inv_lat_total" in grids
+            assert f"{b}_weak_field_total" in grids
         assert "total_total" in grids
         # 3D dims
         assert grids["QP60_total"].shape == DwellGridConfig().shape
@@ -113,13 +114,11 @@ class TestPerBandAccumulation:
         seg = _make_segment()
         ev = _make_event(seg, band="QP60", duration_min=240)
         grids = accumulate_full_mirror([ev], {0: seg})
-        # QP60 grids should sum to ~ 240 minutes; QP30/QP120 to 0
+        # QP60 grids should sum to ~ 240 minutes; QP15/QP30/QP120 to 0
         qp60_minutes = float(grids["QP60_total"].sum())
-        qp30_minutes = float(grids["QP30_total"].sum())
-        qp120_minutes = float(grids["QP120_total"].sum())
         assert qp60_minutes == pytest.approx(240.0, abs=1.0)
-        assert qp30_minutes == 0.0
-        assert qp120_minutes == 0.0
+        for b in ("QP15", "QP30", "QP120"):
+            assert float(grids[f"{b}_total"].sum()) == 0.0
 
     def test_total_band_is_band_union(self) -> None:
         seg = _make_segment()

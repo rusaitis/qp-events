@@ -81,9 +81,17 @@ def plot_inv_lat_vs_lt(ds: xr.Dataset, outpath: Path) -> None:
         ax.set_ylim(-90, 90)
         ax.set_yticks([-90, -60, -30, 0, 30, 60, 90])
         ax.axhline(0, color="white", linewidth=0.5, alpha=0.3)
-        # Annotate approximate FLR harmonic L-shell bands
+        # Annotate approximate FLR harmonic L-shell bands. Higher harmonics
+        # (QP15) sit on lower-L closed shells; the reference L-shells below
+        # are rough paper values for visual orientation only.
+        # QP15 ~L=4 → 60.0°  (exploratory)
         # QP30 ~L=6 → 65.9°,  QP60 ~L=10 → 71.6°,  QP120 ~L=20 → 77.1°
-        for lat_ref, label in [(65.9, "QP30"), (71.6, "QP60"), (77.1, "QP120")]:
+        for lat_ref, label in [
+            (60.0, "QP15"),
+            (65.9, "QP30"),
+            (71.6, "QP60"),
+            (77.1, "QP120"),
+        ]:
             ax.axhline(lat_ref, color="cyan", linewidth=0.5, linestyle="--", alpha=0.4)
             ax.axhline(-lat_ref, color="cyan", linewidth=0.5, linestyle="--", alpha=0.4)
 

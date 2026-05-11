@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 
-from qp.events.bands import QP_BANDS
+from qp.events.bands import QP_BAND_NAMES, QP_BANDS
 from qp.events.catalog import WaveTemplate
 from qp.events.detector import detect_round8
 from qp.signal.fft import welch_psd
@@ -25,9 +25,7 @@ from qp.signal.synthetic import simulate_multi_component
 
 
 _DEFAULT_PERIOD_MIN: dict[str, float] = {
-    "QP30": 30.0,
-    "QP60": 60.0,
-    "QP120": 120.0,
+    name: band.period_centroid_minutes for name, band in QP_BANDS.items()
 }
 
 
@@ -50,7 +48,7 @@ def _spectrum(fields: np.ndarray, dt: float = 60.0) -> dict[str, list[float]]:
         "psd_par":      psd_par[keep][order].tolist(),
         "psd_perp1":    psd_p1[keep][order].tolist(),
         "psd_perp2":    psd_p2[keep][order].tolist(),
-        "qp_periods_min": [30.0, 60.0, 120.0],
+        "qp_periods_min": [_DEFAULT_PERIOD_MIN[b] for b in QP_BAND_NAMES],
     }
 
 
@@ -111,7 +109,7 @@ _PRESETS: dict[str, dict[str, Any]] = {
     "med_snr": {"amps": [0.8, 1.2, 1.6, 2.0], "noise": 0.5},
     "high_snr": {"amps": [1.5, 2.5, 3.5, 5.0], "noise": 0.4},
 }
-_PRESET_BANDS: tuple[str, ...] = ("QP30", "QP60", "QP120")
+_PRESET_BANDS: tuple[str, ...] = QP_BAND_NAMES
 _PRESET_SEEDS: tuple[int, ...] = (0, 1, 2)
 
 

@@ -26,14 +26,18 @@ import numpy as np  # noqa: E402
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-BANDS = ["QP30", "QP60", "QP120"]
-BAND_LABELS = {"QP30": "QP30 (~30 min, m=6)",
-                "QP60": "QP60 (~60 min, m=4)",
-                "QP120": "QP120 (~120 min, m=2)"}
+_HARMONIC_HINT = {"QP15": "m=8?", "QP30": "m=6", "QP60": "m=4", "QP120": "m=2"}
+BANDS = list(QP_BAND_NAMES)
+BAND_LABELS = {
+    b: f"{b} (~{int(get_band(b).period_centroid_minutes)} min, "
+       f"{_HARMONIC_HINT.get(b, '')})"
+    for b in BANDS
+}
 
 #: Floor on dwell time per cell. Below this we treat the ratio as
 #: noise-dominated and mask.
@@ -104,7 +108,7 @@ def main() -> None:
 
     use_paper_style()
     fig, axes = plt.subplots(
-        1, len(BANDS), figsize=(15, 5), sharey=True,
+        1, len(BANDS), figsize=(5 * len(BANDS), 5), sharey=True,
         constrained_layout=True,
     )
 

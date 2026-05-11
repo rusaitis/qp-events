@@ -29,15 +29,26 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import LogNorm  # noqa: E402
 
 import qp  # noqa: E402
+from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+_HARMONIC_LABEL = {
+    "QP15": "m=8? (toroidal)",
+    "QP30": "m=6 (toroidal)",
+    "QP60": "m=4 (toroidal)",
+    "QP120": "m=2 (toroidal)",
+}
+
 # Bands to plot (rendered left to right) and their period mid-points for labels.
 BANDS = [
-    ("QP30", "30 min", "m=6 (toroidal)"),
-    ("QP60", "60 min", "m=4 (toroidal)"),
-    ("QP120", "120 min", "m=2 (toroidal)"),
+    (
+        b,
+        f"{int(get_band(b).period_centroid_minutes)} min",
+        _HARMONIC_LABEL.get(b, ""),
+    )
+    for b in QP_BAND_NAMES
 ]
 
 
@@ -156,13 +167,14 @@ def main() -> None:
     norm = LogNorm(vmin=max(vmin, 1e-4), vmax=vmax)
 
     use_paper_style()
-    fig = plt.figure(figsize=(16, 6.5))
+    n_bands = len(BANDS)
+    fig = plt.figure(figsize=(5.3 * n_bands, 6.5))
     fig.set_facecolor(plt.rcParams["figure.facecolor"])
     fig.subplots_adjust(left=0.04, right=0.88, top=0.86, bottom=0.10, wspace=0.25)
 
     images = []
     for i, (band, period_label, mode_label) in enumerate(BANDS):
-        ax = fig.add_subplot(1, 3, i + 1, projection="polar",
+        ax = fig.add_subplot(1, n_bands, i + 1, projection="polar",
                              facecolor=plt.rcParams["axes.facecolor"])
         Z = np.ma.masked_invalid(ratios[band])
         im = _polar_pcolormesh(ax, lt_centers, L_edges, Z, norm=norm)
