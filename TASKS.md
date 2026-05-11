@@ -277,3 +277,11 @@ full metadata.
     ≈ 13.2 years ≈ 115,500 hours. Print and assert within 1%
   - **Region breakdown bar chart**: total hours in MS / SH / SW / unknown
   - Paper style, dark background, save to Output/
+
+### 7A - Visual Wave Inspection Audit
+
+ - 0903260044A and 0903260044B are both 60-min events nearly for the same time
+ - Disturbing gap of events between the 30min/60min/120min events. It might be real, but better to make sure we're not preselecting and exluding events between and below/above the three bands (especially between the 30 and 60 min bands)
+ - How are events with multiple coinciding harmonics (say 30 min and 60min events) at similar times handled? Are they seperate events? How do we know about multiple harmonics presense and then have it for statistics later?
+ - Why is the Stokes parameter between 0.7 and 1? I don't see events below 0.7 Stokes value
+ - Looking at the Welch PSD in the wave events, many peaks do have a visual peak that is obvious, but some look pretty flat, with not a clear peak at that period. How do we explain the wave detection for those cases? Is there a way to improve or add another detection visualization to show the reasoning/evidence for the event detection? 

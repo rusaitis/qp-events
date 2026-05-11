@@ -1060,12 +1060,16 @@ function ensureWavePlot(target) {
     series: [
       { label: "time" },
       { label: "B∥",   stroke: FIELD_COLORS.par,   width: 1, spanGaps: true,
+        value: (u, v) => v == null ? "—" : `${v.toFixed(2)} nT`,
         points: { show: true, size: 3.5, fill: FIELD_DOT_FILL.par,   stroke: FIELD_DOT_FILL.par } },
       { label: "B⊥₁",  stroke: FIELD_COLORS.perp1, width: 1, spanGaps: true,
+        value: (u, v) => v == null ? "—" : `${v.toFixed(2)} nT`,
         points: { show: true, size: 3.5, fill: FIELD_DOT_FILL.perp1, stroke: FIELD_DOT_FILL.perp1 } },
       { label: "B⊥₂",  stroke: FIELD_COLORS.perp2, width: 1, spanGaps: true,
+        value: (u, v) => v == null ? "—" : `${v.toFixed(2)} nT`,
         points: { show: true, size: 3.5, fill: FIELD_DOT_FILL.perp2, stroke: FIELD_DOT_FILL.perp2 } },
       { label: "|B|",  stroke: FIELD_COLORS.tot,   width: 1, spanGaps: true,
+        value: (u, v) => v == null ? "—" : `${v.toFixed(2)} nT`,
         points: { show: true, size: 3.5, fill: FIELD_DOT_FILL.tot,   stroke: FIELD_DOT_FILL.tot } },
     ],
     axes: [
