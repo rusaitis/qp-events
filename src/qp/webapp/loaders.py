@@ -192,13 +192,21 @@ def event_summaries(
         df = df.sort_values(sort, kind="mergesort")
     cols = [
         "event_id", "event_uid", "peak_time", "band", "region",
-        "b_perp1_amp", "q_factor", "period_min",
+        "b_perp1_amp", "b_perp2_amp", "b_par_amp",
+        "q_factor", "period_min", "stokes_d",
+        "r_distance", "local_time", "mag_lat",
     ]
     out = df[cols].copy()
     out["peak_time"] = out["peak_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
+    # Dipole L-shell L = R / cos²(λ_mag); computed once here so the JS
+    # filter can read it as a plain field without re-deriving per event.
+    lam = np.deg2rad(out["mag_lat"].to_numpy(dtype=float))
+    out["l_shell"] = out["r_distance"].to_numpy(dtype=float) / (np.cos(lam) ** 2)
     # Round floats — slider/filter UI doesn't need full repr precision,
     # and 4 decimals halves gzipped payload (~82 KB → ~49 KB).
-    for c in ("b_perp1_amp", "q_factor", "period_min"):
+    for c in ("b_perp1_amp", "b_perp2_amp", "b_par_amp",
+              "q_factor", "period_min", "stokes_d",
+              "r_distance", "local_time", "mag_lat", "l_shell"):
         out[c] = out[c].round(4)
     # NaN floats are not valid JSON; convert to None so JS can treat them
     # as "missing" and exclude them from active range filters.

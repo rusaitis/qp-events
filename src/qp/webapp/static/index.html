@@ -38,7 +38,7 @@
             <button id="filter-btn" class="filter-pill range-pill"
                     aria-haspopup="dialog" aria-expanded="false"
                     title="Filter by Date / Amp / Q / Period">
-              <span class="pill-text">Filter</span>
+              <span class="pill-text">Advanced Filter</span>
               <span class="active-count" id="filter-active-count" hidden></span>
               <span class="pill-caret" aria-hidden="true">▾</span>
             </button>
@@ -81,7 +81,13 @@
 
     <div class="timeline-wrap">
       <div class="sel-section-title">Timeline</div>
-      <canvas id="timeline" height="56"></canvas>
+      <div class="timeline-row">
+        <div class="timeline-labels">
+          <span class="tl-label-region" title="MS / SH / SW occupancy strip">Region</span>
+          <span class="tl-label-events" title="event ticks colored by band">Events</span>
+        </div>
+        <canvas id="timeline" height="56"></canvas>
+      </div>
     </div>
 
     <div class="event-stats" id="event-stats"></div>
@@ -91,13 +97,20 @@
       <button id="detrend-btn" class="toggle" title=". — subtract band-aware rolling mean">detrend</button>
       <button id="span-btn" class="toggle active" title="show event span (orange highlight)">span</button>
       <button id="peak-btn" class="toggle active" title="show peak time (white dashed line)">peak</button>
+      <button id="bandpass-btn" class="toggle bandpass-toggle"
+              title="b — keep only frequencies inside the slider band (default 10 min – P₀ × 1.5); mild ringing possible near segment edges">bandpass</button>
+      <div id="bandpass-slider-wrap" class="bandpass-slider-wrap" hidden>
+        <span class="bp-label" id="bp-lo-label" title="low cutoff (period, min)">—</span>
+        <div id="bp-slider"></div>
+        <span class="bp-label" id="bp-hi-label" title="high cutoff (period, min)">—</span>
+      </div>
     </div>
 
     <div class="plot" id="plot-wave"></div>
     <div class="plot" id="plot-spec"></div>
 
     <div class="hint">
-      ←/→ next · shift+←/→ jump 10 · 1/2/3 band filter · m/s/w region filter · g goto · z zoom · . detrend · t toggle tab
+      ←/→ next · shift+←/→ jump 10 · 1/2/3 band filter · m/s/w region filter · g goto · z zoom · . detrend · b bandpass · t toggle tab
     </div>
 
     <!-- Single shared popover; JS positions and re-fills it under the active range pill. -->

@@ -68,15 +68,41 @@ const state = {
   // Range filters: 4 numeric/date axes, each independently active.
   // fmin/fmax = full data range (set once after fetch). min/max = current
   // user selection. For dates the value space is unix epoch seconds.
+  // `field` (optional) decouples the filter key from the data column it
+  // pulls from — lets us have multiple filters on the same field (e.g.
+  // generic "Amp" + explicit per-component sliders in the right column).
   rangeFilters: {
     peak_time:   { active: false, min: null, max: null, fmin: null, fmax: null,
-                   label: "Date",   unit: "",    isDate: true,  step: null },
+                   label: "Date",   unit: "counts",         isDate: true,  step: null },
     b_perp1_amp: { active: false, min: null, max: null, fmin: null, fmax: null,
-                   label: "Amp",    unit: "nT",  isDate: false, step: null },
+                   label: "Amp",    unit: "nT",             isDate: false, step: null },
     q_factor:    { active: false, min: null, max: null, fmin: null, fmax: null,
-                   label: "Q",      unit: "",    isDate: false, step: null },
+                   label: "Q",      unit: "quality factor", isDate: false, step: null },
     period_min:  { active: false, min: null, max: null, fmin: null, fmax: null,
-                   label: "Period", unit: "min", isDate: false, step: 1 },
+                   label: "Period", unit: "min",            isDate: false, step: 1 },
+    r_distance:  { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "R",      unit: "Rs",             isDate: false, step: null },
+    local_time:  { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "LT",     unit: "h",              isDate: false, step: null },
+    mag_lat:     { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Mag lat", unit: "°",  isDate: false, step: null },
+    l_shell:     { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "L",       unit: "shell", isDate: false, step: null },
+    bperp1:      { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "B⊥₁",   unit: "nT", isDate: false, step: null,
+                   field: "b_perp1_amp" },
+    bperp2:      { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "B⊥₂",   unit: "nT", isDate: false, step: null,
+                   field: "b_perp2_amp" },
+    bpar:        { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "B∥",    unit: "nT", isDate: false, step: null,
+                   field: "b_par_amp" },
+    stokes_d:    { active: false, min: null, max: null, fmin: null, fmax: null,
+                   label: "Stokes d", unit: "",  isDate: false, step: null,
+                   // Stokes d has a hard theoretical domain — pin the slider
+                   // to it instead of fitting to observed data so the linear
+                   // (0) baseline and the L/R-circular extremes are visible.
+                   fminOverride: -1, fmaxOverride: 1 },
   },
   sort: "peak_time",
   sortReverse: false,
@@ -84,6 +110,15 @@ const state = {
   hoverEvent: null,    // full hit object: {x, id, band, peak_time}
   zoom: true,          // focus on event window ± 1h (default on)
   detrend: false,      // subtract band-aware rolling mean
+  bandpass: false,     // brick-wall FFT bandpass around detected period
+  bandpassRf: {        // rf-shaped object so we can reuse buildSliderUI
+    fmin: 1, fmax: 180,    // slider domain (period in minutes)
+    min: null, max: null,  // current band; seeded from event.period_min ± 100%
+    step: 1,
+  },
+  bandpassSlider: null,        // {el, syncFromState} returned by buildSliderUI
+  bandpassMark:   null,        // vertical marker showing the event's P₀
+  bandpassSeedEventId: null,   // id of event currently reflected in the band
   showSpan: true,      // draw event-window highlight
   showPeak: true,      // draw peak-time vertical line
   lastWf: null,        // cached waveform JSON for re-render on toggle
@@ -118,10 +153,39 @@ function qFactorClass(q) {
   return "q-low";
 }
 
-function statTile(label, val, unit, extraClass) {
+// Short explanations surfaced via a "?" hint. Plain text — rendered
+// through the native browser title-attribute tooltip.
+const HELP_TEXT = {
+  q_factor: "Spectral quality factor — peak frequency divided by FWHM. Higher Q means a sharper, more coherent oscillation.",
+  bperp1:   "First transverse component (perpendicular to mean B) in mean-field-aligned (MFA) coordinates. Carries Alfvénic / shear wave power.",
+  bperp2:   "Second transverse component (perpendicular to both B and B⊥₁) in MFA coordinates. Together with B⊥₁ describes the polarization plane.",
+  bpar:     "Component parallel to the mean field. Compressional / fast-mode wave power lives here.",
+  stokes_d: "Degree of circular polarization. +1 = right-handed circular, −1 = left-handed circular, 0 = linear. Computed from the cross-correlation of B⊥₁ and B⊥₂.",
+  l_shell:  "Dipole L-shell parameter L = R / cos²(λ_mag). Equatorial radius of the field line through the spacecraft, in Rs. Derived from r_distance and mag_lat.",
+};
+
+function helpHintHTML(text) {
+  return ` <span class="help-hint" title="${escapeHtml(text)}">?</span>`;
+}
+
+function helpHintEl(text) {
+  const el = document.createElement("span");
+  el.className = "help-hint";
+  el.title = text;
+  el.textContent = "?";
+  // Cell titles are <label>s — clicking the help icon would otherwise
+  // toggle the cell's checkbox. Stop both click and mousedown so neither
+  // the focus nor the checkbox change fires.
+  el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); });
+  el.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+  return el;
+}
+
+function statTile(label, val, unit, extraClass, help) {
   const u = unit ? `<em>${unit}</em>` : "";
   const cls = "stat-val" + (extraClass ? " " + extraClass : "");
-  return `<div class="stat"><span class="stat-label">${label}</span>` +
+  const hint = help ? helpHintHTML(help) : "";
+  return `<div class="stat"><span class="stat-label">${label}${hint}</span>` +
          `<span class="${cls}">${val}${u}</span></div>`;
 }
 
@@ -164,45 +228,234 @@ function renderEventStats(summary, wf, detail) {
   const tTo   = fmtIsoCompact(wf?.date_to);
 
   $("#event-stats").innerHTML = `
-    <div class="stat-group">
+    <div class="stat-group narrow">
       <div class="stat-group-title">Location</div>
-      <div class="stat-grid">
+      <div class="stat-grid stack">
         ${statTile("R",        fmt(s.r_distance, 1), "R<sub>S</sub>")}
         ${statTile("Mag lat",  fmt(s.mag_lat, 1) + "°", "")}
         ${statTile("LT",       fmt(s.local_time, 1), "h")}
-        <div class="stat span-all"><span class="stat-label">Region</span>
+        <div class="stat"><span class="stat-label">Region</span>
           <span class="stat-val">${regionPill}</span></div>
       </div>
     </div>
-    <div class="stat-group">
+    <div class="stat-group narrow">
       <div class="stat-group-title">Time</div>
       <div class="stat-grid stack">
-        ${statTile("Start",   tFrom, "", "time")}
-        ${statTile("Peak",    tPeak, "", "time")}
-        ${statTile("End",     tTo,   "", "time")}
+        ${statTile("Start",    tFrom, "", "time")}
+        ${statTile("Peak",     tPeak, "", "time")}
+        ${statTile("End",      tTo,   "", "time")}
+        ${statTile("Duration", fmt(s.duration_minutes, 0), "min")}
       </div>
     </div>
-    <div class="stat-group">
-      <div class="stat-group-title">Wave</div>
-      <div class="stat-grid">
-        ${statTile("Period",    fmt(s.period_min, 1), "min")}
-        ${statTile("Duration",  fmt(s.duration_minutes, 0), "min")}
-        <div class="stat"><span class="stat-label">Q factor</span>
-          <span class="stat-val">${qPill}</span></div>
-        <div class="stat span-all"><span class="stat-label">Band</span>
-          <span class="stat-val">${bandPill}</span></div>
-      </div>
+    <div class="stat-group wide">
+      <div class="stat-group-title">Wave Period</div>
+      <canvas id="wave-period-hist" class="wave-period-hist"></canvas>
     </div>
     <div class="stat-group">
       <div class="stat-group-title">Polarization</div>
-      <div class="stat-grid cols-2">
-        ${statTile("|B<sub>⊥1</sub>|", fmt(s.b_perp1_amp, 2), "nT")}
-        ${statTile("|B<sub>⊥2</sub>|", fmt(s.b_perp2_amp, 2), "nT")}
-        ${statTile("|B<sub>∥</sub>|",  fmt(s.b_par_amp, 2),   "nT")}
-        ${statTile("Stokes d",         fmt(s.stokes_d, 2),    "")}
+      <div class="pol-section">
+        <div class="pol-left">${polarizationTiles(s)}</div>
+        <div class="pol-right">
+          <div class="stat"><span class="stat-label">Q factor${helpHintHTML(HELP_TEXT.q_factor)}</span>
+            <span class="stat-val">${qPill}</span></div>
+          ${statTile("Stokes d", fmt(s.stokes_d, 2), "", null, HELP_TEXT.stokes_d)}
+        </div>
       </div>
     </div>
   `;
+  renderWavePeriodGraph(+s.period_min, band);
+}
+
+/* ---- Wave-group period histogram ---- */
+// Log-spaced bin edges in minutes — period bands separate cleanly in log P,
+// and this matches the paper's log-frequency axes (Figs 4-5).
+const WAVE_HIST_MIN = 10;       // log10(10)  = 1.000
+const WAVE_HIST_MAX = 180;      // log10(180) = 2.255
+const WAVE_HIST_NBINS = 60;
+const WAVE_BAND_RANGES = [      // (band, lo_min, hi_min, css-var)
+  ["QP30",  20, 40,  "--b-qp30"],
+  ["QP60",  45, 80,  "--b-qp60"],
+  ["QP120", 90, 150, "--b-qp120"],
+];
+const WAVE_HIST_TICKS = [10, 20, 30, 60, 120, 180];
+
+function logScale(v) { return Math.log10(v); }
+
+function buildWavePeriodHistogram() {
+  // Recomputed every render — cheap (≤1881 events, 60 bins) and avoids
+  // stale results when band/region/range filters change. Uses the
+  // filter-applied subset so the histogram tracks "where this event sits
+  // in the distribution actually being navigated."
+  const lo = logScale(WAVE_HIST_MIN), hi = logScale(WAVE_HIST_MAX);
+  const counts = new Uint32Array(WAVE_HIST_NBINS);
+  // Use the filter-applied subset directly — an explicit empty set must
+  // yield an empty histogram (the user has deselected everything). Fall
+  // back to allEvents only during the boot window where state.events
+  // hasn't been populated yet.
+  const source = state.events ?? state.allEvents;
+  for (const e of source) {
+    const p = +e.period_min;
+    if (!Number.isFinite(p) || p <= 0) continue;
+    const lp = logScale(p);
+    if (lp < lo || lp > hi) continue;
+    let i = Math.floor(((lp - lo) / (hi - lo)) * WAVE_HIST_NBINS);
+    if (i < 0) i = 0; else if (i >= WAVE_HIST_NBINS) i = WAVE_HIST_NBINS - 1;
+    counts[i]++;
+  }
+  let mx = 0;
+  for (let i = 0; i < counts.length; i++) if (counts[i] > mx) mx = counts[i];
+  return { counts, max: mx };
+}
+
+function renderWavePeriodGraph(periodMin, eventBand) {
+  const canvas = $("#wave-period-hist");
+  if (!canvas) return;
+  const cssW = canvas.clientWidth || canvas.parentElement?.clientWidth || 320;
+  const cssH = 178;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.style.height = cssH + "px";
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssW, cssH);
+
+  // Gutters: left for y-axis tick labels + rotated "counts" label, bottom
+  // for x-axis ticks + "period" label.
+  const padL = 30, padR = 6, padT = 14, padB = 28;
+  const plotW = cssW - padL - padR;
+  const plotH = cssH - padT - padB;
+  const lo = logScale(WAVE_HIST_MIN), hi = logScale(WAVE_HIST_MAX);
+  const xOf = (pmin) => padL + ((logScale(pmin) - lo) / (hi - lo)) * plotW;
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  const AXIS_GREY = "rgba(180, 180, 180, 0.75)";
+  const GRID_GREY = "rgba(255, 255, 255, 0.12)";
+
+  // Band tints — subtle for non-active bands, brighter for the event's band.
+  for (const [name, bLo, bHi, varName] of WAVE_BAND_RANGES) {
+    const col = cssVar(varName) || "#888";
+    const x0 = xOf(bLo), x1 = xOf(bHi);
+    ctx.fillStyle = col + (name === eventBand ? "66" : "18");
+    ctx.fillRect(x0, padT, x1 - x0, plotH);
+    ctx.fillStyle = col + (name === eventBand ? "ee" : "9c");
+    ctx.font = `${name === eventBand ? 700 : 500} 10px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(name, (x0 + x1) / 2, padT - 12);
+  }
+
+  // Histogram bars.
+  const hist = buildWavePeriodHistogram();
+  const mx = hist.max || 1;
+  const binW = plotW / WAVE_HIST_NBINS;
+  ctx.fillStyle = "rgba(220, 220, 220, 0.55)";
+  for (let i = 0; i < WAVE_HIST_NBINS; i++) {
+    const h = (hist.counts[i] / mx) * plotH;
+    if (h <= 0) continue;
+    ctx.fillRect(padL + i * binW + 0.5, padT + plotH - h, Math.max(1, binW - 1), h);
+  }
+
+  // Y-axis: baseline, top gridline at max, numeric labels.
+  ctx.fillStyle = GRID_GREY;
+  ctx.fillRect(padL, padT + plotH, plotW, 1);
+  if (mx > 0) {
+    ctx.fillRect(padL, padT, plotW, 1);
+    ctx.fillStyle = AXIS_GREY;
+    ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText(String(mx), padL - 3, padT - 1);
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("0", padL - 3, padT + plotH + 1);
+  }
+
+  // X-axis ticks.
+  ctx.fillStyle = AXIS_GREY;
+  ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const t of WAVE_HIST_TICKS) {
+    const x = xOf(t);
+    ctx.fillStyle = GRID_GREY;
+    ctx.fillRect(x, padT + plotH, 1, 3);
+    ctx.fillStyle = AXIS_GREY;
+    ctx.fillText(String(t), x, padT + plotH + 4);
+  }
+
+  // Axis titles — same uppercase muted styling as the section headers,
+  // just smaller. Non-italic now so they match the rest of the chrome.
+  ctx.fillStyle = "rgba(200, 200, 200, 0.85)";
+  ctx.font = "500 11px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillText("period (min)", padL + plotW / 2, cssH - 3);
+  ctx.save();
+  ctx.translate(10, padT + plotH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("event counts", 0, 0);
+  ctx.restore();
+
+  // Vertical line at this event's period, with the numeric value sitting
+  // mid-line (replaces the redundant Period tile in the wave-side column).
+  if (Number.isFinite(periodMin) && periodMin > 0) {
+    const x = xOf(Math.max(WAVE_HIST_MIN, Math.min(WAVE_HIST_MAX, periodMin)));
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, padT);
+    ctx.lineTo(x + 0.5, padT + plotH);
+    ctx.stroke();
+
+    // Pill-style period label centered on the line, in the middle of the
+    // plot vertically. Black stroke gives it contrast over the bars.
+    const label = `${periodMin.toFixed(0)} min`;
+    const midY = padT + plotH / 2;
+    ctx.font = "700 13px ui-monospace, SFMono-Regular, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(15, 15, 15, 0.85)";
+    ctx.strokeText(label, x, midY);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(label, x, midY);
+  }
+}
+
+function polarizationTiles(s) {
+  // Show each component's RMS amplitude with its share of the joint
+  // (perp1² + perp2² + par²) power budget, and mark the dominant one.
+  // Across the catalogue, ~98% of events are dominated by perp1 or perp2;
+  // the rare par-dominant cases are interesting outliers worth flagging.
+  const a1 = Number.isFinite(+s.b_perp1_amp) ? +s.b_perp1_amp : 0;
+  const a2 = Number.isFinite(+s.b_perp2_amp) ? +s.b_perp2_amp : 0;
+  const ap = Number.isFinite(+s.b_par_amp)   ? +s.b_par_amp   : 0;
+  const amps = [a1, a2, ap];
+  const tot  = a1*a1 + a2*a2 + ap*ap;
+  let dom = -1;
+  if (tot > 0) {
+    dom = 0;
+    for (let i = 1; i < 3; i++) if (amps[i] > amps[dom]) dom = i;
+  }
+  const COMPONENTS = ["perp1", "perp2", "par"];
+  const tile = (i, label, val, help) => {
+    const pct = tot > 0 ? Math.round(100 * amps[i] * amps[i] / tot) : 0;
+    const bar = tot > 0
+      ? `<div class="amp-bar" title="${pct}% of joint perturbation power">` +
+        `<div class="amp-bar-fill" style="width:${pct}%"></div></div>`
+      : "";
+    const cls = `stat amp amp-${COMPONENTS[i]}` + (i === dom ? " amp-dominant" : "");
+    const hint = help ? helpHintHTML(help) : "";
+    return `<div class="${cls}"><span class="stat-label">${label}${hint}</span>` +
+           `<span class="stat-val">${val}<em>nT</em></span>${bar}</div>`;
+  };
+  return [
+    tile(0, "|B<sub>⊥1</sub>|", fmt(s.b_perp1_amp, 2), HELP_TEXT.bperp1),
+    tile(1, "|B<sub>⊥2</sub>|", fmt(s.b_perp2_amp, 2), HELP_TEXT.bperp2),
+    tile(2, "|B<sub>∥</sub>|",  fmt(s.b_par_amp,   2), HELP_TEXT.bpar),
+  ].join("");
 }
 
 /* ----------------------- Rolling-mean detrend ------------------------- */
@@ -253,6 +506,137 @@ function detrendComponents(wf) {
   };
 }
 
+/* --------------------------- FFT bandpass ---------------------------- */
+/* In-place iterative Cooley-Tukey radix-2 FFT on (re, im); length must
+   be a power of two. Used by bandpassSeries below — keeps the webapp
+   dependency-free (no scipy round-trip per slider drag).               */
+
+function fftRadix2(re, im, inverse) {
+  const n = re.length;
+  // Bit-reversal permutation.
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      const tr = re[i]; re[i] = re[j]; re[j] = tr;
+      const ti = im[i]; im[i] = im[j]; im[j] = ti;
+    }
+  }
+  for (let size = 2; size <= n; size <<= 1) {
+    const half = size >> 1;
+    const ang = (inverse ? 2 : -2) * Math.PI / size;
+    const wRe0 = Math.cos(ang), wIm0 = Math.sin(ang);
+    for (let i = 0; i < n; i += size) {
+      let wr = 1, wi = 0;
+      for (let k = 0; k < half; k++) {
+        const a = i + k, b = a + half;
+        const tr = wr * re[b] - wi * im[b];
+        const ti = wr * im[b] + wi * re[b];
+        re[b] = re[a] - tr; im[b] = im[a] - ti;
+        re[a] += tr;        im[a] += ti;
+        const nr = wr * wRe0 - wi * wIm0;
+        wi = wr * wIm0 + wi * wRe0;
+        wr = nr;
+      }
+    }
+  }
+  if (inverse) for (let i = 0; i < n; i++) { re[i] /= n; im[i] /= n; }
+}
+
+function bandpassSeries(values, dtSec, periodLoMin, periodHiMin) {
+  // Brick-wall bandpass via DFT: keep frequencies inside
+  // [1/(periodHi*60), 1/(periodLo*60)] Hz, zero everything else (including
+  // the conjugate negative-frequency bins). Brick-wall is fine here — the
+  // 12 h window is wide relative to the kept band, and the default zoom
+  // (±1 h around peak) hides the segment edges where Gibbs ringing lives.
+  const n = values.length;
+  if (n < 4 || !(dtSec > 0)) return values.slice();
+  if (!(periodLoMin > 0) || !(periodHiMin > periodLoMin)) return values.slice();
+
+  // Valid-sample mask — restored in the output so the plot keeps its gaps.
+  const valid = new Uint8Array(n);
+  let nValid = 0;
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    if (v != null && Number.isFinite(v)) { valid[i] = 1; nValid++; }
+  }
+  if (nValid < 4) return values.slice();
+
+  // Linear-interpolate gaps; constant-extend the leading/trailing tails.
+  let firstIdx = 0; while (!valid[firstIdx]) firstIdx++;
+  let lastIdx  = n - 1; while (!valid[lastIdx]) lastIdx--;
+  const firstVal = +values[firstIdx], lastVal = +values[lastIdx];
+  const work = new Float64Array(n);
+  for (let i = 0; i < firstIdx; i++)     work[i] = firstVal;
+  for (let i = lastIdx + 1; i < n; i++)  work[i] = lastVal;
+  work[firstIdx] = firstVal;
+  let prev = firstIdx;
+  for (let i = firstIdx + 1; i <= lastIdx; i++) {
+    if (valid[i]) {
+      const v = +values[i];
+      if (i > prev + 1) {
+        const a = work[prev], stride = (v - a) / (i - prev);
+        for (let k = prev + 1; k < i; k++) work[k] = a + stride * (k - prev);
+      }
+      work[i] = v;
+      prev = i;
+    }
+  }
+
+  // Mean removal — keeps DC at 0 (the bandpass would zero it anyway, but
+  // explicit subtraction tightens spectral leakage at the FFT edges).
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += work[i];
+  mean /= n;
+  for (let i = 0; i < n; i++) work[i] -= mean;
+
+  // Zero-pad to next power of two.
+  let nfft = 1;
+  while (nfft < n) nfft <<= 1;
+  const re = new Float64Array(nfft);
+  const im = new Float64Array(nfft);
+  for (let i = 0; i < n; i++) re[i] = work[i];
+
+  fftRadix2(re, im, false);
+
+  const fLo = 1 / (periodHiMin * 60);
+  const fHi = 1 / (periodLoMin * 60);
+  const dfHz = 1 / (nfft * dtSec);
+  const half = nfft >> 1;
+  for (let k = 0; k <= half; k++) {
+    const f = k * dfHz;
+    if (f < fLo || f > fHi) {
+      re[k] = 0; im[k] = 0;
+      const m = nfft - k;
+      if (m !== k && m < nfft) { re[m] = 0; im[m] = 0; }
+    }
+  }
+
+  fftRadix2(re, im, true);
+
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = valid[i] ? re[i] : null;
+  return out;
+}
+
+function bandpassComponents(wf, periodLoMin, periodHiMin) {
+  const xs = wf.epoch_s;
+  let dt = 60;
+  if (xs && xs.length >= 2) {
+    const guess = xs[1] - xs[0];
+    if (Number.isFinite(guess) && guess > 0) dt = guess;
+  }
+  return {
+    b_par:   bandpassSeries(wf.b_par,   dt, periodLoMin, periodHiMin),
+    b_perp1: bandpassSeries(wf.b_perp1, dt, periodLoMin, periodHiMin),
+    b_perp2: bandpassSeries(wf.b_perp2, dt, periodLoMin, periodHiMin),
+    b_tot:   bandpassSeries(wf.b_tot,   dt, periodLoMin, periodHiMin),
+    bandLo: periodLoMin,
+    bandHi: periodHiMin,
+  };
+}
+
 /* ============================== Timeline =============================== */
 
 // Layout constants (CSS pixels).
@@ -274,18 +658,21 @@ function buildTimelineCache(cssW, dpr) {
   c.setTransform(dpr, 0, 0, dpr, 0, 0);
   const xOf = (t) => 4 + (cssW - 8) * (t - TL_T0) / (TL_T1 - TL_T0);
 
-  // year tick lines through event area
+  // year tick lines through event area. Edge years (2004 / 2018) anchor
+  // to "left" / "right" alignment so the labels don't clip past the
+  // canvas edges; middle years stay centered on their tick.
   c.font = "10px ui-monospace, monospace";
-  c.textAlign = "center";
   for (let y = 2004; y <= 2018; y++) {
     const x = xOf(toEpoch(`${y}-01-01T00:00:00`));
     c.fillStyle = "#333";
     c.fillRect(x, TL_EVENT_Y, 1, TL_EVENT_H);
     if (y % 2 === 0) {
       c.fillStyle = "#9b9b9b";
+      c.textAlign = y === 2004 ? "left" : y === 2018 ? "right" : "center";
       c.fillText(String(y), x, TL_HEIGHT - 3);
     }
   }
+  c.textAlign = "center";
 
   // region strip — full mission context (not filtered, so users can see
   // where Cassini was even when those regions are excluded from the
@@ -568,21 +955,51 @@ const periodMarkerPlugin = {
         ctx.stroke();
       }
       // Labels — large bold, no pill; thin dark stroke for legibility.
+      // Centered horizontally on the dashed line so the "30 min" reads as
+      // a label *of* that line rather than the next one.
       ctx.setLineDash([]);
       const fontPx = 26;
       ctx.font = `700 ${fontPx}px ui-monospace, monospace`;
+      ctx.textAlign = "center";
       ctx.textBaseline = "top";
       ctx.lineJoin = "round";
       for (const p of periods) {
         const x = u.valToPos(p, "x", true);
         const label = `${p} min`;
-        const lx = x + 8;
         const ly = top + 8;
         ctx.lineWidth = 4;
         ctx.strokeStyle = "rgba(15, 15, 15, 0.85)";
-        ctx.strokeText(label, lx, ly);
+        ctx.strokeText(label, x, ly);
         ctx.fillStyle = "#f5f5f5";
-        ctx.fillText(label, lx, ly);
+        ctx.fillText(label, x, ly);
+      }
+      // Dominant-component peak: solid line in the component's plot color,
+      // drawn last so it sits on top of the QP reference lines.
+      const dom = _qpCtx(u).dominantMark;
+      if (dom && Number.isFinite(dom.period)) {
+        const dx = u.valToPos(dom.period, "x", true);
+        if (dx >= u.bbox.left && dx <= u.bbox.left + u.bbox.width) {
+          ctx.strokeStyle = dom.color;
+          ctx.lineWidth = 2;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(dx, top);
+          ctx.lineTo(dx, bot);
+          ctx.stroke();
+          // Period readout near the bottom of the line — dark stroke for
+          // legibility over the PSD curves.
+          const label = `${dom.period.toFixed(0)} min`;
+          ctx.font = `700 14px ui-monospace, monospace`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          const ly = bot - 8;
+          ctx.lineWidth = 4;
+          ctx.lineJoin = "round";
+          ctx.strokeStyle = "rgba(15, 15, 15, 0.85)";
+          ctx.strokeText(label, dx, ly);
+          ctx.fillStyle = dom.color;
+          ctx.fillText(label, dx, ly);
+        }
       }
       ctx.restore();
     }],
@@ -705,14 +1122,21 @@ function ensureSpectrumPlot(target) {
       //     is dominated by quantization / aliasing, not real wave power.
       //   - right = 4 h: above this the Welch 12-h window holds <3 cycles,
       //     so estimates are unreliable.
-      x: { distr: 3, log: 10, range: () => [10, 240] },
+      // time:false — the x axis is period in minutes, not Unix epoch, so
+      // disable uPlot's default time-mode formatting (which would otherwise
+      // label this column "Time" and render values as 1970-01-01 ticks).
+      x: { time: false, distr: 3, log: 10, range: () => [10, 240] },
       y: { distr: 3, log: 10 },
     },
     series: [
-      { label: "period [min]" },
-      { label: "PSD∥",  stroke: FIELD_COLORS.par,   width: 1, points: { size: 3 } },
-      { label: "PSD⊥₁", stroke: FIELD_COLORS.perp1, width: 1, points: { size: 3 } },
-      { label: "PSD⊥₂", stroke: FIELD_COLORS.perp2, width: 1, points: { size: 3 } },
+      { label: "period",
+        value: (u, v) => v == null ? "—" : `${v.toFixed(1)} min` },
+      { label: "PSD∥",  stroke: FIELD_COLORS.par,   width: 1, points: { size: 3 },
+        value: (u, v) => v == null ? "—" : `${v.toExponential(2)} nT²/Hz` },
+      { label: "PSD⊥₁", stroke: FIELD_COLORS.perp1, width: 1, points: { size: 3 },
+        value: (u, v) => v == null ? "—" : `${v.toExponential(2)} nT²/Hz` },
+      { label: "PSD⊥₂", stroke: FIELD_COLORS.perp2, width: 1, points: { size: 3 },
+        value: (u, v) => v == null ? "—" : `${v.toExponential(2)} nT²/Hz` },
     ],
     axes: [
       {
@@ -754,9 +1178,29 @@ function ensureSpectrumPlot(target) {
   return p;
 }
 
-function updateSpectrumPlot(target, period_min, psd_par, psd_p1, psd_p2, periods) {
+function updateSpectrumPlot(target, period_min, psd_par, psd_p1, psd_p2, periods, detail) {
   const p = ensureSpectrumPlot(target);
-  _qpCtx(p).periods = periods || [30, 60, 120];
+  const ctx = _qpCtx(p);
+  ctx.periods = periods || [30, 60, 120];
+  // Mark the event's detected period with a vertical line, colored by the
+  // dominant component (same ranking as the Polarization tiles: max of the
+  // time-domain RMS amplitudes). The position is the canonical
+  // `period_min` from the detector, not a per-component PSD peak.
+  ctx.dominantMark = null;
+  if (detail && Number.isFinite(+detail.period_min) && +detail.period_min > 0) {
+    const cands = [
+      [+detail.b_perp1_amp || 0, "perp1", FIELD_COLORS.perp1],
+      [+detail.b_perp2_amp || 0, "perp2", FIELD_COLORS.perp2],
+      [+detail.b_par_amp   || 0, "par",   FIELD_COLORS.par],
+    ];
+    let best = cands[0];
+    for (let i = 1; i < cands.length; i++) if (cands[i][0] > best[0]) best = cands[i];
+    ctx.dominantMark = {
+      period: +detail.period_min,
+      color: best[2],
+      label: best[1],
+    };
+  }
   p.setData([period_min, psd_par, psd_p1, psd_p2]);
   return p;
 }
@@ -802,18 +1246,32 @@ async function fetchEvents() {
   applyFilter({ keepPos: false });
 }
 
+function rfValue(e, key, rf) {
+  // Pull the data value for filter `key`. `rf.field` lets a filter map
+  // onto a different data column (e.g. the bperp1/bperp2/bpar filters
+  // share field names with b_perp1_amp/b_perp2_amp/b_par_amp).
+  if (rf.isDate) return toEpoch(e.peak_time);
+  return e[rf.field || key];
+}
+
 function computeRangeBounds() {
   for (const [key, rf] of Object.entries(state.rangeFilters)) {
     let mn = +Infinity, mx = -Infinity;
     for (const e of state.allEvents) {
-      const v = rf.isDate ? toEpoch(e.peak_time) : e[key];
+      const v = rfValue(e, key, rf);
       if (v == null || !Number.isFinite(v)) continue;
       if (v < mn) mn = v;
       if (v > mx) mx = v;
     }
     if (Number.isFinite(mn) && Number.isFinite(mx)) {
-      rf.fmin = mn; rf.fmax = mx;
-      rf.min = mn;  rf.max = mx;
+      // Filters with hard theoretical bounds (e.g. Stokes d ∈ [-1, +1])
+      // pin the slider domain regardless of where the observed data
+      // happens to sit — so the user can see "all events cluster at the
+      // top of the full polarization scale".
+      rf.fmin = rf.fminOverride ?? mn;
+      rf.fmax = rf.fmaxOverride ?? mx;
+      rf.min = rf.fmin;
+      rf.max = rf.fmax;
     }
   }
 }
@@ -830,7 +1288,7 @@ function applyFilter({ keepPos = true } = {}) {
   state.events = state.allEvents.filter((e) => {
     if (!bf.has(e.band) || !rf.has(e.region)) return false;
     for (const [key, r] of activeRanges) {
-      const v = r.isDate ? toEpoch(e.peak_time) : e[key];
+      const v = rfValue(e, key, r);
       if (v == null || !Number.isFinite(v)) return false;
       if (v < r.min || v > r.max) return false;
     }
@@ -841,6 +1299,14 @@ function applyFilter({ keepPos = true } = {}) {
   $("#event-position-total").textContent = state.events.length;
   if (!state.filteredIds.length) {
     $("#event-position-num").textContent = "—";
+    $("#event-uid").textContent = "";
+    $("#event-stats").innerHTML =
+      '<div class="no-events">No events match the current selection. ' +
+      'Re-enable a band/region or clear the advanced filter.</div>';
+    if (state.waveformPlot) state.waveformPlot.setData([[0], [null], [null], [null], [null]]);
+    if (state.spectrumPlot) state.spectrumPlot.setData([[1], [1], [1], [1]]);
+    state.lastWf = null;
+    state.lastSpec = null;
     drawTimeline(null);
     return;
   }
@@ -933,6 +1399,8 @@ function renderEvent(wf, spec, detail) {
   state.lastWf = wf;
   state.lastSpec = spec;
 
+  maybeReseedBandpass();
+
   const xs = wf.epoch_s;
   let par = wf.b_par, p1 = wf.b_perp1, p2 = wf.b_perp2, tot = wf.b_tot;
   let title = "MFA components";
@@ -940,6 +1408,18 @@ function renderEvent(wf, spec, detail) {
     const dt = detrendComponents(wf);
     par = dt.b_par; p1 = dt.b_perp1; p2 = dt.b_perp2; tot = dt.b_tot;
     title = `MFA components, detrended (${dt.windowMin}-min rolling mean)`;
+  }
+  if (state.bandpass) {
+    const rf = state.bandpassRf;
+    const bp = bandpassComponents(
+      { ...wf, b_par: par, b_perp1: p1, b_perp2: p2, b_tot: tot },
+      rf.min, rf.max,
+    );
+    par = bp.b_par; p1 = bp.b_perp1; p2 = bp.b_perp2; tot = bp.b_tot;
+    const lo = rf.min.toFixed(0), hi = rf.max.toFixed(0);
+    title = state.detrend
+      ? `MFA components, detrended + bandpass [${lo}–${hi} min]`
+      : `MFA components, bandpass [${lo}–${hi} min]`;
   }
   const data = [xs, par, p1, p2, tot];
   const f = toEpoch(wf.date_from);
@@ -953,6 +1433,7 @@ function renderEvent(wf, spec, detail) {
     $("#plot-spec"),
     spec.period_min, spec.psd_par, spec.psd_perp1, spec.psd_perp2,
     spec.qp_periods_min,
+    detail,
   );
 }
 
@@ -1134,6 +1615,7 @@ function bindKeys() {
       if (e.key === "g") { e.preventDefault(); $("#event-position-num").focus(); }
       if (e.key === "z") { e.preventDefault(); toggleZoom(); }
       if (e.key === ".") { e.preventDefault(); toggleDetrend(); }
+      if (e.key === "b") { e.preventDefault(); toggleBandpass(); }
     }
     if (e.key === "t") {
       showTab(eventsTabActive ? "synthetic" : "events");
@@ -1210,9 +1692,38 @@ function toggleRegion(r) {
 
 const POPOVER_HOVER_OPEN_MS  = 200;
 const POPOVER_HOVER_CLOSE_MS = 300;
-const HIST_BINS = { peak_time: 60, b_perp1_amp: 40, q_factor: 40, period_min: 40 };
+const HIST_BINS = { peak_time: 60, b_perp1_amp: 40, q_factor: 40, period_min: 40,
+                    r_distance: 40, local_time: 48,
+                    mag_lat: 40, l_shell: 40,
+                    bperp1: 40, bperp2: 40, bpar: 40, stokes_d: 40 };
 const HIST_BAR_GREY = "#3a3a3a";
-const HIST_BAR_ACTIVE = "#4dd2ff";  // matches --accent
+const HIST_BAR_ACTIVE = "#6ee0b1";  // matches --filter-accent (Zoom-LED green-teal)
+const HIST_AXIS_COLOR = "#6b6b6b";
+const HIST_GRID_COLOR = "rgba(155, 155, 155, 0.12)";
+// Gutters reserved inside the canvas for axis labels. Mirror in style.css
+// (.filter-cell .range-slider-wrap margin-left/right) so the slider track's
+// 0%–100% extent maps onto the same pixel range as the histogram bars.
+const HIST_PAD_LEFT   = 28;
+const HIST_PAD_RIGHT  = 6;
+const HIST_PAD_TOP    = 4;
+const HIST_PAD_BOTTOM = 16;
+// X-axis tick positions per filter axis, in *value space*. Period gets
+// the QP band centres (10 lives below the data minimum so it's clipped).
+// Date is computed at runtime in xTicksFor() since it depends on the
+// observed mission span.
+const STATIC_X_TICKS = {
+  b_perp1_amp: [2, 4, 6, 8],
+  q_factor:    [5, 10, 15],
+  period_min:  [10, 30, 60, 120],
+  r_distance:  [5, 10, 30, 60, 100],   // Rs — Cassini orbit spans ~3–150
+  local_time:  [0, 6, 12, 18, 24],     // h — cardinal LT (midnight/dawn/noon/dusk)
+  mag_lat:     [-60, -30, 0, 30, 60],  // ° — symmetric about magnetic equator
+  l_shell:     [10, 20, 50, 100],      // dipole L = R / cos²(λ); long tail
+  bperp1:      [2, 4, 6, 8],
+  bperp2:      [2, 4, 6, 8],
+  bpar:        [2, 4, 6, 8],
+  stokes_d:    [-1, -0.5, 0, 0.5, 1],  // full theoretical [−1,+1] domain
+};
 
 let popOpen = false;
 let popPinned = false;
@@ -1286,7 +1797,7 @@ function computeHistogram(key, events) {
   const counts = new Uint32Array(nb);
   if (span <= 0) return { fmin, fmax, counts };
   for (const e of events) {
-    const v = rf.isDate ? toEpoch(e.peak_time) : e[key];
+    const v = rfValue(e, key, rf);
     if (v == null || !Number.isFinite(v)) continue;
     let i = Math.floor(((v - fmin) / span) * nb);
     if (i < 0) i = 0; else if (i >= nb) i = nb - 1;
@@ -1310,7 +1821,7 @@ function eventsForHistogram(excludeKey) {
   return state.allEvents.filter((e) => {
     if (!bf.has(e.band) || !rfs.has(e.region)) return false;
     for (const [k, r] of active) {
-      const v = r.isDate ? toEpoch(e.peak_time) : e[k];
+      const v = rfValue(e, k, r);
       if (v == null || !Number.isFinite(v)) return false;
       if (v < r.min || v > r.max) return false;
     }
@@ -1318,7 +1829,24 @@ function eventsForHistogram(excludeKey) {
   });
 }
 
-function renderHistogram(canvas, hist, rf) {
+function xTicksFor(key, fmin, fmax) {
+  if (key === "peak_time") {
+    // Year ticks across the observed span. fmin/fmax are unix epoch s.
+    const y0 = new Date(fmin * 1000).getUTCFullYear();
+    const y1 = new Date(fmax * 1000).getUTCFullYear();
+    const stride = y1 - y0 > 8 ? 4 : 2;  // 4-year ticks for >8-year span
+    const out = [];
+    const start = Math.ceil((y0 + 1) / stride) * stride;
+    for (let y = start; y < y1; y += stride) {
+      const e = Date.UTC(y, 0, 1) / 1000;
+      out.push({ value: e, label: String(y) });
+    }
+    return out;
+  }
+  return (STATIC_X_TICKS[key] || []).map((v) => ({ value: v, label: String(v) }));
+}
+
+function renderHistogram(canvas, hist, rf, key) {
   const dpr = window.devicePixelRatio || 1;
   const cssW = canvas.clientWidth, cssH = canvas.clientHeight;
   if (!cssW || !cssH) return;
@@ -1329,21 +1857,70 @@ function renderHistogram(canvas, hist, rf) {
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
+
+  // Bar area inside the gutters reserved for axis labels.
+  const barX = HIST_PAD_LEFT;
+  const barY = HIST_PAD_TOP;
+  const barW = cssW - HIST_PAD_LEFT - HIST_PAD_RIGHT;
+  const barH = cssH - HIST_PAD_TOP - HIST_PAD_BOTTOM;
+  if (barW <= 0 || barH <= 0) return;
+
   const nb = hist.counts.length;
   let mx = 0;
   for (let i = 0; i < nb; i++) if (hist.counts[i] > mx) mx = hist.counts[i];
-  if (mx === 0) return;
-  const barW = cssW / nb;
+
+  ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, monospace';
+  ctx.fillStyle = HIST_AXIS_COLOR;
+
+  // Y-axis: subtle baseline + max-count label at top.
+  ctx.fillStyle = HIST_GRID_COLOR;
+  ctx.fillRect(barX, barY + barH, barW, 1);  // baseline
+  if (mx > 0) {
+    ctx.fillStyle = HIST_GRID_COLOR;
+    ctx.fillRect(barX, barY, barW, 1);       // top gridline at max
+    ctx.fillStyle = HIST_AXIS_COLOR;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    ctx.fillText(String(mx), barX - 3, barY - 1);
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("0", barX - 3, barY + barH + 1);
+  }
+
+  // Bars. When the filter is disabled, every bar stays grey — the
+  // checkbox is the explicit gate, so the histogram only "lights up"
+  // (cyan in-range bars) once the user opts in.
+  if (mx > 0) {
+    const span = hist.fmax - hist.fmin;
+    const inMin = (rf.min - hist.fmin) / span;
+    const inMax = (rf.max - hist.fmin) / span;
+    const colW = barW / nb;
+    for (let i = 0; i < nb; i++) {
+      const h = (hist.counts[i] / mx) * barH;
+      const x = barX + i * colW;
+      let color = HIST_BAR_GREY;
+      if (rf.active) {
+        const binCenter = (i + 0.5) / nb;
+        if (binCenter >= inMin && binCenter <= inMax) color = HIST_BAR_ACTIVE;
+      }
+      ctx.fillStyle = color;
+      ctx.fillRect(x + 0.5, barY + barH - h, Math.max(1, colW - 1), h);
+    }
+  }
+
+  // X-axis ticks (clipped to the slider's value domain so labels never
+  // sit outside the brushable area).
+  const ticks = xTicksFor(key, hist.fmin, hist.fmax);
   const span = hist.fmax - hist.fmin;
-  const inMin = (rf.min - hist.fmin) / span;
-  const inMax = (rf.max - hist.fmin) / span;
-  for (let i = 0; i < nb; i++) {
-    const h = (hist.counts[i] / mx) * (cssH - 2);
-    const x = i * barW;
-    const binCenter = (i + 0.5) / nb;
-    const inRange = binCenter >= inMin && binCenter <= inMax;
-    ctx.fillStyle = inRange ? HIST_BAR_ACTIVE : HIST_BAR_GREY;
-    ctx.fillRect(x + 0.5, cssH - h, Math.max(1, barW - 1), h);
+  ctx.fillStyle = HIST_AXIS_COLOR;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const t of ticks) {
+    if (t.value < hist.fmin || t.value > hist.fmax) continue;
+    const px = barX + ((t.value - hist.fmin) / span) * barW;
+    ctx.fillStyle = HIST_GRID_COLOR;
+    ctx.fillRect(px, barY + barH, 1, 3);     // tick mark
+    ctx.fillStyle = HIST_AXIS_COLOR;
+    ctx.fillText(t.label, px, barY + barH + 4);
   }
 }
 
@@ -1355,9 +1932,22 @@ function buildFilterCell(key) {
   cell.className = "filter-cell";
   cell.dataset.range = key;
 
-  const title = document.createElement("div");
-  title.className = "cell-title";
-  title.textContent = rf.unit ? `${rf.label} (${rf.unit})` : rf.label;
+  // Title row with a custom-styled checkbox. The checkbox mirrors
+  // `rf.active` and gives the user explicit on/off control without
+  // needing a separate per-cell reset button.
+  const title = document.createElement("label");
+  title.className = "cell-title cell-toggle";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = !!rf.active;
+  const box = document.createElement("span");
+  box.className = "check-box";
+  const titleText = document.createElement("span");
+  titleText.className = "title-text";
+  titleText.textContent = rf.unit ? `${rf.label} (${rf.unit})` : rf.label;
+  title.append(cb, box, titleText);
+  // Tooltip for the four scientific concepts the user might not recognise.
+  if (HELP_TEXT[key]) title.appendChild(helpHintEl(HELP_TEXT[key]));
   cell.appendChild(title);
 
   const canvas = document.createElement("canvas");
@@ -1373,7 +1963,11 @@ function buildFilterCell(key) {
       inLo.value = formatRangeValue(rf, lo);
       inHi.value = formatRangeValue(rf, hi);
     }
+    // Dragging away from the default range auto-enables the filter so
+    // the brush has an immediate effect. Reflect the new state in the
+    // checkbox so the visible toggle stays in sync.
     onCellSliderChange(key, lo, hi);
+    cb.checked = !!rf.active;
   });
   cell.appendChild(slider.el);
 
@@ -1397,27 +1991,6 @@ function buildFilterCell(key) {
   numRow.append(inLo, dash, inHi);
   cell.appendChild(numRow);
 
-  const reset = document.createElement("button");
-  reset.type = "button";
-  reset.className = "cell-reset";
-  reset.textContent = "reset";
-  reset.addEventListener("click", () => {
-    rf.min = rf.fmin; rf.max = rf.fmax; rf.active = false;
-    if (rf.isDate) {
-      inLo.value = epochToDateInput(rf.fmin);
-      inHi.value = epochToDateInput(rf.fmax);
-    } else {
-      inLo.value = formatRangeValue(rf, rf.fmin);
-      inHi.value = formatRangeValue(rf, rf.fmax);
-    }
-    slider.syncFromState();
-    reflectFilterButton();
-    refreshAllHistograms();
-    applyFilter();
-    updateMatchCount();
-  });
-  cell.appendChild(reset);
-
   // Numeric / date input → state, then sync slider + redraw.
   const onNum = () => {
     let lo, hi;
@@ -1431,27 +2004,66 @@ function buildFilterCell(key) {
     hi = Math.max(rf.fmin, Math.min(rf.fmax, hi));
     onCellSliderChange(key, lo, hi);
     slider.syncFromState();
+    cb.checked = !!rf.active;
   };
   inLo.addEventListener("change", onNum);
   inHi.addEventListener("change", onNum);
 
+  // Checkbox: explicit toggle that preserves the slider's current
+  // [min, max]. Lets the user disable a filter without losing the
+  // configured range, so re-enabling restores it instantly.
+  cb.addEventListener("change", () => {
+    rf.active = cb.checked;
+    reflectFilterButton();
+    cellRenderers.get(key)?.repaintHist();
+    scheduleCrossFilterUpdate(key);
+  });
+
   cellRenderers.set(key, {
-    repaintHist: () => renderHistogram(canvas, computeHistogram(key, eventsForHistogram(key)), rf),
-    syncSlider:  () => slider.syncFromState(),
+    repaintHist: () => renderHistogram(canvas, computeHistogram(key, eventsForHistogram(key)), rf, key),
+    syncSlider:  () => { slider.syncFromState(); cb.checked = !!rf.active; },
   });
   return cell;
 }
+
+// Two-grid split: the main grid keeps the original 2-col layout
+// unchanged; the right column hosts the explicit B-component sliders
+// so all three components are visible side-by-side for comparison.
+const FILTER_GRID_KEYS_MAIN = [
+  "peak_time",  "b_perp1_amp",
+  "q_factor",   "period_min",
+  "r_distance", "local_time",
+  "mag_lat",    "l_shell",
+];
+const FILTER_GRID_KEYS_COMPONENTS = ["bperp1", "bperp2", "bpar", "stokes_d"];
 
 function buildFilterGridContent() {
   const root = $("#range-popover");
   root.innerHTML = "";
   cellRenderers.clear();
-  const grid = document.createElement("div");
-  grid.className = "filter-grid";
-  for (const key of Object.keys(state.rangeFilters)) {
-    grid.appendChild(buildFilterCell(key));
+
+  const body = document.createElement("div");
+  body.className = "popover-body";
+
+  const mainGrid = document.createElement("div");
+  mainGrid.className = "filter-grid";
+  for (const key of FILTER_GRID_KEYS_MAIN) {
+    mainGrid.appendChild(buildFilterCell(key));
   }
-  root.appendChild(grid);
+  body.appendChild(mainGrid);
+
+  const divider = document.createElement("div");
+  divider.className = "vertical-divider";
+  body.appendChild(divider);
+
+  const compGrid = document.createElement("div");
+  compGrid.className = "filter-grid filter-grid-components";
+  for (const key of FILTER_GRID_KEYS_COMPONENTS) {
+    compGrid.appendChild(buildFilterCell(key));
+  }
+  body.appendChild(compGrid);
+
+  root.appendChild(body);
 
   const footer = document.createElement("div");
   footer.className = "popover-footer";
@@ -1632,8 +2244,62 @@ function clearAllRangeFilters() {
 function reflectToggles() {
   $("#zoom-btn").classList.toggle("active", state.zoom);
   $("#detrend-btn").classList.toggle("active", state.detrend);
+  $("#bandpass-btn").classList.toggle("active", state.bandpass);
+  $("#bandpass-slider-wrap").hidden = !state.bandpass;
   $("#span-btn").classList.toggle("active", state.showSpan);
   $("#peak-btn").classList.toggle("active", state.showPeak);
+}
+
+function syncBandpassUI() {
+  const rf = state.bandpassRf;
+  if (state.bandpassSlider) state.bandpassSlider.syncFromState();
+  $("#bp-lo-label").textContent = rf.min == null ? "—" : `${rf.min.toFixed(0)}m`;
+  $("#bp-hi-label").textContent = rf.max == null ? "—" : `${rf.max.toFixed(0)}m`;
+  // Position the event-period marker (white vertical line inside the slider).
+  const mark = state.bandpassMark;
+  if (mark) {
+    const e = state.events[state.pos];
+    const P0 = e?.period_min;
+    if (P0 != null && Number.isFinite(P0)) {
+      const pct = Math.max(0, Math.min(100,
+        (P0 - rf.fmin) / (rf.fmax - rf.fmin) * 100));
+      mark.style.left = pct + "%";
+      mark.title = `event period: ${P0.toFixed(0)} min`;
+      mark.hidden = false;
+    } else {
+      mark.hidden = true;
+    }
+  }
+}
+
+function reseedBandpassFromEvent() {
+  // Default band: low cutoff fixed at 10 min (below the Nyquist guard
+  // for 1-min MAG data), high cutoff at P₀ + 50% (covers the wave's
+  // natural spread on the slow side). For the rare event with P₀ ≤ 10 min
+  // the low handle slides under P₀ so the wave itself isn't excluded.
+  const rf = state.bandpassRf;
+  const e = state.events[state.pos];
+  const P0 = e?.period_min;
+  if (P0 != null && Number.isFinite(P0)) {
+    const loDefault = Math.min(10, Math.max(rf.fmin, Math.round(P0 - 5)));
+    rf.min = Math.max(rf.fmin, loDefault);
+    rf.max = Math.min(rf.fmax, Math.max(rf.min + 1, Math.round(P0 * 1.5)));
+  } else {
+    rf.min = rf.fmin;
+    rf.max = rf.fmax;
+  }
+  syncBandpassUI();
+}
+
+function maybeReseedBandpass() {
+  // Reseed only on event change — toggling sibling controls (zoom/detrend/
+  // span/peak) calls renderEvent again with the same event, and we don't
+  // want to clobber any manual slider edits the user made on this event.
+  const e = state.events[state.pos];
+  const id = e?.event_id ?? null;
+  if (id === state.bandpassSeedEventId) return;
+  state.bandpassSeedEventId = id;
+  reseedBandpassFromEvent();
 }
 
 function rerenderCurrent() {
@@ -1653,6 +2319,43 @@ function toggleDetrend() {
   state.detrend = !state.detrend;
   reflectToggles();
   rerenderCurrent();
+}
+
+function toggleBandpass() {
+  state.bandpass = !state.bandpass;
+  reflectToggles();
+  rerenderCurrent();
+}
+
+function bindBandpassSlider() {
+  const wrap = $("#bp-slider");
+  if (!wrap) return;
+  const rf = state.bandpassRf;
+  // Seed from full domain so the slider has valid initial values until the
+  // first event loads and reseeds it to P₀ ± 50%.
+  if (rf.min == null) rf.min = rf.fmin;
+  if (rf.max == null) rf.max = rf.fmax;
+  let pending = false;
+  const slider = buildSliderUI(rf, (lo, hi) => {
+    rf.min = lo; rf.max = hi;
+    $("#bp-lo-label").textContent = `${lo.toFixed(0)}m`;
+    $("#bp-hi-label").textContent = `${hi.toFixed(0)}m`;
+    if (!state.bandpass) return;
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => { pending = false; rerenderCurrent(); });
+  });
+  wrap.appendChild(slider.el);
+  // Insert a non-interactive marker showing where the event's P₀ sits
+  // within the slider's domain. Positioned inside the slider wrap so it
+  // moves with the track, behind the thumbs.
+  const mark = document.createElement("div");
+  mark.className = "bp-event-mark";
+  mark.hidden = true;
+  slider.el.appendChild(mark);
+  state.bandpassSlider = slider;
+  state.bandpassMark = mark;
+  syncBandpassUI();
 }
 
 function toggleSpan() {
@@ -1757,6 +2460,8 @@ function bindUI() {
 
   $("#zoom-btn").addEventListener("click", toggleZoom);
   $("#detrend-btn").addEventListener("click", toggleDetrend);
+  $("#bandpass-btn").addEventListener("click", toggleBandpass);
+  bindBandpassSlider();
   $("#span-btn").addEventListener("click", toggleSpan);
   $("#peak-btn").addEventListener("click", togglePeak);
   reflectToggles();

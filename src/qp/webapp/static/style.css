@@ -2,6 +2,11 @@
    Colors mirror src/qp/plotting/style.py (FIELD_COLORS, LOC_COLORS, BG=#171717). */
 
 :root {
+  /* Tell the browser to paint native controls (number spinners, date
+     picker icons, scrollbars) in dark-mode colors instead of the default
+     light-mode black-on-white. */
+  color-scheme: dark;
+
   --bg:        #171717;
   --bg-soft:   #1f1f1f;
   --panel:    #1c1c1c;
@@ -9,6 +14,10 @@
   --text:     #e8e8e8;
   --muted:    #9b9b9b;
   --accent:   #4dd2ff;
+  /* Used by the Filter button + popover (slider, checkbox, in-range
+     histogram bars). Same green-teal as the Zoom/Detrend toggle LED so
+     "active filter" reads as the same kind of "live state" indicator. */
+  --filter-accent: #6ee0b1;
 
   --c-par:    #DC267F;
   --c-perp1:  #FFB000;
@@ -134,7 +143,32 @@ label {
   padding: 6px 8px;
   margin-bottom: 10px;
 }
+.timeline-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.timeline-labels {
+  position: relative;
+  flex: 0 0 auto;
+  width: 48px;
+  height: 56px;          /* matches canvas height attr */
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.timeline-labels > span {
+  position: absolute;
+  right: 0;
+  line-height: 1;
+}
+/* Region strip occupies canvas y ∈ [2, 9]; align label near its midline. */
+.tl-label-region { top: 1px; }
+/* Events strip occupies canvas y ∈ [13, 45]; align label near its midline. */
+.tl-label-events { top: 24px; }
 #timeline {
+  flex: 1 1 auto;
   width: 100%;
   display: block;
 }
@@ -161,10 +195,11 @@ label {
   padding: 8px 12px;
 }
 .sel-section-title {
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: #e2e2e2;
   margin-bottom: 6px;
 }
 .sel-controls {
@@ -235,7 +270,7 @@ button.filter-pill.active {
 /* Range filter pills — share .filter-pill geometry, but always cyan accent
    regardless of which property they filter; show the active range inline. */
 .range-pill {
-  --pill-color: var(--accent);
+  --pill-color: var(--filter-accent);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -338,27 +373,88 @@ button.reverse-btn.active {
 
 .view-toolbar {
   display: flex;
+  align-items: center;
   gap: 6px;
   margin: 8px 0 0;
 }
 
+/* Bandpass sits at the right end of the view-toggle cluster (after
+   zoom / detrend / span / peak) with its inline slider trailing it.
+   The slider slot is always reserved (visibility, not display) so
+   toggling bandpass doesn't change the toolbar height or push the
+   plots below up/down. */
+.view-toolbar { min-height: 30px; }
+.bandpass-slider-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+.bandpass-slider-wrap[hidden] {
+  display: inline-flex;
+  visibility: hidden;
+}
+.bp-label {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 38px;
+  text-align: center;
+}
+#bp-slider {
+  width: 220px;
+  height: 28px;
+}
+#bp-slider .range-slider-wrap {
+  width: 100%;
+  margin: 0;  /* override the popover-tuned top margin */
+}
+/* White vertical marker showing the event's detected period inside the
+   bandpass slider — non-interactive, sits behind the thumbs. */
+.bp-event-mark {
+  position: absolute;
+  top: 50%;
+  height: 18px;
+  width: 0;
+  border-left: 2px solid rgba(255, 255, 255, 0.9);
+  transform: translate(-1px, -50%);
+  pointer-events: none;
+  z-index: 0;
+}
+.bp-event-mark[hidden] { display: none; }
+
 .event-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 10px 0 6px;
+}
+.no-events {
+  flex: 1 1 100%;
+  padding: 20px 16px;
+  background: var(--panel);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
 }
 .stat-group {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 8px 12px;
+  flex: 1 1 200px;
+  min-width: 0;  /* allow flex shrink so wide group doesn't push siblings */
 }
+.stat-group.narrow { flex: 0.45 1 130px; }
+.stat-group.wide   { flex: 2.6  1 380px; }
 .stat-group-title {
-  font-size: 10px;
+  font-size: 13px;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--muted);
+  color: #e2e2e2;
   margin-bottom: 6px;
 }
 .stat-grid {
@@ -394,7 +490,7 @@ button.reverse-btn.active {
   min-width: 0;
 }
 .stat-label {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -421,6 +517,72 @@ button.reverse-btn.active {
   margin-left: 2px;
   font-weight: 400;
 }
+
+/* Wave group: the period histogram alone fills the panel — Q factor and
+   other side metadata have moved to the Polarization group. */
+.wave-period-hist {
+  width: 100%;
+  display: block;
+}
+
+/* Polarization tiles: each component's value is colored to match its
+   curve in the perturbation plot, with a thin bar below showing its
+   share of the joint perturbation power. */
+.pol-section {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+}
+.pol-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pol-right {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+.stat.amp-perp1 .stat-val { color: #FFB000; }   /* matches FIELD_COLORS.perp1 */
+.stat.amp-perp2 .stat-val { color: #FE6100; }   /* matches FIELD_COLORS.perp2 */
+.stat.amp-par   .stat-val { color: #DC267F; }   /* matches FIELD_COLORS.par   */
+.stat.amp-dominant .stat-val {
+  font-weight: 700;
+  font-size: 15px;
+}
+.stat.amp-dominant .stat-label::before {
+  content: "▸ ";
+  color: var(--filter-accent);
+  font-weight: 700;
+}
+.stat.amp-dominant .stat-label {
+  color: var(--text);
+}
+
+/* Thin power-share bar under each component's value. */
+.amp-bar {
+  height: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: 3px;
+}
+.amp-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 120ms ease-out;
+}
+.stat.amp-perp1 .amp-bar-fill { background: #FFB000; }
+.stat.amp-perp2 .amp-bar-fill { background: #FE6100; }
+.stat.amp-par   .amp-bar-fill { background: #DC267F; }
+.stat.amp-dominant .amp-bar { background: rgba(255, 255, 255, 0.10); }
 
 .q-chip {
   display: inline-block;
@@ -479,12 +641,13 @@ button.reverse-btn.active {
   vertical-align: middle;
 }
 .uplot .u-title {
-  font-weight: 400;
-  font-size: 12px;
-  color: var(--muted);
-  letter-spacing: 0.04em;
+  font-weight: 600;
+  font-size: 13px;
+  color: #e2e2e2;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-bottom: 2px;
+  text-align: left;
+  margin-bottom: 4px;
 }
 
 .bench-summary { color: var(--muted); font-size: 11px; }
@@ -510,12 +673,39 @@ button.reverse-btn.active {
 .bench-tag.tp { color: #2bd07b; }
 .bench-tag.miss { color: #d04a4a; }
 
+/* Subtle "?" hint with a native browser tooltip on hover. Used next to
+   stat-tile labels (Stokes / B-components / Q) and filter-cell titles. */
+.help-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 5px;
+  border: 1px solid #555;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: help;
+  vertical-align: middle;
+  user-select: none;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: inherit;
+  line-height: 1;
+}
+.help-hint:hover {
+  border-color: #888;
+  color: var(--text);
+}
+
 /* ========================== Range filter popover ========================== */
 
 .popover {
   position: absolute;
   z-index: 100;
-  width: 540px;
+  width: 760px;
   padding: 14px 18px 12px;
   background: var(--panel);
   border: 1px solid #3a3a3a;
@@ -595,7 +785,7 @@ button.reverse-btn.active {
   transform: translateY(-50%);
   left:   var(--lo-pct, 0%);
   right:  calc(100% - var(--hi-pct, 100%));
-  background: var(--accent);
+  background: var(--filter-accent);
   border-radius: 2px;
   pointer-events: none;
 }
@@ -618,10 +808,11 @@ button.reverse-btn.active {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--filter-accent);
   border: 2px solid #0e0e0e;
   cursor: grab;
-  margin-top: 0;
+  /* Centre the 14 px thumb on the 4 px runnable-track: (4 - 14) / 2 */
+  margin-top: -5px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 .range-slider-wrap input[type="range"]::-moz-range-thumb {
@@ -629,7 +820,7 @@ button.reverse-btn.active {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--filter-accent);
   border: 2px solid #0e0e0e;
   cursor: grab;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
@@ -637,19 +828,42 @@ button.reverse-btn.active {
 .range-slider-wrap input[type="range"]:active::-webkit-slider-thumb { cursor: grabbing; }
 .range-slider-wrap input[type="range"]::-webkit-slider-runnable-track {
   background: transparent;
-  height: 100%;
+  height: 4px;  /* matches the visible .range-track so thumb sits centered */
 }
 .range-slider-wrap input[type="range"]::-moz-range-track {
   background: transparent;
-  height: 100%;
+  height: 4px;
 }
 
-/* 2x2 cross-filter grid inside the popover. */
+/* Popover body is a flex row of two grids: the main 2-col grid (Date /
+   Amp / Q / Period / R / LT) and a 1-col B-components sub-grid on the
+   right, with a thin vertical divider between them. */
+.popover-body {
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+  margin-top: 2px;
+}
 .filter-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
+  grid-template-rows: repeat(4, auto);
   gap: 14px 22px;
-  margin-top: 2px;
+  flex: 2 1 0;
+  min-width: 0;
+}
+.filter-grid-components {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(4, auto);
+  gap: 14px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.vertical-divider {
+  width: 1px;
+  background: #2c2c2c;
+  flex-shrink: 0;
 }
 .filter-cell {
   display: flex;
@@ -658,30 +872,73 @@ button.reverse-btn.active {
   min-width: 0;
 }
 .filter-cell .cell-title {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
+  user-select: none;
+}
+.cell-toggle {
+  cursor: pointer;
+  /* Hide the native checkbox; the .check-box element draws it. */
+}
+.cell-toggle input[type="checkbox"] {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.check-box {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.cell-toggle:hover .check-box { border-color: #888; }
+.cell-toggle input:checked + .check-box {
+  background: var(--filter-accent);
+  border-color: var(--filter-accent);
+}
+.cell-toggle input:checked + .check-box::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0px;
+  width: 3px;
+  height: 7px;
+  border: solid #0e0e0e;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.cell-toggle input:focus-visible + .check-box {
+  outline: 2px solid var(--filter-accent);
+  outline-offset: 1px;
 }
 .histogram-canvas {
   width: 100%;
-  height: 36px;
+  height: 60px;
   display: block;
-  margin-bottom: -4px;  /* tuck slider track right under the bars */
+  margin-bottom: -2px;  /* tuck slider track right under the bars */
 }
-.cell-reset {
-  align-self: flex-end;
-  margin-top: 2px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-  background: transparent;
-  border: none;
-  padding: 0;
-  cursor: pointer;
+/* Pad the slider track so its [fmin,fmax] domain aligns horizontally with
+   the histogram bar area (which sits inside the canvas's left/bottom
+   gutters reserved for axis labels). Keep these in sync with the JS
+   constants HIST_PAD_LEFT / HIST_PAD_RIGHT in renderHistogram. */
+.filter-cell .range-slider-wrap {
+  margin-left:  28px;
+  margin-right: 6px;
 }
-.cell-reset:hover { color: var(--text); }
 
 .popover-footer {
   display: flex;
@@ -697,19 +954,13 @@ button.reverse-btn.active {
   font-variant-numeric: tabular-nums;
 }
 
-/* Active-count badge on the Filter button (pill). */
+/* Active-count number on the Filter button — plain inline tally, no
+   chip/badge so it reads as a subtle annotation. */
 .active-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 4px;
-  border-radius: 7px;
-  background: var(--accent);
-  color: #0e0e0e;
-  font-size: 9px;
-  font-weight: 700;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  margin-left: 4px;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--filter-accent);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
