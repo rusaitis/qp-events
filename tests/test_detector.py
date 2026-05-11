@@ -8,8 +8,12 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from qp.events.catalog import WaveEvent
-from qp.events.detector import collect_wave_events, detect_wave_packets
+from qp.events.catalog import WaveEvent, WavePacketPeak
+from qp.events.detector import (
+    collect_wave_events,
+    dedup_peaks_by_band,
+    detect_wave_packets,
+)
 
 
 @pytest.fixture
@@ -161,3 +165,58 @@ class TestCollectWaveEvents:
         if events:
             assert events[0].r_distance is None
             assert events[0].local_time is None
+
+
+def _peak(t_hours: float, band: str) -> WavePacketPeak:
+    """Tiny WavePacketPeak factory for dedup tests."""
+    t0 = datetime.datetime(2007, 1, 1)
+    pt = t0 + datetime.timedelta(hours=t_hours)
+    return WavePacketPeak(
+        peak_time=pt,
+        prominence=1.0,
+        date_from=pt - datetime.timedelta(hours=1),
+        date_to=pt + datetime.timedelta(hours=1),
+        band=band,
+    )
+
+
+class TestDedupPeaksByBand:
+    def test_drops_close_same_band(self):
+        peaks = [_peak(0.0, "QP60"), _peak(1.5, "QP60")]
+        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        assert [p.peak_time.hour for p in kept] == [0]
+
+    def test_keeps_far_same_band(self):
+        peaks = [_peak(0.0, "QP60"), _peak(3.0, "QP60")]
+        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        assert len(kept) == 2
+
+    def test_interleaved_different_band_does_not_unmask_dup(self):
+        """The regression: QP60-QP30-QP60 in 1.5 h must drop the second QP60.
+
+        Under the previous ``merged[-1]``-only guard, the QP30 between
+        the two QP60s broke the band comparison and let the second
+        QP60 through. The per-band rolling-last fix keeps the QP30 and
+        drops the second QP60.
+        """
+        peaks = [
+            _peak(0.0, "QP60"),
+            _peak(1.0, "QP30"),
+            _peak(1.5, "QP60"),
+        ]
+        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        bands = [p.band for p in kept]
+        assert bands == ["QP60", "QP30"]
+
+    def test_multi_band_preserved(self):
+        """Genuine multi-harmonic event: three bands in close time stay."""
+        peaks = [
+            _peak(0.0, "QP30"),
+            _peak(0.1, "QP60"),
+            _peak(0.2, "QP120"),
+        ]
+        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        assert {p.band for p in kept} == {"QP30", "QP60", "QP120"}
+
+    def test_empty_input(self):
+        assert dedup_peaks_by_band([], dt_sec=7200.0) == []

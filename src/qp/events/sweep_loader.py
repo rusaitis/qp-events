@@ -169,18 +169,51 @@ def segment_to_payload(seg_idx: int, seg: Any) -> SegmentPayload | None:
 
 
 def segment_central_window(
-    times: list[datetime.datetime], hours_pad: int = 6,
+    times: list[datetime.datetime],
+    span_hours: float = 36.0,
+    hop_hours: float = 24.0,
 ) -> tuple[datetime.datetime, datetime.datetime]:
-    """Return the central 24-hour window of a 36-hour segment.
+    """Return the disjoint ownership window of a segment.
 
-    The 6-hour overlap on each side prevents events near segment edges
-    from being double-counted across adjacent segments.
+    The segment archive (`Cassini_MAG_MFA_36H.npy`) uses 36-hour spans
+    stepped by 24 hours. To prevent the same wave packet from being
+    emitted by two adjacent segments, each segment "owns" a half-open
+    central interval whose width equals exactly the hop. Adjacent
+    segments' ownership intervals abut without overlap or gap:
+
+        seg N : [t0_N + 6h, t0_N + 30h)
+        seg N+1: [t0_{N+1} + 6h, t0_{N+1} + 30h)
+              ≡ [t0_N + 30h, t0_N + 54h)
+
+    The 6 h of padding on each side covers the Morlet ω₀=10 cone-of-
+    influence (≈ √2 · T) up to the longest period of interest
+    (~150 min ⇒ COI ≈ 3.5 h), with margin for edge stability.
+
+    Half-open on the right is critical: a peak whose ``peak_time`` lands
+    exactly on the boundary belongs to the *next* segment, never both.
+
+    Parameters
+    ----------
+    times : list of datetime
+        Sample timestamps of the segment (any cadence; only ``times[0]`` is
+        used).
+    span_hours : float, default 36.0
+        Total segment span (unused in the arithmetic, kept for clarity).
+    hop_hours : float, default 24.0
+        Spacing between consecutive segment starts. The returned window
+        is exactly this wide.
+
+    Returns
+    -------
+    (start, end) : tuple of datetime
+        Half-open interval ``[start, end)`` of width ``hop_hours``.
     """
+    pad = (span_hours - hop_hours) / 2.0
     t0 = times[0]
-    t_end = times[-1]
-    central_start = t0 + datetime.timedelta(hours=hours_pad)
-    central_end = t_end - datetime.timedelta(hours=hours_pad - 1)
-    return central_start, central_end
+    return (
+        t0 + datetime.timedelta(hours=pad),
+        t0 + datetime.timedelta(hours=pad + hop_hours),
+    )
 
 
 def ppo_at_peak_from_info(

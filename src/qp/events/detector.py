@@ -549,6 +549,44 @@ def _nearest_index(arr: np.ndarray, value: float) -> int:
     return int(np.argmin(np.abs(arr - value)))
 
 
+def dedup_peaks_by_band(
+    peaks: list[WavePacketPeak], dt_sec: float = 7200.0,
+) -> list[WavePacketPeak]:
+    """Suppress peaks that fall within ``dt_sec`` of a prior same-band peak.
+
+    The transverse pair (b_perp1, b_perp2) frequently picks up the same
+    physical wave train twice. The merge removes those near-duplicates
+    while preserving genuinely close peaks in *different* bands (e.g.
+    multi-harmonic events). A per-band rolling-last is required: a naïve
+    ``merged[-1]``-only guard would let close same-band peaks through
+    whenever a different-band peak happens to be interleaved in the
+    time-sorted stream.
+
+    Parameters
+    ----------
+    peaks : list[WavePacketPeak]
+        Must be sorted by ``peak_time``. Not modified.
+    dt_sec : float, default 7200
+        Minimum separation in seconds for same-band peaks. Closer peaks
+        are dropped (keeping the earlier one).
+
+    Returns
+    -------
+    list[WavePacketPeak]
+    """
+    merged: list[WavePacketPeak] = []
+    last_by_band: dict[str | None, WavePacketPeak] = {}
+    for peak in peaks:
+        prev = last_by_band.get(peak.band)
+        if prev is not None:
+            sep = abs((peak.peak_time - prev.peak_time).total_seconds())
+            if sep < dt_sec:
+                continue
+        merged.append(peak)
+        last_by_band[peak.band] = peak
+    return merged
+
+
 # ---------------------------------------------------------------------
 # Round-8 detector — public entry point
 # ---------------------------------------------------------------------
@@ -748,15 +786,8 @@ def detect_round8(
         )
         all_peaks.extend(peaks)
 
-    # Same-band dedup within 2 h.
     all_peaks.sort(key=lambda p: p.peak_time)
-    merged: list[WavePacketPeak] = []
-    for peak in all_peaks:
-        if merged and peak.band == merged[-1].band:
-            sep = abs((peak.peak_time - merged[-1].peak_time).total_seconds())
-            if sep < 7200:
-                continue
-        merged.append(peak)
+    merged = dedup_peaks_by_band(all_peaks, dt_sec=7200.0)
 
     # Per-detection physical gates.
     n_time = cwt1.shape[1]

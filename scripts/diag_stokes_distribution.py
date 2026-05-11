@@ -113,11 +113,14 @@ def candidates_from_segment(
     # Same-band dedup within 2 h (mirrors detector.py).
     all_peaks.sort(key=lambda p: p.peak_time)
     merged = []
+    last_by_band: dict = {}
     for peak in all_peaks:
-        if merged and peak.band == merged[-1].band:
-            if abs((peak.peak_time - merged[-1].peak_time).total_seconds()) < 7200:
+        prev = last_by_band.get(peak.band)
+        if prev is not None:
+            if abs((peak.peak_time - prev.peak_time).total_seconds()) < 7200:
                 continue
         merged.append(peak)
+        last_by_band[peak.band] = peak
 
     epoch = times[0]
     central_start, central_end = segment_central_window(times)
