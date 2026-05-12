@@ -50,6 +50,13 @@ def _make_detection(
         b_perp1_amp=0.20,
         b_perp2_amp=0.18,
         b_par_amp=0.05,
+        stokes_i=1.0,
+        stokes_q=0.1,
+        stokes_u=0.05,
+        stokes_v=d * 1.0,
+        ellipticity=0.6,
+        inclination_deg=12.0,
+        polarized_fraction=d,
     )
 
 
@@ -93,7 +100,9 @@ class TestEventToRecord:
         det = _make_detection()
         with pytest.raises(ValueError, match="collide"):
             event_to_record(
-                det, event_id=0, segment_id="x",
+                det,
+                event_id=0,
+                segment_id="x",
                 extra={"q_factor": 99.0},
             )
 
@@ -107,8 +116,20 @@ class TestEventToRecord:
             period_sec=None,
         )
         det = DetectedEvent(
-            peak=peak, q_factor=4.0, mva_par_frac=0.1, stokes_d=0.8,
-            b_perp1_amp=0.1, b_perp2_amp=0.1, b_par_amp=0.05,
+            peak=peak,
+            q_factor=4.0,
+            mva_par_frac=0.1,
+            stokes_d=0.8,
+            b_perp1_amp=0.1,
+            b_perp2_amp=0.1,
+            b_par_amp=0.05,
+            stokes_i=1.0,
+            stokes_q=0.1,
+            stokes_u=0.0,
+            stokes_v=0.8,
+            ellipticity=0.5,
+            inclination_deg=0.0,
+            polarized_fraction=0.8,
         )
         with pytest.raises(ValueError, match="period_sec"):
             event_to_record(det, event_id=0, segment_id="x")
@@ -119,7 +140,8 @@ class TestParquetRoundTrip:
         rows = [
             event_to_record(
                 _make_detection(band=b, period_min=p),
-                event_id=k, segment_id=f"seg_{k:03d}",
+                event_id=k,
+                segment_id=f"seg_{k:03d}",
             )
             for k, (b, p) in enumerate(
                 (("QP30", 30.0), ("QP60", 60.0), ("QP120", 120.0))
@@ -131,7 +153,8 @@ class TestParquetRoundTrip:
         assert path.exists()
         df, attrs = read_events_parquet(path)
         assert len(df) == 3
-        assert attrs == {"run": "test"}
+        assert attrs["run"] == "test"
+        assert attrs["schema_version"] == "round8.1"
         assert sorted(df["band"].tolist()) == ["QP120", "QP30", "QP60"]
         assert (df["q_factor"] > 0).all()
 
@@ -141,7 +164,9 @@ class TestParquetRoundTrip:
         path = tmp_path / "events.parquet"
         events_to_parquet([rec], path, attrs={"foo": "bar", "n": 1})
         meta = json.loads((path.with_suffix(".parquet.meta.json")).read_text())
-        assert meta["attrs"] == {"foo": "bar", "n": 1}
+        assert meta["attrs"]["foo"] == "bar"
+        assert meta["attrs"]["n"] == 1
+        assert meta["attrs"]["schema_version"] == "round8.1"
         assert meta["n_rows"] == 1
 
     def test_empty_records(self, tmp_path: Path) -> None:

@@ -346,9 +346,7 @@ def detect_wave_packets_multi(
     else:
         times_list = list(times)
     if len(times_list) != n_time:
-        raise ValueError(
-            f"len(times)={len(times_list)} != len(data)={n_time}"
-        )
+        raise ValueError(f"len(times)={len(times_list)} != len(data)={n_time}")
 
     if cwt_freq is None or cwt_power is None:
         freq, _, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=n_freqs)
@@ -456,14 +454,16 @@ def detect_with_gate(
     # Stage 1: Welch PSDs (compute lazily if not provided).
     if spectral_result_perp1 is None:
         spectral_result_perp1 = analyze_segment(
-            b_perp1, dt=dt,
+            b_perp1,
+            dt=dt,
             detrend_window_sec=60.0,  # tiny — segments are pre-detrended
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
         )
     if spectral_result_perp2 is None:
         spectral_result_perp2 = analyze_segment(
-            b_perp2, dt=dt,
+            b_perp2,
+            dt=dt,
             detrend_window_sec=60.0,
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
@@ -473,11 +473,13 @@ def detect_with_gate(
         triggered_bands: list[str | Band] = []
         for b in bands:
             s1 = screen_spectral_result(
-                spectral_result_perp1, b,
+                spectral_result_perp1,
+                b,
                 ratio_threshold=gate.fft_ratio_threshold,
             )
             s2 = screen_spectral_result(
-                spectral_result_perp2, b,
+                spectral_result_perp2,
+                b,
                 ratio_threshold=gate.fft_ratio_threshold,
             )
             if s1.triggered or s2.triggered:
@@ -550,7 +552,8 @@ def _nearest_index(arr: np.ndarray, value: float) -> int:
 
 
 def dedup_peaks_by_band(
-    peaks: list[WavePacketPeak], dt_sec: float = 7200.0,
+    peaks: list[WavePacketPeak],
+    dt_sec: float = 7200.0,
 ) -> list[WavePacketPeak]:
     """Suppress peaks that fall within ``dt_sec`` of a prior same-band peak.
 
@@ -612,7 +615,11 @@ SEGMENT_FWER_ALPHA: float = 0.01
 #: Minimum spectral Q = period / FWHM. Floor for any band-limited peak.
 MIN_Q_FACTOR: float = 3.0
 
-#: Minimum Stokes degree of polarization over the in-band TF window.
+#: Re-exports from :mod:`qp.signal.polarization_config` — the canonical
+#: home for polarization thresholds. The justification block below is
+#: kept here next to its consumer; the constants themselves live in the
+#: config module so :mod:`qp.signal.cross_correlation` and the rest of
+#: the polarization surface share a single source of truth.
 #:
 #: ``d = sqrt(Q^2 + U^2 + V^2) / I`` is computed from the cross-Stokes
 #: parameters of the b_perp1 / b_perp2 Morlet-CWT analytic-signal
@@ -642,11 +649,10 @@ MIN_Q_FACTOR: float = 3.0
 #: compressional candidates) and shrink by ~30 % at 0.8 (excluding
 #: moderately polarized real waves). 0.7 is therefore both the most
 #: defensible single value here and aligned with community convention.
-MIN_DEGREE_OF_POLARIZATION: float = 0.7
-
-#: Maximum allowed parallel fraction of the MVA major axis. Closer to
-#: the perpendicular plane than to B_0 (cos^2(angle) <= 0.5).
-MAX_MVA_PARALLEL_FRACTION: float = 0.5
+from qp.signal.polarization_config import (  # noqa: E402
+    MAX_MVA_PARALLEL_FRACTION,
+    MIN_DEGREE_OF_POLARIZATION,
+)
 
 
 def bonferroni_n_sigma_for_cwt(
@@ -691,9 +697,14 @@ from dataclasses import dataclass as _dataclass
 class DetectedEvent:
     """A WavePacketPeak that passed all round-8 gates, with diagnostics.
 
-    The four gate values (q_factor, mva_par_frac, stokes_d, plus the
-    bandpass amplitudes per component) are retained so callers can
-    persist them in tabular form without rerunning the detector.
+    The four gate values plus the bandpass amplitudes per component are
+    retained so callers can persist them in tabular form without
+    rerunning the detector. The Stokes vector and derived ellipticity /
+    inclination / polarized fraction are computed once from the same
+    in-band CWT slice that feeds the ``stokes_d`` gate — persisting
+    them costs nothing and lets downstream consumers (Fig 10, fig11,
+    sensitivity analysis) read the polarization geometry directly from
+    the catalogue without rerunning the sweep.
     """
 
     peak: WavePacketPeak
@@ -703,6 +714,13 @@ class DetectedEvent:
     b_perp1_amp: float
     b_perp2_amp: float
     b_par_amp: float
+    stokes_i: float
+    stokes_q: float
+    stokes_u: float
+    stokes_v: float
+    ellipticity: float
+    inclination_deg: float
+    polarized_fraction: float
 
 
 def detect_round8(
@@ -741,8 +759,9 @@ def detect_round8(
     from qp.events.bands import get_band
     from qp.events.threshold import wavelet_sigma_mask
     from qp.signal.polarization import (
-        degree_of_polarization,
+        ellipticity_inclination_from_stokes,
         mva_major_axis_parallel_fraction,
+        stokes_parameters,
     )
 
     if epoch is None:
@@ -762,7 +781,10 @@ def detect_round8(
 
     # Whitened sigma-mask at the FWER-derived threshold.
     n_sigma = bonferroni_n_sigma_for_cwt(
-        power1.shape[1], dt, freq, alpha=fwer_alpha,
+        power1.shape[1],
+        dt,
+        freq,
+        alpha=fwer_alpha,
     )
     mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
     mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
@@ -799,7 +821,8 @@ def detect_round8(
         if q is None or q < min_q_factor:
             continue
         i_start = max(
-            0, int(np.floor((peak.date_from - epoch).total_seconds() / dt)),
+            0,
+            int(np.floor((peak.date_from - epoch).total_seconds() / dt)),
         )
         i_end = min(
             n_time - 1,
@@ -810,11 +833,13 @@ def detect_round8(
         # Transversality: MVA on bandpass-filtered 3-component field.
         i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
         sl = slice(i_start, i_end + 1)
-        field_bp = np.column_stack([
-            np.real(cwt_par[i_freq_peak, sl]),
-            np.real(cwt1[i_freq_peak, sl]),
-            np.real(cwt2[i_freq_peak, sl]),
-        ])
+        field_bp = np.column_stack(
+            [
+                np.real(cwt_par[i_freq_peak, sl]),
+                np.real(cwt1[i_freq_peak, sl]),
+                np.real(cwt2[i_freq_peak, sl]),
+            ]
+        )
         par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
         if par_frac > max_mva_par_frac:
             continue
@@ -825,20 +850,39 @@ def detect_round8(
             continue
         c1_window = cwt1[in_band, sl]
         c2_window = cwt2[in_band, sl]
-        d = degree_of_polarization(c1_window.ravel(), c2_window.ravel())
+        s_i, s_q, s_u, s_v = stokes_parameters(
+            c1_window.ravel(),
+            c2_window.ravel(),
+        )
+        d = (np.sqrt(s_q * s_q + s_u * s_u + s_v * s_v) / s_i) if s_i > 0 else 0.0
         if d < min_stokes_d:
             continue
+        ell, incl_deg, pol_frac = ellipticity_inclination_from_stokes(
+            s_i,
+            s_q,
+            s_u,
+            s_v,
+        )
         # Bandpass amplitudes (RMS of the real CWT slice at peak f).
         b_perp1_amp = float(np.sqrt(np.mean(field_bp[:, 1] ** 2)))
         b_perp2_amp = float(np.sqrt(np.mean(field_bp[:, 2] ** 2)))
         b_par_amp = float(np.sqrt(np.mean(field_bp[:, 0] ** 2)))
-        kept.append(DetectedEvent(
-            peak=peak,
-            q_factor=float(q),
-            mva_par_frac=float(par_frac),
-            stokes_d=float(d),
-            b_perp1_amp=b_perp1_amp,
-            b_perp2_amp=b_perp2_amp,
-            b_par_amp=b_par_amp,
-        ))
+        kept.append(
+            DetectedEvent(
+                peak=peak,
+                q_factor=float(q),
+                mva_par_frac=float(par_frac),
+                stokes_d=float(d),
+                b_perp1_amp=b_perp1_amp,
+                b_perp2_amp=b_perp2_amp,
+                b_par_amp=b_par_amp,
+                stokes_i=float(s_i),
+                stokes_q=float(s_q),
+                stokes_u=float(s_u),
+                stokes_v=float(s_v),
+                ellipticity=float(ell),
+                inclination_deg=float(incl_deg),
+                polarized_fraction=float(pol_frac),
+            )
+        )
     return kept

@@ -1,4 +1,4 @@
-"""Signal processing: FFT, wavelet, power ratios, cross-correlation."""
+"""Signal processing: FFT, wavelet, power ratios, polarization."""
 
 from qp.signal.fft import (
     welch_psd,
@@ -12,6 +12,16 @@ from qp.signal.cross_correlation import (
     cross_correlate,
     phase_shift,
     classify_polarization,
+)
+from qp.signal.polarization import (
+    stokes_parameters,
+    stokes_parameters_real,
+    stokes_parameters_tapered,
+    degree_of_polarization,
+    ellipticity_inclination,
+    ellipticity_inclination_from_stokes,
+    ellipticity_inclination_tapered,
+    per_oscillation_ellipticity,
 )
 from qp.signal.timeseries import (
     block_average,

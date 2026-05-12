@@ -28,12 +28,10 @@ from qp.signal.cross_correlation import (
     classify_polarization,
     phase_shift,
 )
-from qp.signal.cross_correlation import (
-    stokes_parameters as stokes_parameters_real,
-)
 from qp.signal.polarization import (
     degree_of_polarization,
     stokes_parameters,
+    stokes_parameters_real,
 )
 from qp.signal.wavelet import morlet_cwt
 
@@ -241,12 +239,20 @@ def test_inclination_recovery_linear(psi_deg: float) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Two-implementation agreement — partial, documents the V-sign discrepancy
+# Two-implementation agreement — full Stokes vector matches after consolidation
 # ---------------------------------------------------------------------------
 
 
-def test_I_Q_U_agree_across_implementations() -> None:
-    """I, Q, U match between polarization and cross_correlation paths."""
+def test_stokes_paths_agree_across_implementations() -> None:
+    """All four Stokes parameters match between the CWT and time-series paths.
+
+    Both paths share the Samson 1973 / Born & Wolf §1.4.2 sign convention
+    :math:`V = 2\\,\\mathrm{Im}\\langle z_1 z_2^* \\rangle`. The previous
+    revision of ``cross_correlation.stokes_parameters`` used the opposite
+    sign, which was invisible because every consumer compared on
+    :math:`|V|` or :math:`|\\mathrm{ellipticity}|`; this test pins the
+    consolidated convention so it cannot silently regress.
+    """
     rng = np.random.default_rng(7)
     for _ in range(5):
         ell = rng.uniform(-1, 1)
@@ -260,29 +266,22 @@ def test_I_Q_U_agree_across_implementations() -> None:
         )
         cwt_path = stokes_parameters(hilbert(b1), hilbert(b2))
         real_path = stokes_parameters_real(b1, b2)
-        np.testing.assert_allclose(cwt_path[:3], real_path[:3], rtol=1e-10, atol=1e-12)
+        np.testing.assert_allclose(cwt_path, real_path, rtol=1e-10, atol=1e-12)
 
 
-def test_V_sign_convention_discrepancy_documented() -> None:
-    r"""**Known issue** to be fixed in Phase 2 of the consolidation.
+def test_V_sign_convention_canonical() -> None:
+    r"""Both paths give :math:`V > 0` for a right-circular wave.
 
-    ``polarization.stokes_parameters`` uses :math:`V = 2\,\mathrm{Im}\langle
-    z_1 z_2^* \rangle` (Samson 1973, Born & Wolf §1.4.2 — the literature
-    convention). ``cross_correlation.stokes_parameters`` uses
-    :math:`V = 2\,\mathrm{Im}\langle z_1^* z_2 \rangle = -2\,\mathrm{Im}
-    \langle z_1 z_2^* \rangle`. The two are equal-and-opposite.
-
-    Pre-existing tests assert on :math:`|V|` so the discrepancy has been
-    invisible. This test pins it explicitly so the Phase 2 consolidation
-    fixes the right module: keep the polarization-module convention,
-    flip the cross_correlation copy.
+    Right-circular = ``b_perp2`` lags ``b_perp1`` by :math:`+\pi/2`.
+    Pins the post-consolidation convention; protects against an
+    accidental sign flip in either ``stokes_parameters`` or
+    ``stokes_parameters_real``.
     """
     b1, b2 = _make_wave(3600.0, 60.0, 4000, ellipticity=+1.0)
-    v_polar = stokes_parameters(hilbert(b1), hilbert(b2))[3]
-    v_cross = stokes_parameters_real(b1, b2)[3]
-    assert v_polar > 0, "V_polar must be positive for ellipticity=+1"
-    assert v_cross < 0, "V_cross is currently negative — to be flipped"
-    assert v_polar == pytest.approx(-v_cross, rel=1e-10)
+    v_cwt = stokes_parameters(hilbert(b1), hilbert(b2))[3]
+    v_real = stokes_parameters_real(b1, b2)[3]
+    assert v_cwt > 0 and v_real > 0
+    assert v_cwt == pytest.approx(v_real, rel=1e-10)
 
 
 # ---------------------------------------------------------------------------

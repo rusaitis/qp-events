@@ -1,44 +1,53 @@
-r"""Stokes parameters and degree of polarization for two-component waves.
+r"""Stokes parameters, ellipticity, inclination, and MVA for transverse waves.
 
-For two complex analytic-signal time series :math:`z_1(t), z_2(t)` —
-typically the Morlet-CWT coefficients of the two transverse magnetic
-field components at a single frequency — the four Stokes parameters
-are
+Single source of truth for polarization math used by the detector
+(:mod:`qp.events.detector`) and post-hoc figure scripts (Fig 10,
+fig11 PPO fold, supplementary diagnostics).
+
+Stokes parameters of an analytic two-component signal
+:math:`z_1(t), z_2(t)` — typically the Morlet-CWT coefficients of the
+two transverse magnetic-field components at a single frequency — are
 
 .. math::
 
     I &= \langle |z_1|^2 + |z_2|^2 \rangle \\
     Q &= \langle |z_1|^2 - |z_2|^2 \rangle \\
-    U &= 2 \langle \mathrm{Re}(z_1 z_2^*) \rangle \\
-    V &= 2 \langle \mathrm{Im}(z_1 z_2^*) \rangle
+    U &= 2 \,\mathrm{Re}\langle z_1 z_2^* \rangle \\
+    V &= 2 \,\mathrm{Im}\langle z_1 z_2^* \rangle
 
-and the degree of polarization is
+with the Samson (1973) / Born & Wolf §1.4.2 sign convention: positive
+:math:`V` means :math:`z_2` lags :math:`z_1` by :math:`\pi/2` (right-handed
+in the :math:`(\hat b_{\perp 1}, \hat b_{\perp 2})` plane viewed along
+:math:`\hat b_\parallel`). The degree of polarization
 
 .. math::
 
-    d = \frac{\sqrt{Q^2 + U^2 + V^2}}{I} \in [0, 1].
+    d = \frac{\sqrt{Q^2 + U^2 + V^2}}{I} \in [0, 1]
 
-A coherent monochromatic wave packet has :math:`d = 1` regardless of
-whether the polarization is linear (``Q``- or ``U``-dominated),
-circular (``V``-dominated), or elliptical. An incoherent superposition
-of independent transverse fluctuations has :math:`d \to 0` as the
-averaging window grows: the cross-terms :math:`\langle z_1 z_2^* \rangle`
-vanish in expectation. Thus a single 0–1 score cleanly separates
-genuinely polarized waves from broadband transients, with no need for
-separate "linear" and "circular" branches.
+is 1 for a coherent monochromatic wave packet — linear, circular,
+elliptical alike — and tends to 0 for an incoherent superposition.
+
+Derived shape parameters: the ellipticity :math:`e = \tan\chi` with
+:math:`\sin 2\chi = V / p`, the inclination
+:math:`\psi = \tfrac{1}{2}\mathrm{atan2}(U, Q)`, and the polarized
+fraction :math:`p / I`.
 
 References
 ----------
 Born & Wolf, *Principles of Optics*, 7th ed., §1.4.2.
-
 Samson, J. C. (1973), "Description of the polarisation states of vector
 processes", *Geophys. J. R. Astr. Soc.* 34, 403.
+Sonnerup & Cahill (1967), *JGR* 72, 171. Sonnerup & Scheible (1998),
+*ISSI Scientific Reports* SR-001 §8 — MVA helpers below.
 """
 
 from __future__ import annotations
 
 import numpy as np
 from numpy.typing import ArrayLike
+from scipy.signal import hilbert, windows
+
+from qp.signal.polarization_config import TUKEY_TAPER_ALPHA
 
 
 def stokes_parameters(
@@ -77,15 +86,47 @@ def stokes_parameters(
     )
 
 
+def stokes_parameters_real(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+) -> tuple[float, float, float, float]:
+    r"""Stokes parameters from real time-series via the Hilbert transform.
+
+    Convenience wrapper around :func:`stokes_parameters` that builds the
+    analytic signal of each input with ``scipy.signal.hilbert``. Use
+    this when you have raw band-pass-filtered time series rather than
+    complex CWT coefficients.
+    """
+    a = hilbert(np.asarray(b_perp1, dtype=float))
+    b = hilbert(np.asarray(b_perp2, dtype=float))
+    return stokes_parameters(a, b)
+
+
+def stokes_parameters_tapered(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    alpha: float = TUKEY_TAPER_ALPHA,
+) -> tuple[float, float, float, float]:
+    r"""Stokes parameters with a Tukey taper to suppress Hilbert edge effects.
+
+    The Hilbert transform of a short rectangular window leaks energy at
+    the boundaries; a Tukey taper smoothly rolls the signal to zero at
+    both ends and removes the artifact without distorting the central
+    portion. ``alpha=0.25`` tapers the outer 12.5% of each side.
+    """
+    b1 = np.asarray(b_perp1, dtype=float)
+    b2 = np.asarray(b_perp2, dtype=float)
+    taper = windows.tukey(len(b1), alpha=alpha)
+    a = hilbert(b1 * taper)
+    b = hilbert(b2 * taper)
+    return stokes_parameters(a, b)
+
+
 def degree_of_polarization(
     z1: ArrayLike,
     z2: ArrayLike,
 ) -> float:
     r"""Degree of polarization :math:`d \in [0, 1]`.
-
-    .. math::
-
-        d = \frac{\sqrt{Q^2 + U^2 + V^2}}{I}
 
     A coherent wave packet has :math:`d \to 1` regardless of
     polarization geometry; incoherent broadband transients have
@@ -96,6 +137,116 @@ def degree_of_polarization(
     if i_ <= 0.0:
         return 0.0
     return float(np.sqrt(q * q + u * u + v * v) / i_)
+
+
+def ellipticity_inclination_from_stokes(
+    i_: float,
+    q: float,
+    u: float,
+    v: float,
+) -> tuple[float, float, float]:
+    r"""Derive (ellipticity, inclination°, polarized fraction) from Stokes.
+
+    Returns
+    -------
+    ellipticity : float
+        Signed minor/major axis ratio :math:`\tan\chi` with
+        :math:`\sin 2\chi = V/p`. ``+1`` is right-circular, ``-1``
+        left-circular, ``0`` linear.
+    inclination_deg : float
+        Major-axis tilt from :math:`\hat b_{\perp 1}`,
+        :math:`\tfrac{1}{2}\,\mathrm{atan2}(U, Q)`, in degrees.
+    polarized_fraction : float
+        :math:`p/I \in [0, 1]`, identical to :func:`degree_of_polarization`.
+    """
+    p = np.sqrt(q * q + u * u + v * v)
+    if p <= 0.0 or i_ <= 0.0:
+        return 0.0, 0.0, 0.0
+    chi = 0.5 * np.arcsin(np.clip(v / p, -1.0, 1.0))
+    psi = 0.5 * np.arctan2(u, q)
+    return float(np.tan(chi)), float(np.degrees(psi)), float(p / i_)
+
+
+def ellipticity_inclination(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+) -> tuple[float, float, float]:
+    r"""Ellipticity, inclination, polarized fraction from real time-series."""
+    return ellipticity_inclination_from_stokes(
+        *stokes_parameters_real(b_perp1, b_perp2),
+    )
+
+
+def ellipticity_inclination_tapered(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    alpha: float = TUKEY_TAPER_ALPHA,
+) -> tuple[float, float, float]:
+    r"""Ellipticity from real time-series with a Tukey taper.
+
+    Preferred over :func:`ellipticity_inclination` for events spanning
+    fewer than ~5 oscillations.
+    """
+    return ellipticity_inclination_from_stokes(
+        *stokes_parameters_tapered(b_perp1, b_perp2, alpha=alpha),
+    )
+
+
+def per_oscillation_ellipticity(
+    b_perp1: ArrayLike,
+    b_perp2: ArrayLike,
+    dt: float = 60.0,
+    period: float = 3600.0,
+    alpha: float = TUKEY_TAPER_ALPHA,
+) -> tuple[float, float]:
+    r"""Median per-oscillation ellipticity and its inter-quartile spread.
+
+    Splits the event window into individual cycles of the peak period,
+    computes Stokes-derived ellipticity for each cycle, and returns the
+    median and IQR. Vectorized over cycles — reshape + axis-batched
+    Hilbert in two FFT calls — so a 100-cycle event runs in O(N log N).
+
+    Returns
+    -------
+    median_ellipticity : float
+    iqr_ellipticity : float
+        Inter-quartile range (75th - 25th percentile).
+    """
+    b1 = np.asarray(b_perp1, dtype=float)
+    b2 = np.asarray(b_perp2, dtype=float)
+    samples_per_cycle = int(round(period / dt))
+    if samples_per_cycle < 4 or len(b1) < samples_per_cycle:
+        e, _, _ = ellipticity_inclination_tapered(b1, b2, alpha=alpha)
+        return e, 0.0
+
+    n_cycles = len(b1) // samples_per_cycle
+    cut = n_cycles * samples_per_cycle
+    cycles_1 = b1[:cut].reshape(n_cycles, samples_per_cycle)
+    cycles_2 = b2[:cut].reshape(n_cycles, samples_per_cycle)
+    taper = windows.tukey(samples_per_cycle, alpha=alpha)
+    a = hilbert(cycles_1 * taper, axis=-1)
+    b = hilbert(cycles_2 * taper, axis=-1)
+    # Per-cycle Stokes — broadcast over the cycle axis.
+    p1 = np.abs(a) ** 2
+    p2 = np.abs(b) ** 2
+    cross = a * b.conj()
+    i_ = (p1 + p2).mean(axis=-1)
+    q = (p1 - p2).mean(axis=-1)
+    u = 2.0 * cross.real.mean(axis=-1)
+    v = 2.0 * cross.imag.mean(axis=-1)
+    p = np.sqrt(q * q + u * u + v * v)
+    valid = (i_ > 0.0) & (p > 0.0)
+    if not np.any(valid):
+        e, _, _ = ellipticity_inclination_tapered(b1, b2, alpha=alpha)
+        return e, 0.0
+    chi = 0.5 * np.arcsin(np.clip(v[valid] / p[valid], -1.0, 1.0))
+    ell = np.tan(chi)
+    ell = ell[np.isfinite(ell)]
+    if ell.size == 0:
+        e, _, _ = ellipticity_inclination_tapered(b1, b2, alpha=alpha)
+        return e, 0.0
+    q25, q50, q75 = np.percentile(ell, [25, 50, 75])
+    return float(q50), float(q75 - q25)
 
 
 def mva_intermediate_minimum_ratio(
@@ -134,9 +285,7 @@ def mva_intermediate_minimum_ratio(
     """
     field = np.asarray(field, dtype=float)
     if field.ndim != 2 or field.shape[1] != 3:
-        raise ValueError(
-            f"field must have shape (n_samples, 3), got {field.shape}"
-        )
+        raise ValueError(f"field must have shape (n_samples, 3), got {field.shape}")
     if field.shape[0] < 3:
         return 0.0
     cov = np.cov(field, rowvar=False)
@@ -191,9 +340,7 @@ def mva_minimum_eigenvalue_fraction(
     """
     field = np.asarray(field, dtype=float)
     if field.ndim != 2 or field.shape[1] != 3:
-        raise ValueError(
-            f"field must have shape (n_samples, 3), got {field.shape}"
-        )
+        raise ValueError(f"field must have shape (n_samples, 3), got {field.shape}")
     if field.shape[0] < 3:
         return 0.0
     cov = np.cov(field, rowvar=False)
@@ -241,9 +388,7 @@ def mva_major_axis_parallel_fraction(
     """
     field = np.asarray(field, dtype=float)
     if field.ndim != 2 or field.shape[1] != 3:
-        raise ValueError(
-            f"field must have shape (n_samples, 3), got {field.shape}"
-        )
+        raise ValueError(f"field must have shape (n_samples, 3), got {field.shape}")
     if not 0 <= par_axis < 3:
         raise ValueError(f"par_axis must be 0, 1, or 2; got {par_axis}")
     if field.shape[0] < 3:

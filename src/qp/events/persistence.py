@@ -28,6 +28,18 @@ Required (always populated):
 - ``q_factor`` float        — period / FWHM
 - ``mva_par_frac`` float    — :math:`(\hat e_1 \cdot \hat b_\parallel)^2`
 - ``stokes_d`` float        — degree of polarization in [0, 1]
+- ``stokes_i``, ``stokes_q``, ``stokes_u``, ``stokes_v`` float
+                            — full Stokes vector over the in-band TF window
+                              (units: nT² of CWT amplitude); ``stokes_d``
+                              equals ``sqrt(Q^2+U^2+V^2)/I``
+- ``ellipticity`` float     — signed minor/major axis ratio in [-1, 1]
+                              (Samson 1973 convention: positive ⇔ V > 0
+                              ⇔ b_perp2 lags b_perp1 by +π/2)
+- ``inclination_deg`` float — major-axis tilt from :math:`\hat b_{\perp 1}`
+                              in degrees, :math:`\tfrac{1}{2}\,\mathrm{atan2}(U,Q)`
+- ``polarized_fraction`` float — :math:`p/I \in [0, 1]`, identical to
+                                  ``stokes_d``; kept as a distinct column
+                                  so consumers don't have to recompute
 - ``b_perp1_amp`` float     — RMS of bandpass :math:`b_{\perp 1}`, nT
 - ``b_perp2_amp`` float     — RMS of bandpass :math:`b_{\perp 2}`, nT
 - ``b_par_amp`` float       — RMS of bandpass :math:`b_\parallel`, nT
@@ -76,10 +88,24 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "q_factor",
     "mva_par_frac",
     "stokes_d",
+    "stokes_i",
+    "stokes_q",
+    "stokes_u",
+    "stokes_v",
+    "ellipticity",
+    "inclination_deg",
+    "polarized_fraction",
     "b_perp1_amp",
     "b_perp2_amp",
     "b_par_amp",
 )
+
+#: Bumped when new required columns are added. Round-8.1 introduces the
+#: full Stokes vector and derived (ellipticity, inclination,
+#: polarized fraction). Legacy parquet files written with the round-8
+#: schema remain readable; callers can detect the upgrade via the
+#: side-car ``meta.json`` ``schema_version`` key.
+SCHEMA_VERSION: str = "round8.1"
 
 
 def event_to_record(
@@ -129,6 +155,13 @@ def event_to_record(
         "q_factor": float(detection.q_factor),
         "mva_par_frac": float(detection.mva_par_frac),
         "stokes_d": float(detection.stokes_d),
+        "stokes_i": float(detection.stokes_i),
+        "stokes_q": float(detection.stokes_q),
+        "stokes_u": float(detection.stokes_u),
+        "stokes_v": float(detection.stokes_v),
+        "ellipticity": float(detection.ellipticity),
+        "inclination_deg": float(detection.inclination_deg),
+        "polarized_fraction": float(detection.polarized_fraction),
         "b_perp1_amp": float(detection.b_perp1_amp),
         "b_perp2_amp": float(detection.b_perp2_amp),
         "b_par_amp": float(detection.b_par_amp),
@@ -171,6 +204,8 @@ def events_to_parquet(
     missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
     if rows and missing:
         raise ValueError(f"missing required columns: {missing}")
+    attrs = {**(attrs or {})}
+    attrs.setdefault("schema_version", SCHEMA_VERSION)
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,25 +213,25 @@ def events_to_parquet(
         df.to_parquet(path, engine="pyarrow", index=False)
     except (ImportError, ValueError) as exc:
         log.warning(
-            "pyarrow unavailable (%s); falling back to .npy", exc,
+            "pyarrow unavailable (%s); falling back to .npy",
+            exc,
         )
         npy_path = path.with_suffix(".npy")
         np.save(npy_path, df.to_records(index=False))
         path = npy_path
 
-    if attrs is not None:
-        meta_path = path.with_suffix(path.suffix + ".meta.json")
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "n_rows": len(rows),
-                    "columns": list(df.columns),
-                    "attrs": dict(attrs),
-                },
-                indent=2,
-                default=str,
-            )
+    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    meta_path.write_text(
+        json.dumps(
+            {
+                "n_rows": len(rows),
+                "columns": list(df.columns),
+                "attrs": dict(attrs),
+            },
+            indent=2,
+            default=str,
         )
+    )
     return len(rows)
 
 
@@ -229,12 +264,14 @@ def detection_to_dict(detection: DetectedEvent) -> dict[str, Any]:
     # asdict turns the WavePacketPeak into a nested dict — flatten the
     # times for human-readable diagnostics.
     peak = out.pop("peak")
-    out.update({
-        "peak_time": peak["peak_time"],
-        "date_from": peak["date_from"],
-        "date_to": peak["date_to"],
-        "band": peak["band"],
-        "period_sec": peak["period_sec"],
-        "period_fwhm_sec": peak["period_fwhm_sec"],
-    })
+    out.update(
+        {
+            "peak_time": peak["peak_time"],
+            "date_from": peak["date_from"],
+            "date_to": peak["date_to"],
+            "band": peak["band"],
+            "period_sec": peak["period_sec"],
+            "period_fwhm_sec": peak["period_fwhm_sec"],
+        }
+    )
     return out
