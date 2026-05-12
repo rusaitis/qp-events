@@ -614,6 +614,21 @@ button.reverse-btn.active {
 .gate-chip.gate-fail     { background: #f29539; color: #fff; }
 .gate-chip.gate-unknown  { background: var(--r-uk); color: #ddd; }
 
+/* Polarization-state badge alongside the signed ellipticity value. */
+.ell-chip {
+  display: inline-block;
+  padding: 0 7px;
+  margin-left: 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #000;
+  vertical-align: middle;
+}
+.ell-chip.ell-circ       { background: #dc267f; color: #fff; }
+.ell-chip.ell-elliptical { background: #ffb000; }
+.ell-chip.ell-linear     { background: #648fff; color: #fff; }
+
 .plot {
   background: var(--panel);
   border: 1px solid var(--border);

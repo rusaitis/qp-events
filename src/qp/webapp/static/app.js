@@ -160,7 +160,10 @@ const HELP_TEXT = {
   bperp1:   "First transverse component (perpendicular to mean B) in mean-field-aligned (MFA) coordinates. Carries Alfvénic / shear wave power.",
   bperp2:   "Second transverse component (perpendicular to both B and B⊥₁) in MFA coordinates. Together with B⊥₁ describes the polarization plane.",
   bpar:     "Component parallel to the mean field. Compressional / fast-mode wave power lives here.",
-  stokes_d: "Degree of circular polarization. +1 = right-handed circular, −1 = left-handed circular, 0 = linear. Computed from the cross-correlation of B⊥₁ and B⊥₂.",
+  stokes_d: "Stokes degree of polarization: d = √(Q²+U²+V²)/I ∈ [0, 1]. d → 1 is a fully polarized wave (linear, circular, or elliptical alike); d → 0 is unpolarized broadband noise. Computed over the in-band CWT window of B⊥₁ and B⊥₂.",
+  ellipticity: "Signed minor/major axis ratio of the polarization ellipse, tan χ where sin 2χ = V/p. +1 = right-handed circular, −1 = left-handed circular, 0 = linear. This is the geometric polarization shape — distinct from the stokes degree (which only says how much of the power is polarized at all).",
+  inclination_deg: "Tilt of the polarization ellipse's major axis from B⊥₁, ψ = ½·atan2(U, Q). Range −90° to +90°.",
+  pol_frac: "Polarized fraction p/I — identical in value to the stokes degree d; shown here as a separate label so it's clear when the gate ('stokes d ≥ 0.7') uses the same quantity as the geometry tile.",
   l_shell:  "Dipole L-shell parameter L = R / cos²(λ_mag). Equatorial radius of the field line through the spacecraft, in Rs. Derived from r_distance and mag_lat.",
   mva_par:  "MVA major-axis parallel fraction: (ê_max · b̂∥)². The minimum-variance principal axis of the bandpass-filtered field. Lower = more transverse. Detector requires ≤ 0.5.",
   sigma_pk: "Robust σ above the per-row CWT background. Each frequency row's noise model is the median + MAD × 1.4826 (Gaussian-equivalent σ) computed on out-of-band period rows only, then interpolated in log-period to the in-band rows so QP signal cannot inflate its own noise estimate. The threshold itself is set by Bonferroni FWER control over the effective number of independent time-frequency cells in the search volume (α = 0.01, n_σ ≈ 4.6 for a 36-h segment). Not a fixed 3σ or 5σ — derived from the search volume.",
@@ -265,6 +268,7 @@ function renderEventStats(summary, wf, detail, wavelet) {
   const STOKES_MIN= thr.stokes_d_min     ?? 0.7;
   const FWER_THR  = w.n_sigma_threshold  ?? null;
   const SIGMA_PK  = w.sigma_at_peak      ?? null;
+  const pol = w.polarization || {};
   const region = escapeHtml(wf?.region ?? summary.region ?? "unknown");
   const regionPill = `<span class="pill" data-region="${region}">${region}</span>`;
   const band = escapeHtml(wf?.band ?? summary.band ?? "?");
@@ -305,6 +309,8 @@ function renderEventStats(summary, wf, detail, wavelet) {
           <div class="stat"><span class="stat-label">Q factor${helpHintHTML(HELP_TEXT.q_factor)}</span>
             <span class="stat-val">${qPill}</span></div>
           ${statTile("Stokes d", fmt(s.stokes_d, 2), "", null, HELP_TEXT.stokes_d)}
+          ${statTile("Ellipticity", ellipticityCell(pol.ellipticity), "", null, HELP_TEXT.ellipticity)}
+          ${statTile("Inclination", pol.inclination_deg == null ? "—" : fmt(pol.inclination_deg, 1) + "°", "", null, HELP_TEXT.inclination_deg)}
         </div>
       </div>
     </div>
@@ -484,6 +490,21 @@ function renderWavePeriodGraph(periodMin, eventBand) {
     ctx.fillStyle = "#ffffff";
     ctx.fillText(label, x, midY);
   }
+}
+
+function ellipticityCell(e) {
+  // Format the signed minor/major axis ratio with a polarization-state
+  // chip beside it: L-circ / R-circ / elliptical / linear. The numeric
+  // value carries sign (V > 0 ⇒ right-handed, Samson 1973 convention).
+  if (e == null || !Number.isFinite(+e)) return "—";
+  const v = +e;
+  const abs = Math.abs(v);
+  let label, cls;
+  if (abs >= 0.7)      { label = v > 0 ? "R-circ" : "L-circ"; cls = "ell-circ"; }
+  else if (abs >= 0.3) { label = v > 0 ? "R-ell"  : "L-ell";  cls = "ell-elliptical"; }
+  else                 { label = "linear";                     cls = "ell-linear"; }
+  const sign = v > 0 ? "+" : "";
+  return `${sign}${fmt(v, 2)} <span class="ell-chip ${cls}">${label}</span>`;
 }
 
 function polarizationTiles(s) {

@@ -27,11 +27,13 @@ import numpy as np
 
 from qp.events.bands import QP_BANDS
 from qp.events.detector import (
-    MAX_MVA_PARALLEL_FRACTION,
-    MIN_DEGREE_OF_POLARIZATION,
     MIN_Q_FACTOR,
     SEGMENT_FWER_ALPHA,
     bonferroni_n_sigma_for_cwt,
+)
+from qp.signal.polarization_config import (
+    MAX_MVA_PARALLEL_FRACTION,
+    MIN_DEGREE_OF_POLARIZATION,
 )
 from qp.events.threshold import wavelet_sigma_mask
 from qp.signal.wavelet import morlet_cwt
@@ -77,7 +79,27 @@ def render_wavelet_png(
     power = power[order, :]
     mask = mask[order, :]
 
-    log_pwr = np.log10(np.maximum(power, 1e-9))
+    # Display power *normalised by each row's own noise floor* so colours
+    # are comparable across periods (raw |CWT| scales with period for red
+    # noise, which would otherwise wash out short-period detail). Per-row
+    # median is robust to the ≤14% time-coverage of a typical wave
+    # packet, so dividing by it puts the noise floor at log10(1)=0 in
+    # every row.
+    row_med = np.median(np.maximum(power, 1e-12), axis=1, keepdims=True)
+    log_pwr = np.log10(np.maximum(power / row_med, 1e-3))
+
+    # Constant colour scale across all events so the same colour means
+    # the same signal-to-noise ratio:
+    #   vmin = 0     → at the row's noise floor (deep blue)
+    #   vmin..0.75   → sub-detection fluctuations
+    #   ~0.75        → σ-mask threshold (n_sigma ≈ 4.57 × MAD_TO_SIGMA ×
+    #                  MAD/median ≈ 1.0 in log10 units for ~Gaussian
+    #                  noise; the actual contour is drawn from the
+    #                  boolean σ-mask)
+    #   0.75..1.3    → above-threshold ridges
+    #   1.3          → saturation (≈ 20× noise floor)
+    vmin = 0.0
+    vmax = 1.3
 
     bg_color = "#1c1c1c"
     fg_color = "#e8e8e8"
@@ -86,17 +108,28 @@ def render_wavelet_png(
     # pcolormesh edges (cell-centered axes work too, but edges are exact).
     period_edges = _bin_edges_log(period_min)
     time_edges = _bin_edges_linear(times_h)
+    # turbo: perceptually-improved rainbow, much wider colour gamut than
+    # magma — high-contrast peaks pop, low-power background stays cool.
     mesh = ax.pcolormesh(
         time_edges, period_edges, log_pwr,
-        cmap="magma", shading="flat",
+        cmap="turbo", shading="flat", vmin=vmin, vmax=vmax,
     )
     cb = fig.colorbar(mesh, ax=ax, pad=0.01, fraction=0.04)
     cb.set_label(
-        r"$\log_{10}\,\max(|\mathrm{CWT}(b_{\perp 1})|,\,|\mathrm{CWT}(b_{\perp 2})|)$",
+        r"$\log_{10}\,(|\mathrm{CWT}| / \tilde{|\mathrm{CWT}|}_\mathrm{row})$",
         fontsize=9, color=fg_color,
     )
     cb.ax.tick_params(labelsize=8, colors=fg_color)
     cb.outline.set_edgecolor(fg_color)
+    # σ-mask threshold marker on the colorbar. The value 0.75 corresponds
+    # to ~5x noise floor in linear |CWT| ratio; the actual contour
+    # location is set by the per-row Bonferroni-derived n_sigma.
+    cb.ax.axhline(0.75, color="#00ffaa", linestyle="--", linewidth=1.1)
+    cb.ax.text(
+        1.6, 0.75, "σ-mask", color="#00ffaa", fontsize=7,
+        transform=cb.ax.get_yaxis_transform(),
+        va="center", ha="left",
+    )
 
     # σ-mask boundary as a contour at the half-level of the boolean mask.
     if mask.any():
@@ -120,15 +153,25 @@ def render_wavelet_png(
             marker="+", color="white", markersize=14, mew=2.0, zorder=5,
         )
 
-    # QP band edges (dashed gray).
+    # QP band edges (dashed gray) + labelled centroid lines.
+    xlim_for_label = panel.get("xlim_h") or (times_h[0], times_h[-1])
+    x_text = xlim_for_label[1] - 0.04 * (xlim_for_label[1] - xlim_for_label[0])
     for band in QP_BANDS.values():
         for edge in (band.period_min_sec / 60.0, band.period_max_sec / 60.0):
             ax.axhline(edge, color="#bbbbbb", linewidth=0.5, linestyle=":",
                        alpha=0.6, zorder=2)
+        centroid_min = band.period_centroid_sec / 60.0
         ax.axhline(
-            band.period_centroid_sec / 60.0,
+            centroid_min,
             color="#dddddd", linewidth=0.6, linestyle="-",
             alpha=0.4, zorder=2,
+        )
+        ax.text(
+            x_text, centroid_min, f"{int(centroid_min)} min",
+            color=fg_color, fontsize=8, alpha=0.95,
+            ha="right", va="center", zorder=6,
+            bbox=dict(boxstyle="round,pad=0.18", facecolor=bg_color,
+                      edgecolor="none", alpha=0.6),
         )
 
     ax.set_yscale("log")
@@ -188,6 +231,16 @@ def wavelet_gates(
         x for x in (s1, s2) if x is not None
     )
 
+    # Polarization geometry was added in the round-8.1 schema (full Stokes
+    # vector + derived ellipticity/inclination/polarized fraction). Legacy
+    # round-8 parquet files do not have these columns — surface as None so
+    # the frontend can show a "—" placeholder instead of crashing.
+    def _opt(col: str) -> float | None:
+        if col not in row.index:
+            return None
+        v = row[col]
+        return None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
+
     out = {
         "event_id": int(row.event_id),
         "event_uid": str(row.get("event_uid", "")) if "event_uid" in row else "",
@@ -200,6 +253,15 @@ def wavelet_gates(
             "q_factor":     float(row.q_factor),
             "mva_par_frac": float(row.mva_par_frac),
             "stokes_d":     float(row.stokes_d),
+        },
+        "polarization": {
+            "ellipticity":         _opt("ellipticity"),
+            "inclination_deg":     _opt("inclination_deg"),
+            "polarized_fraction":  _opt("polarized_fraction"),
+            "stokes_i":            _opt("stokes_i"),
+            "stokes_q":            _opt("stokes_q"),
+            "stokes_u":            _opt("stokes_u"),
+            "stokes_v":            _opt("stokes_v"),
         },
         "thresholds": {
             "q_factor_min":     MIN_Q_FACTOR,
