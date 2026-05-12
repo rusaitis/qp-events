@@ -60,8 +60,13 @@ def plot_inv_lat_vs_lt(ds: xr.Dataset, outpath: Path) -> None:
 
     # Find a common color scale that keeps both panels comparable
     vmax = max(dipole.max(), kmag.max())
-    vmin = max(0.05, min(dipole[dipole > 0].min() if (dipole > 0).any() else 0.1,
-                          kmag[kmag > 0].min() if (kmag > 0).any() else 0.1))
+    vmin = max(
+        0.05,
+        min(
+            dipole[dipole > 0].min() if (dipole > 0).any() else 0.1,
+            kmag[kmag > 0].min() if (kmag > 0).any() else 0.1,
+        ),
+    )
     norm = LogNorm(vmin=vmin, vmax=vmax)
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
@@ -103,7 +108,8 @@ def plot_inv_lat_vs_lt(ds: xr.Dataset, outpath: Path) -> None:
 
     fig.suptitle(
         "Cassini dwell time mapped to auroral invariant latitude (magnetosphere only)",
-        y=0.98, color="white",
+        y=0.98,
+        color="white",
     )
     save_figure(fig, outpath)
 
@@ -127,7 +133,7 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     cos_lat = np.cos(np.radians(lat_mesh))
     # Avoid div-by-zero near the poles (cos_lat → 0) — cap at a tiny value
     cos_lat = np.where(np.abs(cos_lat) < 1e-3, 1e-3, cos_lat)
-    L_mesh = r_mesh / cos_lat ** 2  # (n_r, n_lat)
+    L_mesh = r_mesh / cos_lat**2  # (n_r, n_lat)
 
     # Rebin into (L, LT)
     n_L = 80
@@ -148,7 +154,9 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     # Polar plot: noon at top, clockwise → dawn on right, midnight at bottom
     fig = plt.figure(figsize=(10, 10))
     fig.set_facecolor(plt.rcParams["figure.facecolor"])
-    ax = fig.add_subplot(111, projection="polar", facecolor=plt.rcParams["axes.facecolor"])
+    ax = fig.add_subplot(
+        111, projection="polar", facecolor=plt.rcParams["axes.facecolor"]
+    )
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
 
@@ -159,7 +167,9 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     # clockwise direction, theta=0 is at top. So we need LT=12 → theta=0:
     theta = ((lt - 12.0) / 24.0) * 2.0 * np.pi
     # Build mesh for pcolormesh: theta and L edges
-    theta_edges = ((np.concatenate([lt - 0.125, [lt[-1] + 0.125]]) - 12.0) / 24.0) * 2.0 * np.pi
+    theta_edges = (
+        ((np.concatenate([lt - 0.125, [lt[-1] + 0.125]]) - 12.0) / 24.0) * 2.0 * np.pi
+    )
     Theta, R = np.meshgrid(theta_edges, L_edges)
 
     # Mask zeros for a clean log plot
@@ -168,8 +178,12 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     vmin = max(0.1, Z.min() if Z.count() > 0 else 0.1)
     vmax = Z.max() if Z.count() > 0 else 1.0
     im = ax.pcolormesh(
-        Theta, R, Z, norm=LogNorm(vmin=vmin, vmax=vmax),
-        cmap="inferno", shading="auto",
+        Theta,
+        R,
+        Z,
+        norm=LogNorm(vmin=vmin, vmax=vmax),
+        cmap="inferno",
+        shading="auto",
     )
 
     ax.set_rlim(0, L_max)
@@ -193,7 +207,8 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     ax.set_title(
         f"Cassini equatorial L-shell dwell time (MS, L ≤ {L_max:.0f} R$_S$)\n"
         f"View from Saturn's north pole",
-        color="white", pad=20,
+        color="white",
+        pad=20,
     )
 
     save_figure(fig, outpath)
@@ -236,14 +251,18 @@ def plot_meridional_rho_z(
     ax.set_facecolor(plt.rcParams["axes.facecolor"])
 
     im = ax.pcolormesh(
-        rho, z, Z,
+        rho,
+        z,
+        Z,
         norm=LogNorm(vmin=vmin, vmax=vmax),
-        cmap="inferno", shading="auto",
+        cmap="inferno",
+        shading="auto",
     )
 
     # Draw Saturn's filled half-disk at origin (only the visible ρ ≥ 0 side)
-    saturn = Circle((0, 0), 1.0, facecolor="#e8d5a2", edgecolor="white",
-                    linewidth=0.8, zorder=10)
+    saturn = Circle(
+        (0, 0), 1.0, facecolor="#e8d5a2", edgecolor="white", linewidth=0.8, zorder=10
+    )
     ax.add_patch(saturn)
 
     # Reference arcs at 10, 20, 30, 40 R_S (only show the ρ ≥ 0 half)
@@ -251,11 +270,26 @@ def plot_meridional_rho_z(
     for r_ref in [10, 20, 30, 40]:
         if r_ref > r_max:
             break
-        ax.plot(r_ref * np.cos(theta_arc), r_ref * np.sin(theta_arc),
-                color="white", linewidth=0.5, linestyle="--", alpha=0.35, zorder=5)
+        ax.plot(
+            r_ref * np.cos(theta_arc),
+            r_ref * np.sin(theta_arc),
+            color="white",
+            linewidth=0.5,
+            linestyle="--",
+            alpha=0.35,
+            zorder=5,
+        )
         # Label at the equator (theta=0)
-        ax.text(r_ref - 0.5, 0.4, f"{r_ref}",
-                color="white", fontsize=9, alpha=0.7, ha="right", zorder=6)
+        ax.text(
+            r_ref - 0.5,
+            0.4,
+            f"{r_ref}",
+            color="white",
+            fontsize=9,
+            alpha=0.7,
+            ha="right",
+            zorder=6,
+        )
 
     # Equator guide line
     ax.axhline(0, color="white", linewidth=0.4, alpha=0.3, zorder=4)
@@ -273,7 +307,8 @@ def plot_meridional_rho_z(
     ax.set_title(
         f"Cassini meridional dwell time (MS, summed over local time)\n"
         f"Side view — Saturn at origin, equator horizontal",
-        color="white", pad=12,
+        color="white",
+        pad=12,
     )
 
     save_figure(fig, outpath)
@@ -309,7 +344,9 @@ def _compute_weak_field_mag_lat_lt(
         cached = np.load(cache_path)
         return cached["weak"], cached["lat_edges"], cached["lt_edges"]
 
-    log.info("Computing weak-field (|B| < %.1f nT) dwell from raw PDS data...", b_threshold)
+    log.info(
+        "Computing weak-field (|B| < %.1f nT) dwell from raw PDS data...", b_threshold
+    )
     crossings = parse_crossing_list()
     crossing_times_unix, crossing_codes = crossing_lookup_arrays(crossings)
 
@@ -356,9 +393,7 @@ def _compute_weak_field_mag_lat_lt(
             & (btot < b_threshold)
         )
 
-        h, _, _ = np.histogram2d(
-            lat[mask], lt[mask], bins=[lat_edges, lt_edges]
-        )
+        h, _, _ = np.histogram2d(lat[mask], lt[mask], bins=[lat_edges, lt_edges])
         weak_h += h  # one sample = one minute
         log.info("  %d: %d plasma-sheet samples", year, int(mask.sum()))
 
@@ -402,7 +437,12 @@ def plot_mag_lat_vs_lt(
 
     # Panel 1: general MS dwell
     im1 = axes[0].pcolormesh(
-        lt, mag_lat, general, norm=norm, cmap="inferno", shading="auto",
+        lt,
+        mag_lat,
+        general,
+        norm=norm,
+        cmap="inferno",
+        shading="auto",
     )
     axes[0].set_title("All magnetosphere samples")
     axes[0].set_xlabel("Local time (h)")
@@ -410,8 +450,12 @@ def plot_mag_lat_vs_lt(
 
     # Panel 2: plasma sheet (|B| < 2 nT)
     axes[1].pcolormesh(
-        weak_lt_centers, weak_lat_centers, weak_hours,
-        norm=norm, cmap="inferno", shading="auto",
+        weak_lt_centers,
+        weak_lat_centers,
+        weak_hours,
+        norm=norm,
+        cmap="inferno",
+        shading="auto",
     )
     axes[1].set_title(r"Plasma sheet only ($|B| < 2$ nT)")
     axes[1].set_xlabel("Local time (h)")
@@ -432,20 +476,29 @@ def plot_mag_lat_vs_lt(
 
     fig.suptitle(
         "Cassini dwell time in magnetic latitude vs local time",
-        y=0.98, color="white",
+        y=0.98,
+        color="white",
     )
     save_figure(fig, outpath)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--input", type=str,
-                        default="Output/dwell_grid_cassini_saturn.zarr",
-                        help="Path to dwell grid zarr")
-    parser.add_argument("--outdir", type=str, default="Output/figures",
-                        help="Directory to write figures")
-    parser.add_argument("--L-max", type=float, default=40.0,
-                        help="Maximum L-shell for equatorial plot")
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="Output/dwell_grid_cassini_saturn.zarr",
+        help="Path to dwell grid zarr",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=str,
+        default="Output/figures",
+        help="Directory to write figures",
+    )
+    parser.add_argument(
+        "--L-max", type=float, default=40.0, help="Maximum L-shell for equatorial plot"
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -461,7 +514,9 @@ def main() -> None:
     ds = xr.open_zarr(args.input)
     log.info(
         "  grid %dx%dx%d, %s years, %d total samples",
-        ds.attrs["n_r"], ds.attrs["n_lat"], ds.attrs["n_lt"],
+        ds.attrs["n_r"],
+        ds.attrs["n_lat"],
+        ds.attrs["n_lt"],
         f"{ds.attrs['year_from']}-{ds.attrs['year_to']}",
         ds.attrs["total_samples"],
     )
@@ -470,7 +525,9 @@ def main() -> None:
     outdir.mkdir(parents=True, exist_ok=True)
 
     plot_inv_lat_vs_lt(ds, outdir / "dwell_inv_lat_vs_lt.png")
-    plot_equatorial_L_polar(ds, outdir / "dwell_equatorial_L_polar.png", L_max=args.L_max)
+    plot_equatorial_L_polar(
+        ds, outdir / "dwell_equatorial_L_polar.png", L_max=args.L_max
+    )
     plot_meridional_rho_z(ds, outdir / "dwell_meridional_rho_z.png", r_max=args.L_max)
 
     # Weak-field histogram needs a raw-data pass (cached after first run)
@@ -483,15 +540,20 @@ def main() -> None:
         cache_path=cache_path,
     )
     plot_mag_lat_vs_lt(
-        ds, outdir / "dwell_mag_lat_vs_lt.png",
-        weak_hist, weak_lat_edges, weak_lt_edges,
+        ds,
+        outdir / "dwell_mag_lat_vs_lt.png",
+        weak_hist,
+        weak_lat_edges,
+        weak_lt_edges,
     )
 
-    print(f"\nSaved figures to {outdir}/")
-    print(f"  - dwell_inv_lat_vs_lt.png")
-    print(f"  - dwell_equatorial_L_polar.png")
-    print(f"  - dwell_meridional_rho_z.png")
-    print(f"  - dwell_mag_lat_vs_lt.png")
+    print(
+        f"\nSaved figures to {outdir}/\n"
+        f"  - dwell_inv_lat_vs_lt.png\n"
+        f"  - dwell_equatorial_L_polar.png\n"
+        f"  - dwell_meridional_rho_z.png\n"
+        f"  - dwell_mag_lat_vs_lt.png",
+    )
 
 
 if __name__ == "__main__":

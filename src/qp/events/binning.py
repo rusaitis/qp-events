@@ -36,14 +36,15 @@ from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
 
-from qp.dwell.grid import DwellGridConfig
+from qp.constants import J2000_POSIX
+from qp.dwell.grid import DwellGridConfig, _bin_index
+from qp.events.bands import QP_BAND_NAMES
+from qp.events.catalog import WaveEvent
 
 if TYPE_CHECKING:
     import xarray as xr
 
 log = logging.getLogger(__name__)
-from qp.events.bands import QP_BAND_NAMES
-from qp.events.catalog import WaveEvent
 
 
 # ----------------------------------------------------------------------
@@ -51,20 +52,6 @@ from qp.events.catalog import WaveEvent
 # ----------------------------------------------------------------------
 
 _UNIX_EPOCH = np.datetime64("1970-01-01T00:00:00")
-
-
-def _bin_index(value: float, vmin: float, vmax: float, n: int) -> int:
-    """Scalar version: map a single value to a bin index in ``[0, n)``."""
-    frac = (value - vmin) / (vmax - vmin)
-    idx = int(math.floor(frac * n))
-    return max(0, min(n - 1, idx))
-
-
-def _bin_floor(values: np.ndarray, vmin: float, vmax: float, n: int) -> np.ndarray:
-    """Vectorised version: ``np.floor((v - vmin) / (vmax - vmin) * n)``,
-    clipped to ``[0, n - 1]`` and cast to int."""
-    idx = np.floor((values - vmin) / (vmax - vmin) * n).astype(int)
-    return np.clip(idx, 0, n - 1)
 
 
 def _event_time_window(ev: WaveEvent) -> tuple[float, float]:
@@ -78,7 +65,10 @@ def _event_time_window(ev: WaveEvent) -> tuple[float, float]:
 
 
 def _in_range(
-    r: float, lat: float, lt: float, config: DwellGridConfig,
+    r: float,
+    lat: float,
+    lt: float,
+    config: DwellGridConfig,
 ) -> bool:
     return (
         config.r_range[0] <= r < config.r_range[1]
@@ -141,8 +131,7 @@ def bin_events_peak_position(
         config = DwellGridConfig()
 
     grids: dict[str, np.ndarray] = {
-        b: np.zeros(config.shape, dtype=np.float64)
-        for b in QP_BAND_NAMES
+        b: np.zeros(config.shape, dtype=np.float64) for b in QP_BAND_NAMES
     }
     grids["total"] = np.zeros(config.shape, dtype=np.float64)
 
@@ -236,8 +225,7 @@ def bin_events_walking(
         config = DwellGridConfig()
 
     grids: dict[str, np.ndarray] = {
-        b: np.zeros(config.shape, dtype=np.float64)
-        for b in QP_BAND_NAMES
+        b: np.zeros(config.shape, dtype=np.float64) for b in QP_BAND_NAMES
     }
     grids["total"] = np.zeros(config.shape, dtype=np.float64)
 
@@ -277,11 +265,7 @@ def bin_events_walking(
         seg_id = ev.segment_id
         if seg_id is None or seg_id not in segment_positions:
             # Fallback to peak position
-            if (
-                ev.r_distance is None
-                or ev.mag_lat is None
-                or ev.local_time is None
-            ):
+            if ev.r_distance is None or ev.mag_lat is None or ev.local_time is None:
                 stats.n_missing_coords += 1
                 continue
             r = float(ev.r_distance)
@@ -352,9 +336,12 @@ def _accumulate_mask(
         return None
 
     in_r = (
-        (rs >= config.r_range[0]) & (rs < config.r_range[1])
-        & (lats >= config.lat_range[0]) & (lats < config.lat_range[1])
-        & (lts >= config.lt_range[0]) & (lts < config.lt_range[1])
+        (rs >= config.r_range[0])
+        & (rs < config.r_range[1])
+        & (lats >= config.lat_range[0])
+        & (lats < config.lat_range[1])
+        & (lts >= config.lt_range[0])
+        & (lts < config.lt_range[1])
     )
     rs, lats, lts = rs[in_r], lats[in_r], lts[in_r]
     if rs.size == 0:
@@ -362,9 +349,9 @@ def _accumulate_mask(
             stats.n_out_of_range += 1
         return None
 
-    i_r = _bin_floor(rs, *config.r_range, config.n_r)
-    i_lat = _bin_floor(lats, *config.lat_range, config.n_lat)
-    i_lt = _bin_floor(lts, *config.lt_range, config.n_lt)
+    i_r = _bin_index(rs, *config.r_range, config.n_r)
+    i_lat = _bin_index(lats, *config.lat_range, config.n_lat)
+    i_lt = _bin_index(lts, *config.lt_range, config.n_lt)
 
     flat = np.ravel_multi_index((i_r, i_lat, i_lt), config.shape)
     counts = np.bincount(flat, minlength=math.prod(config.shape))
@@ -416,18 +403,22 @@ def accumulate_segment_dwell(
         finite = np.isfinite(rs) & np.isfinite(lats) & np.isfinite(lts)
         rs, lats, lts = rs[finite], lats[finite], lts[finite]
         in_r = (
-            (rs >= config.r_range[0]) & (rs < config.r_range[1])
-            & (lats >= config.lat_range[0]) & (lats < config.lat_range[1])
-            & (lts >= config.lt_range[0]) & (lts < config.lt_range[1])
+            (rs >= config.r_range[0])
+            & (rs < config.r_range[1])
+            & (lats >= config.lat_range[0])
+            & (lats < config.lat_range[1])
+            & (lts >= config.lt_range[0])
+            & (lts < config.lt_range[1])
         )
         rs, lats, lts = rs[in_r], lats[in_r], lts[in_r]
         if rs.size == 0:
             continue
-        i_r = _bin_floor(rs, *config.r_range, config.n_r)
-        i_lat = _bin_floor(lats, *config.lat_range, config.n_lat)
-        i_lt = _bin_floor(lts, *config.lt_range, config.n_lt)
+        i_r = _bin_index(rs, *config.r_range, config.n_r)
+        i_lat = _bin_index(lats, *config.lat_range, config.n_lat)
+        i_lt = _bin_index(lts, *config.lt_range, config.n_lt)
         flat = np.ravel_multi_index(
-            (i_r, i_lat, i_lt), config.shape,
+            (i_r, i_lat, i_lt),
+            config.shape,
         )
         counts = np.bincount(flat, minlength=math.prod(config.shape))
         grid += counts.astype(np.float64).reshape(config.shape)
@@ -653,7 +644,9 @@ def accumulate_full_mirror(
     for seg_id, band_to_mask in seg_masks.items():
         sp = segment_positions[seg_id]
         if (
-            sp.ksm_x is None or sp.ksm_y is None or sp.ksm_z is None
+            sp.ksm_x is None
+            or sp.ksm_y is None
+            or sp.ksm_z is None
             or sp.region_codes is None
         ):
             log.warning(
@@ -678,7 +671,14 @@ def accumulate_full_mirror(
             if sp.b_total_nT is not None:
                 bt = sp.b_total_nT[mask]
                 rwf = accumulate_weak_field_grid(
-                    x, y, z, bt, 1.0, b_threshold_nT, codes, config,
+                    x,
+                    y,
+                    z,
+                    bt,
+                    1.0,
+                    b_threshold_nT,
+                    codes,
+                    config,
                 )
                 for r in region_names:
                     grids[f"{b}_weak_field_{r}"] += rwf[r]
@@ -700,7 +700,14 @@ def accumulate_full_mirror(
         if sp.b_total_nT is not None:
             bt = sp.b_total_nT[any_mask]
             rwf = accumulate_weak_field_grid(
-                x, y, z, bt, 1.0, b_threshold_nT, codes, config,
+                x,
+                y,
+                z,
+                bt,
+                1.0,
+                b_threshold_nT,
+                codes,
+                config,
             )
             for r in region_names:
                 grids[f"total_weak_field_{r}"] += rwf[r]
@@ -860,7 +867,9 @@ def accumulate_kmag_event_grids(
     n_event_min = int(union.sum())
     log.info(
         "KMAG event tracing: %d event-minutes (~%d traces at every-%d cadence)",
-        n_event_min, n_event_min // trace_every_n, trace_every_n,
+        n_event_min,
+        n_event_min // trace_every_n,
+        trace_every_n,
     )
 
     # 2. Subset trajectory + region codes to the union mask
@@ -871,12 +880,14 @@ def accumulate_kmag_event_grids(
     t_e = t_unix_traj[keep]
     codes_e = region_codes_traj[keep]
     # Convert POSIX → J2000 for KMAG
-    j2000_posix = 946728000.0
-    t_j2000 = t_e - j2000_posix
+    t_j2000 = t_e - J2000_POSIX
 
     # 3. Trace
     result = compute_invariant_latitudes_parallel(
-        x_e, y_e, z_e, t_j2000,
+        x_e,
+        y_e,
+        z_e,
+        t_j2000,
         config=tracing_config,
         field_config=field_config,
         region_codes=codes_e,
@@ -909,15 +920,22 @@ def accumulate_kmag_event_grids(
     grids: dict[str, np.ndarray] = {}
 
     def _accumulate_for(
-        band_key: str, mask_sub: np.ndarray,
+        band_key: str,
+        mask_sub: np.ndarray,
     ) -> None:
         if not mask_sub.any():
             empty_inv = np.zeros(
-                (config.n_lat, config.n_lt), dtype=np.float64,
+                (config.n_lat, config.n_lt),
+                dtype=np.float64,
             )
             empty_eq = np.zeros((config.n_r, config.n_lt), dtype=np.float64)
-            for r in ("total", "magnetosphere", "magnetosheath",
-                      "solar_wind", "unknown"):
+            for r in (
+                "total",
+                "magnetosphere",
+                "magnetosheath",
+                "solar_wind",
+                "unknown",
+            ):
                 grids[f"{band_key}_kmag_inv_lat_{r}"] = empty_inv.copy()
                 grids[f"{band_key}_kmag_inv_lat_closed_{r}"] = empty_inv.copy()
                 grids[f"{band_key}_kmag_eq_r_{r}"] = empty_eq.copy()
@@ -929,23 +947,43 @@ def accumulate_kmag_event_grids(
         closed_b = result.is_closed & mask_sub
         # kmag_inv_lat (all + closed-only)
         all_inv = accumulate_traced_inv_lat_grid(
-            inv_n_b, inv_s_b, closed_b, lt_sub, z_sub,
-            dt_minutes=dt_trace, region_codes=codes_sub, config=config,
+            inv_n_b,
+            inv_s_b,
+            closed_b,
+            lt_sub,
+            z_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            config=config,
         )
         closed_inv = accumulate_traced_inv_lat_grid(
-            inv_n_b, inv_s_b, closed_b, lt_sub, z_sub,
-            dt_minutes=dt_trace, region_codes=codes_sub,
-            closed_only=True, config=config,
+            inv_n_b,
+            inv_s_b,
+            closed_b,
+            lt_sub,
+            z_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            closed_only=True,
+            config=config,
         )
         # kmag_eq_r (all + closed-only)
         all_eq = accumulate_kmag_eq_r_grid(
-            l_eq_b, closed_b, lt_sub,
-            dt_minutes=dt_trace, region_codes=codes_sub, config=config,
+            l_eq_b,
+            closed_b,
+            lt_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            config=config,
         )
         closed_eq = accumulate_kmag_eq_r_grid(
-            l_eq_b, closed_b, lt_sub,
-            dt_minutes=dt_trace, region_codes=codes_sub,
-            closed_only=True, config=config,
+            l_eq_b,
+            closed_b,
+            lt_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            closed_only=True,
+            config=config,
         )
         for k, v in all_inv.items():
             grids[f"{band_key}_kmag_inv_lat_{k}"] = v
@@ -993,8 +1031,7 @@ def kmag_event_grids_to_xarray(
         "lt_edges": config.lt_edges,
         "r_edges": config.r_edges,
     }
-    region_names = ("total", "magnetosphere", "magnetosheath",
-                    "solar_wind", "unknown")
+    region_names = ("total", "magnetosphere", "magnetosheath", "solar_wind", "unknown")
     data_vars: dict[str, tuple] = {}
     for b in list(bands) + ["total"]:
         for r in region_names:

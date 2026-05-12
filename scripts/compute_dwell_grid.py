@@ -29,7 +29,6 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
-import os
 from pathlib import Path
 
 import numpy as np
@@ -37,6 +36,14 @@ import numpy as np
 # Ensure src/ is on path when running as script
 _project_root = Path(__file__).resolve().parent.parent
 
+from qp.cli import (
+    add_field_model_args,
+    add_tracing_args,
+    add_verbosity_arg,
+    add_workers_arg,
+    add_year_range_args,
+)
+from qp.constants import J2000_POSIX
 from qp.coords.ksm import local_time as compute_lt
 from qp.dwell.grid import (
     DwellGridConfig,
@@ -49,73 +56,9 @@ from qp.dwell.io import ZarrEncoding, save_zarr, to_xarray
 from qp.dwell.tracing import TracingConfig, compute_invariant_latitudes_parallel
 from qp.fieldline.kmag_model import SaturnFieldConfig
 from qp.io.crossings import crossing_lookup_arrays, parse_crossing_list
-from qp.io.pds import DATETIME_FMT, mag_filepath, read_timeseries_file
+from qp.io.trajectory import load_year_positions, lookup_region_codes
 
 log = logging.getLogger(__name__)
-
-# J2000 epoch as POSIX timestamp (2000-01-01T12:00:00 UTC).
-# KMAG expects time in J2000 seconds, not POSIX.
-_J2000_POSIX = 946728000.0
-
-
-def load_year_positions(year: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list]:
-    """Read one year of PDS KSM 1-min MAG data and extract positions.
-
-    Returns (x, y, z, btotal, datetimes) arrays. x/y/z in R_S (KSM),
-    btotal in nT.
-    """
-    path = mag_filepath(str(year), coords="KSM")
-    if not path.exists():
-        log.warning("No PDS file for year %d: %s", year, path)
-        return np.array([]), np.array([]), np.array([]), np.array([]), []
-
-    log.info("Reading %s ...", path.name)
-    rows = read_timeseries_file(path)
-
-    if not rows:
-        return np.array([]), np.array([]), np.array([]), np.array([]), []
-
-    data = np.array(rows)
-    # KSM columns: 0=Time, 1=Bx, 2=By, 3=Bz, 4=Btot, 5=x, 6=y, 7=z
-    times = [datetime.datetime.strptime(t, DATETIME_FMT) for t in data[:, 0]]
-    x = data[:, 5].astype(float)
-    y = data[:, 6].astype(float)
-    z = data[:, 7].astype(float)
-    btotal = data[:, 4].astype(float)
-
-    log.info("  → %d samples, %.1f days", len(x), len(x) / 1440)
-    return x, y, z, btotal, times
-
-
-def lookup_region_codes(
-    sample_timestamps: np.ndarray,
-    crossing_times_unix: np.ndarray,
-    crossing_codes: np.ndarray,
-) -> np.ndarray:
-    """Assign a region code (MS/SH/SW) to each timestamp via vectorized lookup.
-
-    Parameters
-    ----------
-    sample_timestamps : ndarray of float64
-        POSIX timestamps for each sample.
-    crossing_times_unix : ndarray of float64
-        Sorted POSIX timestamps of boundary crossings.
-    crossing_codes : ndarray of int
-        Region code after each crossing.
-
-    Notes
-    -----
-    Samples before the first boundary crossing are assigned code 9
-    (unknown), since Cassini's magnetospheric region is not cataloged
-    for that period.
-    """
-    idx = np.searchsorted(crossing_times_unix, sample_timestamps) - 1
-    codes = np.where(
-        (idx >= 0) & (idx < len(crossing_codes)),
-        crossing_codes[idx],
-        9,  # UNKNOWN
-    )
-    return codes
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -126,45 +69,62 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Time range ---
     time_group = parser.add_argument_group("Time range")
-    time_group.add_argument("--year-from", type=int, default=2004,
-                            help="First year to process")
-    time_group.add_argument("--year-to", type=int, default=2017,
-                            help="Last year to process")
-    time_group.add_argument("--year", type=int, default=None,
-                            help="Process a single year (overrides --year-from/--year-to)")
+    add_year_range_args(time_group)
+    time_group.add_argument(
+        "--year",
+        type=int,
+        default=None,
+        help="Process a single year (overrides --year-from/--year-to)",
+    )
 
     # --- Grid configuration ---
     grid_group = parser.add_argument_group("Grid configuration")
-    grid_group.add_argument("--n-r", type=int, default=100,
-                            help="Number of radial bins")
-    grid_group.add_argument("--n-lat", type=int, default=180,
-                            help="Number of latitude bins")
-    grid_group.add_argument("--n-lt", type=int, default=96,
-                            help="Number of local time bins")
-    grid_group.add_argument("--r-max", type=float, default=100.0,
-                            help="Maximum radial distance (R_S)")
+    grid_group.add_argument(
+        "--n-r", type=int, default=100, help="Number of radial bins"
+    )
+    grid_group.add_argument(
+        "--n-lat", type=int, default=180, help="Number of latitude bins"
+    )
+    grid_group.add_argument(
+        "--n-lt", type=int, default=96, help="Number of local time bins"
+    )
+    grid_group.add_argument(
+        "--r-max", type=float, default=100.0, help="Maximum radial distance (R_S)"
+    )
 
     # --- Tracing ---
     trace_group = parser.add_argument_group("KMAG tracing")
-    trace_group.add_argument("--trace-every", type=int, default=10,
-                             help="Trace every N minutes (10 = every 10 min)")
-    trace_group.add_argument("--trace-step", type=float, default=0.15,
-                             help="RK4 step size (R_S)")
-    trace_group.add_argument("--trace-max-radius", type=float, default=60.0,
-                             help="Outer tracing boundary (R_S)")
-    trace_group.add_argument("--trace-min-radius", type=float, default=1.0,
-                             help="Inner boundary / planet surface (R_S)")
-    trace_group.add_argument("--trace-max-steps", type=int, default=20_000,
-                             help="Max RK4 steps per trace arm (caps pathological traces)")
-    trace_group.add_argument("--workers", type=int,
-                             default=max(1, (os.cpu_count() or 2) - 1),
-                             help="Multiprocessing workers (1 = serial)")
-    trace_group.add_argument("--no-region-filter", action="store_true",
-                             help="Trace all samples (default: magnetosphere only)")
-    trace_group.add_argument("--no-trace", action="store_true",
-                             help="Skip KMAG tracing entirely")
     trace_group.add_argument(
-        "--include-equatorial", action="store_true",
+        "--trace-every",
+        type=int,
+        default=10,
+        help="Trace every N minutes (10 = every 10 min)",
+    )
+    add_tracing_args(trace_group)
+    trace_group.add_argument(
+        "--trace-min-radius",
+        type=float,
+        default=1.0,
+        help="Inner boundary / planet surface (R_S)",
+    )
+    trace_group.add_argument(
+        "--trace-max-steps",
+        type=int,
+        default=20_000,
+        help="Max RK4 steps per trace arm (caps pathological traces)",
+    )
+    add_workers_arg(trace_group)
+    trace_group.add_argument(
+        "--no-region-filter",
+        action="store_true",
+        help="Trace all samples (default: magnetosphere only)",
+    )
+    trace_group.add_argument(
+        "--no-trace", action="store_true", help="Skip KMAG tracing entirely"
+    )
+    trace_group.add_argument(
+        "--include-equatorial",
+        action="store_true",
         help=(
             "Also accumulate the equatorial-r schema "
             "(kmag_eq_r × LT) alongside the existing schemas. "
@@ -172,7 +132,8 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     trace_group.add_argument(
-        "--equatorial-only", action="store_true",
+        "--equatorial-only",
+        action="store_true",
         help=(
             "Produce a sibling zarr with ONLY the equatorial-r "
             "schema (kmag_eq_r × LT, with closed-only variants). "
@@ -183,27 +144,29 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- Field model ---
     field_group = parser.add_argument_group("KMAG field model")
-    field_group.add_argument("--dp", type=float, default=0.017,
-                             help="Solar wind dynamic pressure (nPa)")
-    field_group.add_argument("--by-imf", type=float, default=-0.2,
-                             help="IMF By component (nT, KSM)")
-    field_group.add_argument("--bz-imf", type=float, default=0.1,
-                             help="IMF Bz component (nT, KSM)")
+    add_field_model_args(field_group)
 
     # --- Storage ---
     storage_group = parser.add_argument_group("Storage")
-    storage_group.add_argument("--output", type=str, default="Output/dwell_grid.zarr",
-                               help="Output zarr path")
-    storage_group.add_argument("--compress", type=str, default="zstd",
-                               choices=["zstd", "blosc", "none"],
-                               help="Zarr compressor")
-    storage_group.add_argument("--compress-level", type=int, default=3,
-                               help="Compression level (1-9)")
-    storage_group.add_argument("--float32", action="store_true",
-                               help="Store as float32 instead of float64")
+    storage_group.add_argument(
+        "--output", type=str, default="Output/dwell_grid.zarr", help="Output zarr path"
+    )
+    storage_group.add_argument(
+        "--compress",
+        type=str,
+        default="zstd",
+        choices=["zstd", "blosc", "none"],
+        help="Zarr compressor",
+    )
+    storage_group.add_argument(
+        "--compress-level", type=int, default=3, help="Compression level (1-9)"
+    )
+    storage_group.add_argument(
+        "--float32", action="store_true", help="Store as float32 instead of float64"
+    )
 
     # --- Misc ---
-    parser.add_argument("-v", "--verbose", action="store_true")
+    add_verbosity_arg(parser)
 
     return parser
 
@@ -224,7 +187,9 @@ def main():
 
     # Build configs from CLI args
     grid_config = DwellGridConfig(
-        n_r=args.n_r, n_lat=args.n_lat, n_lt=args.n_lt,
+        n_r=args.n_r,
+        n_lat=args.n_lat,
+        n_lt=args.n_lt,
         r_range=(0.0, args.r_max),
     )
     tracing_config = TracingConfig(
@@ -237,7 +202,9 @@ def main():
         n_workers=args.workers,
     )
     field_config = SaturnFieldConfig(
-        dp=args.dp, by_imf=args.by_imf, bz_imf=args.bz_imf,
+        dp=args.dp,
+        by_imf=args.by_imf,
+        bz_imf=args.bz_imf,
     )
     zarr_encoding = ZarrEncoding(
         compressor=args.compress,
@@ -245,8 +212,11 @@ def main():
         dtype="float32" if args.float32 else "float64",
     )
 
-    log.info("Grid: %s, r=[0, %.0f], lat=[-90, 90], LT=[0, 24]",
-             grid_config.shape, args.r_max)
+    log.info(
+        "Grid: %s, r=[0, %.0f], lat=[-90, 90], LT=[0, 24]",
+        grid_config.shape,
+        args.r_max,
+    )
 
     # Load boundary crossings from raw text
     log.info("Loading boundary crossings...")
@@ -258,12 +228,18 @@ def main():
 
     # Accumulators — use same names as REGION_CODES in grid.py
     from qp.dwell.grid import REGION_CODES
-    grids_accum = {name: np.zeros(grid_config.shape) for name in ["total", *REGION_CODES.values()]}
+
+    region_names = ["total", *REGION_CODES.values()]
+
+    def _zeros_per_region(shape: tuple[int, ...]) -> dict[str, np.ndarray]:
+        return {name: np.zeros(shape) for name in region_names}
+
+    grids_accum = _zeros_per_region(grid_config.shape)
     inv_lat_shape = (grid_config.n_lat, grid_config.n_lt)
-    inv_lat_accum = {name: np.zeros(inv_lat_shape) for name in ["total", *REGION_CODES.values()]}
+    inv_lat_accum = _zeros_per_region(inv_lat_shape)
+    weak_field_accum = _zeros_per_region(inv_lat_shape)
 
     all_x, all_y, all_z, all_times_unix, all_codes = [], [], [], [], []
-    weak_field_accum = {name: np.zeros(inv_lat_shape) for name in ["total", *REGION_CODES.values()]}
     total_samples = 0
 
     for year in range(year_from, year_to + 1):
@@ -276,19 +252,29 @@ def main():
         codes = lookup_region_codes(sample_unix, crossing_times_unix, crossing_codes)
 
         # Accumulate into 3D spatial grids
-        grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=grid_config)
+        grids = accumulate_with_regions(
+            x, y, z, codes, dt_minutes=1.0, config=grid_config
+        )
         for name in grids_accum:
             grids_accum[name] += grids.get(name, np.zeros(grid_config.shape))
 
         # Accumulate into 2D dipole invariant latitude grids (instant, no tracing)
-        inv_grids = accumulate_inv_lat_grid(x, y, z, dt_minutes=1.0, region_codes=codes, config=grid_config)
+        inv_grids = accumulate_inv_lat_grid(
+            x, y, z, dt_minutes=1.0, region_codes=codes, config=grid_config
+        )
         for name in inv_lat_accum:
             inv_lat_accum[name] += inv_grids.get(name, np.zeros(inv_lat_shape))
 
         # Accumulate weak-field (plasma sheet proxy) dwell time
         wf_grids = accumulate_weak_field_grid(
-            x, y, z, btotal, dt_minutes=1.0, b_threshold=2.0,
-            region_codes=codes, config=grid_config,
+            x,
+            y,
+            z,
+            btotal,
+            dt_minutes=1.0,
+            b_threshold=2.0,
+            region_codes=codes,
+            config=grid_config,
         )
         for name in weak_field_accum:
             weak_field_accum[name] += wf_grids.get(name, np.zeros(inv_lat_shape))
@@ -303,7 +289,9 @@ def main():
             all_times_unix.append(sample_unix)
             all_codes.append(codes)
 
-        log.info("Year %d: %d samples accumulated (total: %d)", year, len(x), total_samples)
+        log.info(
+            "Year %d: %d samples accumulated (total: %d)", year, len(x), total_samples
+        )
 
     # Summary
     total_minutes = float(grids_accum["total"].sum())
@@ -315,21 +303,28 @@ def main():
     sh_hours = float(grids_accum["magnetosheath"].sum()) / 60
     sw_hours = float(grids_accum["solar_wind"].sum()) / 60
 
-    print(f"\n{'='*60}")
-    print(f"Total samples:     {total_samples:,}")
-    print(f"Total dwell time:  {total_hours:,.1f} hours ({total_hours/8766:.1f} years)")
-    print(f"Expected (approx): {expected_hours:,.0f} hours")
-    if total_hours > 0:
-        print(f"  Magnetosphere:   {ms_hours:,.1f} h ({ms_hours/total_hours*100:.1f}%)")
-        print(f"  Magnetosheath:   {sh_hours:,.1f} h ({sh_hours/total_hours*100:.1f}%)")
-        print(f"  Solar wind:      {sw_hours:,.1f} h ({sw_hours/total_hours*100:.1f}%)")
     inv_hours = float(inv_lat_accum["total"].sum()) / 60
     wf_hours = float(weak_field_accum["total"].sum()) / 60
-    print(f"Grid:              {grid_config.shape} (r×lat×LT)")
-    print(f"Inv lat grid:      {inv_lat_shape} (inv_lat×LT), {inv_hours:,.0f} h mapped")
-    print(f"Weak field (<2nT): {wf_hours:,.0f} h (plasma sheet proxy)")
-    print(f"Storage:           {zarr_encoding.compressor}, {zarr_encoding.dtype}")
-    print(f"{'='*60}\n")
+    region_lines = ""
+    if total_hours > 0:
+        region_lines = (
+            f"  Magnetosphere:   {ms_hours:,.1f} h ({ms_hours / total_hours * 100:.1f}%)\n"
+            f"  Magnetosheath:   {sh_hours:,.1f} h ({sh_hours / total_hours * 100:.1f}%)\n"
+            f"  Solar wind:      {sw_hours:,.1f} h ({sw_hours / total_hours * 100:.1f}%)\n"
+        )
+    sep = "=" * 60
+    print(
+        f"\n{sep}\n"
+        f"Total samples:     {total_samples:,}\n"
+        f"Total dwell time:  {total_hours:,.1f} hours ({total_hours / 8766:.1f} years)\n"
+        f"Expected (approx): {expected_hours:,.0f} hours\n"
+        f"{region_lines}"
+        f"Grid:              {grid_config.shape} (r×lat×LT)\n"
+        f"Inv lat grid:      {inv_lat_shape} (inv_lat×LT), {inv_hours:,.0f} h mapped\n"
+        f"Weak field (<2nT): {wf_hours:,.0f} h (plasma sheet proxy)\n"
+        f"Storage:           {zarr_encoding.compressor}, {zarr_encoding.dtype}\n"
+        f"{sep}\n"
+    )
 
     attrs = {
         "year_from": year_from,
@@ -362,10 +357,13 @@ def main():
         codes_all = np.concatenate(all_codes)
 
         # Convert POSIX timestamps to J2000 seconds for KMAG model
-        t_j2000 = t_all - _J2000_POSIX
+        t_j2000 = t_all - J2000_POSIX
 
         result = compute_invariant_latitudes_parallel(
-            x_all, y_all, z_all, t_j2000,
+            x_all,
+            y_all,
+            z_all,
+            t_j2000,
             config=tracing_config,
             field_config=field_config,
             region_codes=codes_all,
@@ -382,39 +380,60 @@ def main():
 
         # Accumulate KMAG inv lat grids (all field lines)
         kmag_grids = accumulate_traced_inv_lat_grid(
-            result.inv_lat_north, result.inv_lat_south, result.is_closed,
-            lt_sub, z_sub, dt_minutes=dt_trace,
-            region_codes=codes_sub, config=grid_config,
+            result.inv_lat_north,
+            result.inv_lat_south,
+            result.is_closed,
+            lt_sub,
+            z_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            config=grid_config,
         )
         for k, v in kmag_grids.items():
             kmag_inv_lat_named[f"kmag_inv_lat_{k}"] = v
 
         # Accumulate closed-only grids
         kmag_closed = accumulate_traced_inv_lat_grid(
-            result.inv_lat_north, result.inv_lat_south, result.is_closed,
-            lt_sub, z_sub, dt_minutes=dt_trace,
-            region_codes=codes_sub, closed_only=True, config=grid_config,
+            result.inv_lat_north,
+            result.inv_lat_south,
+            result.is_closed,
+            lt_sub,
+            z_sub,
+            dt_minutes=dt_trace,
+            region_codes=codes_sub,
+            closed_only=True,
+            config=grid_config,
         )
         for k, v in kmag_closed.items():
             kmag_inv_lat_named[f"kmag_inv_lat_closed_{k}"] = v
 
         kmag_hours = float(kmag_grids["total"].sum()) / 60
         closed_hours = float(kmag_closed["total"].sum()) / 60
-        print(f"KMAG inv lat:      {inv_lat_shape}, {kmag_hours:,.0f} h mapped, {closed_hours:,.0f} h closed")
+        print(
+            f"KMAG inv lat:      {inv_lat_shape}, {kmag_hours:,.0f} h mapped, {closed_hours:,.0f} h closed"
+        )
 
         if want_equatorial:
             from qp.dwell.grid import accumulate_kmag_eq_r_grid
+
             eq_r_grids = accumulate_kmag_eq_r_grid(
-                result.l_equatorial, result.is_closed, lt_sub,
-                dt_minutes=dt_trace, region_codes=codes_sub,
+                result.l_equatorial,
+                result.is_closed,
+                lt_sub,
+                dt_minutes=dt_trace,
+                region_codes=codes_sub,
                 config=grid_config,
             )
             for k, v in eq_r_grids.items():
                 kmag_eq_r_named[f"kmag_eq_r_{k}"] = v
             eq_r_closed = accumulate_kmag_eq_r_grid(
-                result.l_equatorial, result.is_closed, lt_sub,
-                dt_minutes=dt_trace, region_codes=codes_sub,
-                closed_only=True, config=grid_config,
+                result.l_equatorial,
+                result.is_closed,
+                lt_sub,
+                dt_minutes=dt_trace,
+                region_codes=codes_sub,
+                closed_only=True,
+                config=grid_config,
             )
             for k, v in eq_r_closed.items():
                 kmag_eq_r_named[f"kmag_eq_r_closed_{k}"] = v
@@ -460,7 +479,9 @@ def main():
     inv_lat_named.update(weak_field_named)
 
     ds = to_xarray(
-        grids_accum, grid_config, attrs=attrs,
+        grids_accum,
+        grid_config,
+        attrs=attrs,
         tracing_config=tracing_config if not args.no_trace else None,
         field_config=field_config if not args.no_trace else None,
         inv_lat_grids=inv_lat_named,

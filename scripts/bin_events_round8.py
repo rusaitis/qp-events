@@ -43,7 +43,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import datetime
 import logging
 import time
 from pathlib import Path
@@ -59,8 +58,10 @@ from qp.dwell.grid import (  # noqa: E402
     accumulate_weak_field_grid,
     accumulate_with_regions,
 )
+from qp.cli import add_verbosity_arg, add_workers_arg  # noqa: E402
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
 from qp.events.binning import full_mirror_grids_to_xarray  # noqa: E402
+from qp.io.trajectory import load_mission_trajectory, load_region_codes  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -76,8 +77,10 @@ log = logging.getLogger(__name__)
 
 def _paper_bands() -> tuple[list[str], dict[str, tuple[float, float]]]:
     bands = list(QP_BAND_NAMES)
-    edges = {b: (get_band(b).period_min_sec / 60.0,
-                 get_band(b).period_max_sec / 60.0) for b in bands}
+    edges = {
+        b: (get_band(b).period_min_sec / 60.0, get_band(b).period_max_sec / 60.0)
+        for b in bands
+    }
     return bands, edges
 
 
@@ -104,63 +107,6 @@ def _band_lookup(edges: dict[str, tuple[float, float]]):
         return None
 
     return lookup
-
-
-# ---------------------------------------------------------------------
-# Trajectory + region loader (mirrors compute_dwell_grid.py exactly).
-# ---------------------------------------------------------------------
-
-
-def load_mission_trajectory(
-    year_from: int = 2004,
-    year_to: int = 2017,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Load the full Cassini KSM trajectory year-by-year.
-
-    Returns ``(t_unix, x, y, z, btotal)``. Identical to
-    :func:`scripts.compute_dwell_grid.load_year_positions` aggregated.
-    """
-    from compute_dwell_grid import load_year_positions
-
-    all_t: list[np.ndarray] = []
-    all_x: list[np.ndarray] = []
-    all_y: list[np.ndarray] = []
-    all_z: list[np.ndarray] = []
-    all_b: list[np.ndarray] = []
-    epoch = datetime.datetime(1970, 1, 1)
-    for year in range(year_from, year_to + 1):
-        x, y, z, btotal, times = load_year_positions(year)
-        if len(x) == 0:
-            continue
-        t_unix = np.array(
-            [(t - epoch).total_seconds() for t in times], dtype=float,
-        )
-        all_t.append(t_unix)
-        all_x.append(x)
-        all_y.append(y)
-        all_z.append(z)
-        all_b.append(btotal)
-    if not all_t:
-        raise RuntimeError("no trajectory data loaded — check DATA path")
-    t = np.concatenate(all_t)
-    order = np.argsort(t)
-    return (
-        t[order],
-        np.concatenate(all_x)[order],
-        np.concatenate(all_y)[order],
-        np.concatenate(all_z)[order],
-        np.concatenate(all_b)[order],
-    )
-
-
-def load_region_codes(t_unix: np.ndarray) -> np.ndarray:
-    """Assign Jackman 2019 region codes to each trajectory sample."""
-    from compute_dwell_grid import lookup_region_codes
-    from qp.io.crossings import crossing_lookup_arrays, parse_crossing_list
-
-    crossings = parse_crossing_list()
-    cross_unix, cross_codes = crossing_lookup_arrays(crossings)
-    return lookup_region_codes(t_unix, cross_unix, cross_codes)
 
 
 # ---------------------------------------------------------------------
@@ -191,12 +137,10 @@ def _build_band_masks(
             n_unmapped += 1
             continue
         t_from = float(
-            (np.datetime64(r.date_from) - epoch).astype("timedelta64[s]")
-            .astype(float),
+            (np.datetime64(r.date_from) - epoch).astype("timedelta64[s]").astype(float),
         )
         t_to = float(
-            (np.datetime64(r.date_to) - epoch).astype("timedelta64[s]")
-            .astype(float),
+            (np.datetime64(r.date_to) - epoch).astype("timedelta64[s]").astype(float),
         )
         i_lo = int(np.searchsorted(t_unix, t_from, side="left"))
         i_hi = int(np.searchsorted(t_unix, t_to, side="right"))
@@ -231,22 +175,40 @@ def _accumulate_per_band(
             for r in region_names:
                 grids[f"{band}_{r}"] = np.zeros(config.shape, dtype=np.float64)
                 grids[f"{band}_dipole_inv_lat_{r}"] = np.zeros(
-                    (config.n_lat, config.n_lt), dtype=np.float64,
+                    (config.n_lat, config.n_lt),
+                    dtype=np.float64,
                 )
                 grids[f"{band}_weak_field_{r}"] = np.zeros(
-                    (config.n_lat, config.n_lt), dtype=np.float64,
+                    (config.n_lat, config.n_lt),
+                    dtype=np.float64,
                 )
             continue
         log.info("band %s: %d minutes mapped", band, int(mask.sum()))
         r3d = accumulate_with_regions(
-            x[mask], y[mask], z[mask], region_codes[mask], 1.0, config,
+            x[mask],
+            y[mask],
+            z[mask],
+            region_codes[mask],
+            1.0,
+            config,
         )
         r2d = accumulate_inv_lat_grid(
-            x[mask], y[mask], z[mask], 1.0, region_codes[mask], config,
+            x[mask],
+            y[mask],
+            z[mask],
+            1.0,
+            region_codes[mask],
+            config,
         )
         rwf = accumulate_weak_field_grid(
-            x[mask], y[mask], z[mask], b_total_nT[mask],
-            1.0, b_threshold_nT, region_codes[mask], config,
+            x[mask],
+            y[mask],
+            z[mask],
+            b_total_nT[mask],
+            1.0,
+            b_threshold_nT,
+            region_codes[mask],
+            config,
         )
         for r in region_names:
             grids[f"{band}_{r}"] = r3d[r].astype(np.float64)
@@ -279,13 +241,19 @@ def main() -> None:
         help="paper = 3 QP bands; fine = 5 log-spaced 15-180 min bins",
     )
     parser.add_argument(
-        "--year-from", type=int, default=2004,
+        "--year-from",
+        type=int,
+        default=2004,
     )
     parser.add_argument(
-        "--year-to", type=int, default=2017,
+        "--year-to",
+        type=int,
+        default=2017,
     )
     parser.add_argument(
-        "--b-threshold", type=float, default=2.0,
+        "--b-threshold",
+        type=float,
+        default=2.0,
         help="weak-field threshold in nT (default 2.0; matches dwell grid)",
     )
     parser.add_argument(
@@ -300,16 +268,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--trace-every", type=int, default=10,
+        "--trace-every",
+        type=int,
+        default=10,
         help=(
             "Subsampling cadence for KMAG tracing (must match the "
             "dwell grid; default 10)."
         ),
     )
-    parser.add_argument(
-        "--trace-workers", type=int, default=8,
-        help="Multiprocessing workers for KMAG tracing.",
-    )
+    add_workers_arg(parser, default=8, flag="--trace-workers")
     parser.add_argument(
         "--keep-duplicates",
         action="store_true",
@@ -319,7 +286,7 @@ def main() -> None:
             "duplicates), if the column is present."
         ),
     )
-    parser.add_argument("-v", "--verbose", action="store_true")
+    add_verbosity_arg(parser)
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -329,6 +296,7 @@ def main() -> None:
 
     # 1. Load events
     import pandas as pd
+
     log.info("loading events: %s", args.events)
     df = pd.read_parquet(args.events)
     log.info("  %d events", len(df))
@@ -339,10 +307,10 @@ def main() -> None:
 
     # 2. Load trajectory + regions
     t_load = time.perf_counter()
-    log.info("loading mission trajectory %d-%d ...",
-             args.year_from, args.year_to)
+    log.info("loading mission trajectory %d-%d ...", args.year_from, args.year_to)
     t_unix, x, y, z, btotal = load_mission_trajectory(
-        args.year_from, args.year_to,
+        args.year_from,
+        args.year_to,
     )
     log.info("  %d samples", t_unix.size)
     region_codes = load_region_codes(t_unix)
@@ -362,7 +330,13 @@ def main() -> None:
     log.info("accumulating per-band grids ...")
     t_acc = time.perf_counter()
     grids = _accumulate_per_band(
-        masks, x, y, z, btotal, region_codes, config,
+        masks,
+        x,
+        y,
+        z,
+        btotal,
+        region_codes,
+        config,
         args.b_threshold,
     )
     log.info("accumulated in %.1fs", time.perf_counter() - t_acc)
@@ -374,10 +348,16 @@ def main() -> None:
     if args.with_kmag_trace:
         from qp.dwell.tracing import SaturnFieldConfig, TracingConfig
         from qp.events.binning import accumulate_kmag_event_grids
+
         log.info("KMAG tracing event-window samples ...")
         t_kmag = time.perf_counter()
         kmag_grids, kmag_stats = accumulate_kmag_event_grids(
-            masks, x, y, z, t_unix, region_codes,
+            masks,
+            x,
+            y,
+            z,
+            t_unix,
+            region_codes,
             trace_every_n=args.trace_every,
             config=config,
             tracing_config=TracingConfig(
@@ -389,7 +369,8 @@ def main() -> None:
         log.info(
             "KMAG traced in %.1fs (%d traces, %d closed)",
             time.perf_counter() - t_kmag,
-            kmag_stats["n_traces"], kmag_stats["n_closed"],
+            kmag_stats["n_traces"],
+            kmag_stats["n_closed"],
         )
 
     # 6. Write zarr
@@ -433,8 +414,11 @@ def main() -> None:
         import xarray as xr
 
         from qp.events.binning import kmag_event_grids_to_xarray
+
         ds_kmag = kmag_event_grids_to_xarray(
-            kmag_grids, config, bands=bands,
+            kmag_grids,
+            config,
+            bands=bands,
         )
         ds_kmag.attrs.clear()
         # Merge — shared local_time; kmag side adds kmag_inv_lat,
@@ -446,6 +430,7 @@ def main() -> None:
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.output.exists():
         import shutil
+
         shutil.rmtree(args.output)
     ds.to_zarr(args.output, mode="w", consolidated=False)
 

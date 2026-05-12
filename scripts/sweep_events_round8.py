@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import logging
+import math
 import time
 from dataclasses import dataclass
 from multiprocessing import get_context
@@ -35,6 +36,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 import qp  # noqa: E402
+from qp.cli import add_tracing_args, add_verbosity_arg  # noqa: E402
 from qp.io import register_legacy_pickle_stubs  # noqa: E402
 
 register_legacy_pickle_stubs()
@@ -46,6 +48,8 @@ from qp.events.detector import (  # noqa: E402
     SEGMENT_FWER_ALPHA,
     detect_round8,
 )
+from qp.dwell.tracing import TracingConfig  # noqa: E402
+from qp.events.peak_kmag import J2000_POSIX, kmag_peak_columns  # noqa: E402
 from qp.events.persistence import event_to_record, events_to_parquet  # noqa: E402
 from qp.events.sweep_loader import (  # noqa: E402
     load_segments,
@@ -55,6 +59,7 @@ from qp.events.sweep_loader import (  # noqa: E402
     segment_to_payload,
 )
 from qp.events.threshold_diag import BGArchive, load_bg_archive  # noqa: E402
+from qp.fieldline.kmag_model import SaturnField, SaturnFieldConfig  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -95,11 +100,30 @@ def _to_payload(seg_idx: int, seg) -> SegmentDetectionPayload | None:
     )
 
 
+def _ksm_from_offset_spherical(
+    r_off: float,
+    mag_lat_rad: float,
+    phi_rad: float,
+) -> tuple[float, float, float]:
+    """Reconstruct KSM (x, y, z) from segment offset-dipole spherical coords.
+
+    The MFA-36h segments store ``(r, th, phi)`` in the offset-dipole
+    frame: ``r`` is sqrt(x² + y² + (z-0.037)²), ``th`` is signed magnetic
+    latitude (radians), ``phi`` is KSM longitude (radians; verified
+    against the local_time formula). Inverting these gives KSM cartesian
+    to within the 0.037 R_S dipole offset — well below the 0.15 R_S
+    KMAG trace step at all spacecraft distances.
+    """
+    z = 0.037 + r_off * math.sin(mag_lat_rad)
+    xy = r_off * math.cos(mag_lat_rad)
+    return xy * math.cos(phi_rad), xy * math.sin(phi_rad), z
+
+
 def _enrich_at_peak(
     detection: DetectedEvent,
     payload: SegmentDetectionPayload,
 ) -> dict:
-    """Look up ephemeris / region / SLS5 at the detection peak time."""
+    """Look up ephemeris / region / SLS5 / KMAG at the detection peak time."""
     peak_time = detection.peak.peak_time
     times = payload.times
     if not times:
@@ -111,16 +135,20 @@ def _enrich_at_peak(
     idx = max(0, min(n_samples - 1, idx))
 
     extra: dict = {}
+    r_off_val: float | None = None
+    th_rad: float | None = None
+    phi_rad: float | None = None
     if payload.coord_r is not None and idx < len(payload.coord_r):
-        extra["r_distance"] = float(payload.coord_r[idx])
+        r_off_val = float(payload.coord_r[idx])
+        extra["r_distance"] = r_off_val
     if payload.coord_th is not None and idx < len(payload.coord_th):
         # `coord_th` in MFA-36h segments is signed magnetic latitude in
         # radians (range ~ +/-0.5 rad), already converted upstream — not
         # KRTP colatitude. Just convert to degrees.
-        theta_rad = float(payload.coord_th[idx])
-        extra["mag_lat"] = float(np.degrees(theta_rad))
+        th_rad = float(payload.coord_th[idx])
+        extra["mag_lat"] = float(np.degrees(th_rad))
     if payload.coord_phi is not None and idx < len(payload.coord_phi):
-        # KRTP phi is azimuth in radians; LT = (phi_deg / 15 + 12) mod 24
+        # KSM longitude in radians; LT = (phi_deg / 15 + 12) mod 24
         phi_rad = float(payload.coord_phi[idx])
         lt = (np.degrees(phi_rad) / 15.0 + 12.0) % 24.0
         extra["local_time"] = float(lt)
@@ -131,6 +159,24 @@ def _enrich_at_peak(
         extra["sls5_phase_n"] = sls["sls5n"]
     if sls.get("sls5s") is not None:
         extra["sls5_phase_s"] = sls["sls5s"]
+
+    if (
+        _ENRICH_KMAG
+        and _SATURN_FIELD is not None
+        and r_off_val is not None
+        and th_rad is not None
+        and phi_rad is not None
+    ):
+        x, y, z = _ksm_from_offset_spherical(r_off_val, th_rad, phi_rad)
+        t_j2000 = peak_time.timestamp() - J2000_POSIX
+        try:
+            kmag = kmag_peak_columns(x, y, z, t_j2000, _SATURN_FIELD, _TRACING_CFG)
+        except Exception as exc:  # noqa: BLE001 — never crash a row for a trace failure
+            log.debug(
+                "seg %d: KMAG enrichment failed at peak: %s", payload.seg_idx, exc
+            )
+        else:
+            extra.update(kmag)
     return extra
 
 
@@ -138,6 +184,9 @@ _MAX_AMP_NT: float = 10.0  # set by main(); workers receive it via Pool initiali
 _THRESHOLD_METHOD: str = "mad_row"
 _APPLY_COI: bool = False
 _BG_ARCHIVE: BGArchive | None = None
+_ENRICH_KMAG: bool = False
+_SATURN_FIELD: SaturnField | None = None
+_TRACING_CFG: TracingConfig = TracingConfig()
 
 
 def _init_worker(
@@ -145,13 +194,28 @@ def _init_worker(
     threshold_method: str,
     apply_coi: bool,
     bg_archive: BGArchive | None,
+    enrich_kmag: bool,
+    field_config: SaturnFieldConfig | None,
+    tracing_cfg: TracingConfig,
 ) -> None:
     """Pool initializer: propagate detector config into each worker's module globals."""
     global _MAX_AMP_NT, _THRESHOLD_METHOD, _APPLY_COI, _BG_ARCHIVE
+    global _ENRICH_KMAG, _SATURN_FIELD, _TRACING_CFG
     _MAX_AMP_NT = float(cap_nT)
     _THRESHOLD_METHOD = str(threshold_method)
     _APPLY_COI = bool(apply_coi)
     _BG_ARCHIVE = bg_archive
+    _ENRICH_KMAG = bool(enrich_kmag)
+    _TRACING_CFG = tracing_cfg
+    if enrich_kmag:
+        _SATURN_FIELD = SaturnField(field_config)
+        # Warm up the numba JIT so the first real trace doesn't pay it.
+        try:
+            _SATURN_FIELD.field_cartesian(10.0, 0.0, 0.0, 0.0, coord="KSM")
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        _SATURN_FIELD = None
 
 
 def _amp_within_cap(d: DetectedEvent, cap_nT: float) -> bool:
@@ -309,14 +373,34 @@ def main() -> None:
         help="Pooled background archive (built by scripts/build_bg_archive.py); "
         "only used when --threshold-method=pooled.",
     )
-    parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "--enrich-kmag",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Per-event KMAG single trace at the peak — populates "
+        "kmag_inv_lat_peak / l_eq_peak / is_closed_peak columns "
+        "(default: on; pass --no-enrich-kmag to disable). Adds ~1 s "
+        "to a 100 s full-mission sweep.",
+    )
+    add_tracing_args(parser)
+    add_verbosity_arg(parser)
     args = parser.parse_args()
 
     # Propagate to workers (spawn picks up module globals at import time).
     global _MAX_AMP_NT, _THRESHOLD_METHOD, _APPLY_COI, _BG_ARCHIVE
+    global _ENRICH_KMAG, _SATURN_FIELD, _TRACING_CFG
     _MAX_AMP_NT = float(args.max_amp_nT)
     _THRESHOLD_METHOD = str(args.threshold_method)
     _APPLY_COI = bool(args.coi)
+    _ENRICH_KMAG = bool(args.enrich_kmag)
+    _TRACING_CFG = TracingConfig(
+        step=args.trace_step,
+        max_radius=args.trace_max_radius,
+        region_filter=None,
+    )
+    field_config = SaturnFieldConfig() if args.enrich_kmag else None
+    if args.enrich_kmag and args.serial:
+        _SATURN_FIELD = SaturnField(field_config)
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
@@ -356,7 +440,15 @@ def main() -> None:
         with ctx.Pool(
             processes=args.workers,
             initializer=_init_worker,
-            initargs=(args.max_amp_nT, args.threshold_method, args.coi, bg_archive),
+            initargs=(
+                args.max_amp_nT,
+                args.threshold_method,
+                args.coi,
+                bg_archive,
+                args.enrich_kmag,
+                field_config,
+                _TRACING_CFG,
+            ),
         ) as pool:
             for batch in pool.imap_unordered(process_segment, payloads, chunksize=4):
                 rows.extend(batch)
@@ -385,6 +477,9 @@ def main() -> None:
             "bg_archive": (
                 str(args.bg_archive) if args.threshold_method == "pooled" else None
             ),
+            "enrich_kmag": bool(args.enrich_kmag),
+            "trace_step": float(args.trace_step),
+            "trace_max_radius": float(args.trace_max_radius),
         },
         "elapsed_seconds": time.perf_counter() - t_start,
     }

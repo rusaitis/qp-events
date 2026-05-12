@@ -86,7 +86,9 @@ class DwellGridConfig:
 
 
 def _compute_coords(
-    x: np.ndarray, y: np.ndarray, z: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    z: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert KSM Cartesian to (r, magnetic_latitude, local_time)."""
     r = np.sqrt(x**2 + y**2 + z**2)
@@ -107,21 +109,32 @@ def _compute_bins(
     i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
 
     in_range = (
-        (r >= config.r_range[0]) & (r < config.r_range[1])
-        & (lat >= config.lat_range[0]) & (lat < config.lat_range[1])
-        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        (r >= config.r_range[0])
+        & (r < config.r_range[1])
+        & (lat >= config.lat_range[0])
+        & (lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
     )
     return i_r, i_lat, i_lt, in_range
 
 
-def _bin_index(value: np.ndarray, vmin: float, vmax: float, n: int) -> np.ndarray:
+def _bin_index(
+    value: float | np.ndarray,
+    vmin: float,
+    vmax: float,
+    n: int,
+) -> np.ndarray:
     """Map values to bin indices in [0, n), clipped.
 
-    NaN inputs produce platform-dependent garbage integer values, but callers
-    always mask them out via ``np.isfinite(value)`` before using the indices,
-    so the cast warning is suppressed here.
+    Accepts a scalar or ndarray; the return is always an ndarray (0-d
+    for scalar input), which indexes numpy arrays correctly.
+
+    NaN inputs produce platform-dependent garbage integer values, but
+    callers always mask them out via ``np.isfinite(value)`` before using
+    the indices, so the cast warning is suppressed here.
     """
-    frac = (value - vmin) / (vmax - vmin)
+    frac = (np.asarray(value, dtype=float) - vmin) / (vmax - vmin)
     with np.errstate(invalid="ignore"):
         idx = np.floor(frac * n).astype(int)
     return np.clip(idx, 0, n - 1)
@@ -264,7 +277,12 @@ def accumulate_with_regions(
     # Total includes ALL in-range samples regardless of region code
     result = {
         "total": _accumulate_grid(
-            i_r, i_lat, i_lt, in_range, config.shape, dt_minutes,
+            i_r,
+            i_lat,
+            i_lt,
+            in_range,
+            config.shape,
+            dt_minutes,
         ),
     }
 
@@ -272,7 +290,12 @@ def accumulate_with_regions(
     for code, name in REGION_CODES.items():
         mask = in_range & (codes == code)
         result[name] = _accumulate_grid(
-            i_r, i_lat, i_lt, mask, config.shape, dt_minutes,
+            i_r,
+            i_lat,
+            i_lt,
+            mask,
+            config.shape,
+            dt_minutes,
         )
 
     # Warn about unrecognized region codes
@@ -337,8 +360,10 @@ def accumulate_inv_lat_grid(
     # Valid: not NaN (L >= 1) and within lat/lt ranges
     valid = (
         np.isfinite(inv_lat)
-        & (inv_lat >= config.lat_range[0]) & (inv_lat < config.lat_range[1])
-        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        & (inv_lat >= config.lat_range[0])
+        & (inv_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
     )
 
     def accum(mask: np.ndarray) -> np.ndarray:
@@ -419,8 +444,10 @@ def accumulate_traced_inv_lat_grid(
 
     valid = (
         np.isfinite(conjugate_lat)
-        & (conjugate_lat >= config.lat_range[0]) & (conjugate_lat < config.lat_range[1])
-        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        & (conjugate_lat >= config.lat_range[0])
+        & (conjugate_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
     )
     if closed_only:
         valid &= closed
@@ -493,8 +520,10 @@ def accumulate_weak_field_grid(
 
     valid = (
         np.isfinite(inv_lat)
-        & (inv_lat >= config.lat_range[0]) & (inv_lat < config.lat_range[1])
-        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        & (inv_lat >= config.lat_range[0])
+        & (inv_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
         & (bt < b_threshold)
     )
 
@@ -574,8 +603,10 @@ def accumulate_kmag_eq_r_grid(
 
     valid = (
         np.isfinite(l_eq)
-        & (l_eq >= config.r_range[0]) & (l_eq < config.r_range[1])
-        & (lt >= config.lt_range[0]) & (lt < config.lt_range[1])
+        & (l_eq >= config.r_range[0])
+        & (l_eq < config.r_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
     )
     if closed_only:
         valid &= closed

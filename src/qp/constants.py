@@ -18,5 +18,9 @@ SEC_PER_HOUR: float = 3_600.0
 SEC_PER_DAY: float = 86_400.0
 SEC_PER_YEAR: float = 365.0 * SEC_PER_DAY  # Julian year approximation
 
+# J2000 epoch as POSIX seconds (2000-01-01T12:00:00 UTC). KMAG expects
+# time in J2000 seconds, not POSIX: ``t_j2000 = t_posix - J2000_POSIX``.
+J2000_POSIX: float = 946_728_000.0
+
 # Saturn
 SATURN_RADIUS: float = 60_268e3  # equatorial radius (m)
