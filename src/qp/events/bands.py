@@ -121,12 +121,26 @@ QP_BANDS: dict[str, Band] = {
 
 QP_BAND_NAMES: tuple[str, ...] = tuple(QP_BANDS.keys())
 
+#: Canonical detection search volume. The round-8 detector runs ridge
+#: extraction **once** over this single window, then assigns
+#: :func:`classify_period` labels to each peak post-hoc. Spans the
+#: union of all four QP bands (10 min — 160 min) so the detector
+#: treats every period in that range on equal footing and a wave
+#: packet straddling an octave boundary (20, 40, or 80 min) is one
+#: ridge, not two amputated halves on either side of the cut.
+QP_SEARCH_BAND: Band = Band(
+    name="QP_SEARCH",
+    period_min_sec=10 * _MIN,
+    period_max_sec=160 * _MIN,
+    period_centroid_sec=40 * _MIN,
+)
+
 #: Default colour palette for the QP bands. Hoisted here so paper figures,
 #: diagnostic scripts, and the webapp all share one source of truth.
 QP_BAND_COLORS: dict[str, str] = {
-    "QP15": "#4ecdc4",   # teal (new)
-    "QP30": "#80c0ff",   # cool blue
-    "QP60": "#ffb000",   # amber/orange
+    "QP15": "#4ecdc4",  # teal (new)
+    "QP30": "#80c0ff",  # cool blue
+    "QP60": "#ffb000",  # amber/orange
     "QP120": "#f06090",  # pink/magenta
 }
 
@@ -189,9 +203,7 @@ def get_band(band: str | Band) -> Band:
         return band
     key = band.upper()
     if key not in QP_BANDS:
-        raise KeyError(
-            f"Unknown band {band!r}. Known: {sorted(QP_BANDS)}"
-        )
+        raise KeyError(f"Unknown band {band!r}. Known: {sorted(QP_BANDS)}")
     return QP_BANDS[key]
 
 

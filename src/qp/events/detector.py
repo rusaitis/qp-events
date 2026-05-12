@@ -22,13 +22,14 @@ to work; new code should call ``detect_wave_packets_multi``.
 from __future__ import annotations
 
 import datetime
+import math
 from typing import TYPE_CHECKING, Iterable, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 from scipy.signal import find_peaks
 
-from qp.events.bands import QP_BAND_NAMES, Band
+from qp.events.bands import QP_SEARCH_BAND, Band, classify_period
 from qp.events.catalog import WaveEvent, WavePacketPeak
 from qp.events.ridge import Ridge, extract_ridges
 from qp.signal.wavelet import morlet_cwt
@@ -296,7 +297,7 @@ def detect_wave_packets_multi(
     data: ArrayLike,
     times: list[datetime.datetime] | NDArray[np.floating],
     dt: float = 60.0,
-    bands: Iterable[str | Band] = QP_BAND_NAMES,
+    bands: Iterable[str | Band] | None = None,
     *,
     cwt_freq: ArrayLike | None = None,
     cwt_power: ArrayLike | None = None,
@@ -306,17 +307,24 @@ def detect_wave_packets_multi(
     coi_factor: float = 1.0,
     n_freqs: int = 300,
 ) -> list[WavePacketPeak]:
-    r"""Multi-band wave-packet detection from a CWT scalogram.
+    r"""Band-agnostic wave-packet detection from a CWT scalogram.
 
     Pipeline
     --------
     1. Compute the CWT once (or accept a precomputed scalogram so the
        caller can reuse it across components).
-    2. For each requested QP band, call
-       :func:`qp.events.ridge.extract_ridges` to find connected blobs
-       above the supplied threshold mask.
-    3. Convert each ridge to a :class:`WavePacketPeak` with band label
-       and peak period populated.
+    2. Run :func:`qp.events.ridge.extract_ridges` **once** over the
+       full :data:`qp.events.bands.QP_SEARCH_BAND` window (10–160 min)
+       so a ridge straddling an octave boundary (20, 40, 80 min) is
+       one packet, not two amputated halves.
+    3. Convert each ridge to a :class:`WavePacketPeak` and assign the
+       canonical QP band post-hoc via :func:`classify_period` on the
+       interpolated peak period. Bands are a *labelling* concept here,
+       not a detection axis.
+
+    The legacy per-band loop is preserved when an explicit ``bands``
+    iterable is passed (e.g. for the QP60-only single-band tests),
+    but the default and production path is single-pass.
 
     Parameters
     ----------
@@ -327,8 +335,12 @@ def detect_wave_packets_multi(
         be POSIX seconds.
     dt : float
         Sampling interval in seconds (default 60 s).
-    bands : iterable of str or Band
-        Which QP bands to scan. Default scans all of QP30/QP60/QP120.
+    bands : iterable of str or Band, optional
+        Legacy back-compat. ``None`` (the default) runs a single ridge
+        extraction over the full QP search range and labels each peak
+        post-hoc. A non-``None`` iterable falls back to the old
+        per-band loop and is only kept for tests that need band-scoped
+        detection.
     cwt_freq, cwt_power : array_like, optional
         Precomputed CWT frequency axis and ``|cwt|`` power matrix. If
         either is None, the CWT is computed internally with
@@ -351,7 +363,9 @@ def detect_wave_packets_multi(
     Returns
     -------
     list[WavePacketPeak]
-        Sorted by peak time. Each carries ``band`` and ``period_sec``.
+        Sorted by peak time. Each carries ``band`` and ``period_sec``;
+        ``band`` is the post-hoc classification of ``period_sec`` and
+        is ``None`` if the peak lies outside every QP band.
     """
     data = np.asarray(data, dtype=float)
     n_time = data.size
@@ -381,8 +395,18 @@ def detect_wave_packets_multi(
 
     min_duration_sec = min_duration_hours * 3600.0
 
+    # Default (production) path: one ridge extraction over the full
+    # QP_SEARCH_BAND; bands re-enter post-hoc via classify_period.
+    # Caller can still pass an explicit `bands` iterable to recover
+    # the legacy per-band loop for single-band tests.
+    search_bands: list[str | Band]
+    if bands is None:
+        search_bands = [QP_SEARCH_BAND]
+    else:
+        search_bands = list(bands)
+
     packets: list[WavePacketPeak] = []
-    for b in bands:
+    for b in search_bands:
         ridges = extract_ridges(
             cwt_power,
             freq,
@@ -395,6 +419,15 @@ def detect_wave_packets_multi(
         )
         for ridge in ridges:
             packets.append(_ridge_to_packet(ridge, times_list, n_time))
+
+    # Post-hoc band labelling. When the ridge came from QP_SEARCH_BAND
+    # the ridge's own .band field is "QP_SEARCH" — overwrite it with
+    # classify_period(period_sec). For the legacy per-band path the
+    # ridge already carries the right label and classify_period returns
+    # the same name, so this is a no-op in that case.
+    for p in packets:
+        if p.period_sec is not None and p.period_sec > 0:
+            p.band = classify_period(p.period_sec)
 
     packets.sort(key=lambda p: p.peak_time)
     return packets
@@ -431,7 +464,7 @@ def detect_with_gate(
     times: list[datetime.datetime] | NDArray[np.floating],
     *,
     dt: float = 60.0,
-    bands: Iterable[str | Band] = QP_BAND_NAMES,
+    bands: Iterable[str | Band] | None = None,
     spectral_result_perp1=None,
     spectral_result_perp2=None,
     gate=None,
@@ -441,20 +474,27 @@ def detect_with_gate(
 
     Pipeline
     --------
-    1. For each band, run :func:`screen_segment_by_power_ratio` on
-       both ``b_perp1`` and ``b_perp2`` Welch PSDs (caller may pass
-       precomputed :class:`SpectralResult` objects to skip the
-       analyze_segment step). Drop the band if neither component
-       triggers.
+    1. Run :func:`screen_segment_by_power_ratio` on both ``b_perp1``
+       and ``b_perp2`` Welch PSDs over the full
+       :data:`qp.events.bands.QP_SEARCH_BAND` window (10–160 min).
+       The whole segment is rejected only if neither component shows
+       *any* in-band enhancement; no per-band trigger budget is
+       imposed. (Caller may pass precomputed :class:`SpectralResult`
+       objects to skip the ``analyze_segment`` step.)
     2. Compute the CWT of ``b_perp1`` (the dominant transverse
        component in the published paper).
     3. Build a :func:`wavelet_sigma_mask` from that CWT.
     4. Hand the (CWT, mask) pair to :func:`detect_wave_packets_multi`,
-       restricted to the bands that survived step 1.
+       which runs ridge extraction over QP_SEARCH_BAND in one pass
+       and labels each peak post-hoc.
 
     Returns the list of :class:`WavePacketPeak` accepted by every
     stage. Polarization, coordinate, and PPO enrichment is the
     sweep script's job (see ``scripts/sweep_events_round8.py``).
+
+    The ``bands`` parameter is kept as legacy escape hatch: passing a
+    non-``None`` iterable restores the old per-band FFT screen and
+    per-band ridge loop.
     """
     # Lazy imports to keep module-level deps minimal
     from qp.events.threshold import (
@@ -488,9 +528,17 @@ def detect_with_gate(
             welch_noverlap=6 * 60,
         )
 
+    # Band-agnostic FFT screen: one pass over the full 10–160 min
+    # search window. The legacy per-band screen is recovered by passing
+    # an explicit `bands` iterable (kept for back-compat tests).
+    if bands is None:
+        screen_targets: list[str | Band] = [QP_SEARCH_BAND]
+    else:
+        screen_targets = list(bands)
+
     if gate.enable_fft_screen:
         triggered_bands: list[str | Band] = []
-        for b in bands:
+        for b in screen_targets:
             s1 = screen_spectral_result(
                 spectral_result_perp1,
                 b,
@@ -506,7 +554,7 @@ def detect_with_gate(
         if not triggered_bands:
             return []
     else:
-        triggered_bands = list(bands)
+        triggered_bands = list(screen_targets)
 
     # Stage 2: CWT on both transverse components and combine via the
     # coincidence rule from Phase 6.3 (`require_both_perp`).
@@ -528,12 +576,16 @@ def detect_with_gate(
         cwt_power = cwt_power1
         mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
 
-    # Stage 4: ridge extraction on triggered bands only
+    # Stage 4: ridge extraction. In band-agnostic mode (`bands is None`)
+    # we hand a single QP_SEARCH_BAND through; otherwise we forward the
+    # legacy band list. When `bands is None` we pass `bands=None` down,
+    # so the post-hoc classify_period labelling in
+    # detect_wave_packets_multi runs.
     packets = detect_wave_packets_multi(
         b_perp1,
         times,
         dt=dt,
-        bands=triggered_bands,
+        bands=None if bands is None else triggered_bands,
         cwt_freq=freq,
         cwt_power=cwt_power,
         threshold_mask=mask,
@@ -573,39 +625,74 @@ def _nearest_index(arr: np.ndarray, value: float) -> int:
 def dedup_peaks_by_band(
     peaks: list[WavePacketPeak],
     dt_sec: float = 7200.0,
+    *,
+    period_log2_tol: float = 0.5,
 ) -> list[WavePacketPeak]:
-    """Suppress peaks that fall within ``dt_sec`` of a prior same-band peak.
+    r"""Suppress peaks too close in time *and* period to a prior peak.
 
-    The transverse pair (b_perp1, b_perp2) frequently picks up the same
-    physical wave train twice. The merge removes those near-duplicates
-    while preserving genuinely close peaks in *different* bands (e.g.
-    multi-harmonic events). A per-band rolling-last is required: a naïve
-    ``merged[-1]``-only guard would let close same-band peaks through
-    whenever a different-band peak happens to be interleaved in the
-    time-sorted stream.
+    The transverse pair (``b_perp1``, ``b_perp2``) frequently picks up
+    the same physical wave train twice. We collapse those near-duplicates
+    while preserving genuinely close peaks at different periods (e.g.
+    co-existing QP30 + QP60 harmonics, or a sequence of distinct wave
+    packets within the same band).
+
+    Two peaks are duplicates when
+
+    - :math:`|\Delta t| < \mathtt{dt\_sec}` (default 2 h), AND
+    - :math:`|\log_2(P_1 / P_2)| < \mathtt{period\_log2\_tol}` (default
+      a half-octave, matching the width of one QP band).
+
+    The earlier peak is kept; the later one is dropped. This is the
+    detector-level dedup applied *inside* a 36-h segment, on the
+    union of (b_perp1, b_perp2) peaks; the parquet-level cross-segment
+    pass in :mod:`qp.events.dedup` repeats the same idea on the
+    assembled catalogue.
+
+    Compared with the prior band-keyed implementation, this version
+    works whether peaks have been labelled (post-hoc) into one of the
+    QP bands or not, because the duplicate condition is on the actual
+    period instead of the band string.
 
     Parameters
     ----------
     peaks : list[WavePacketPeak]
         Must be sorted by ``peak_time``. Not modified.
     dt_sec : float, default 7200
-        Minimum separation in seconds for same-band peaks. Closer peaks
-        are dropped (keeping the earlier one).
+        Time-separation cutoff in seconds. Peaks farther apart than
+        this are never duplicates.
+    period_log2_tol : float, default 0.5
+        Log-period tolerance in octaves. Peaks farther apart in
+        :math:`\log_2 P` than this are never duplicates. The default
+        half-octave matches the width of one QP band, so this rule
+        coincides with the legacy "same band" rule when both peaks
+        sit inside the same canonical octave.
 
     Returns
     -------
     list[WavePacketPeak]
     """
     merged: list[WavePacketPeak] = []
-    last_by_band: dict[str | None, WavePacketPeak] = {}
     for peak in peaks:
-        prev = last_by_band.get(peak.band)
-        if prev is not None:
+        is_dup = False
+        for prev in reversed(merged):
             sep = abs((peak.peak_time - prev.peak_time).total_seconds())
-            if sep < dt_sec:
+            if sep >= dt_sec:
+                break  # merged is time-sorted; earlier entries are farther
+            p_cur = peak.period_sec
+            p_prev = prev.period_sec
+            if p_cur is None or p_prev is None or p_cur <= 0 or p_prev <= 0:
+                # No period info → fall back to band-string equality so
+                # callers using the legacy per-band loop still see the
+                # original same-band dedup behaviour.
+                if peak.band is not None and peak.band == prev.band:
+                    is_dup = True
+                    break
                 continue
-        merged.append(peak)
-        last_by_band[peak.band] = peak
+            if abs(math.log2(p_cur / p_prev)) < period_log2_tol:
+                is_dup = True
+                break
+        if not is_dup:
+            merged.append(peak)
     return merged
 
 
@@ -810,7 +897,6 @@ def detect_round8(
         One entry per peak that passed all four gates. The gate values
         are populated; the underlying ``WavePacketPeak`` is unchanged.
     """
-    from qp.events.bands import get_band
     from qp.events.threshold import wavelet_sigma_mask
     from qp.events.threshold_diag import (
         coi_mask as _coi_mask,
@@ -939,9 +1025,12 @@ def detect_round8(
         par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
         if par_frac > max_mva_par_frac:
             continue
-        # Polarization purity over the in-band TF window.
-        band_obj = get_band(peak.band)
-        in_band = (freq >= band_obj.freq_min_hz) & (freq < band_obj.freq_max_hz)
+        # Polarization purity over a peak-centred half-octave window
+        # (same width as one QP band, but anchored on the actual peak
+        # period rather than a fixed octave grid — so the gate doesn't
+        # depend on which side of a band edge the ridge happens to peak).
+        f_peak = 1.0 / peak.period_sec
+        in_band = (freq >= f_peak / math.sqrt(2.0)) & (freq < f_peak * math.sqrt(2.0))
         if not in_band.any():
             continue
         c1_window = cwt1[in_band, sl]
