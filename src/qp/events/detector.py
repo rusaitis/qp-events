@@ -22,7 +22,7 @@ to work; new code should call ``detect_wave_packets_multi``.
 from __future__ import annotations
 
 import datetime
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -32,6 +32,25 @@ from qp.events.bands import QP_BAND_NAMES, Band
 from qp.events.catalog import WaveEvent, WavePacketPeak
 from qp.events.ridge import Ridge, extract_ridges
 from qp.signal.wavelet import morlet_cwt
+
+if TYPE_CHECKING:
+    from qp.events.threshold_diag import BGArchive
+
+#: Round-8 threshold-method dispatch labels.
+#:
+#: ``tc_chi2`` (default) — Torrence & Compo (1998) §4 AR(1)+χ²(2)
+#: per-pixel test at the round-8 Bonferroni FWER. Recovers ~3× more
+#: events than ``mad_row`` at the 0.1–0.3 nT detection edge at matched
+#: bg-rate; methods converge above ~1 nT.
+#:
+#: ``mad_row`` — per-row MAD on background period rows, log-period
+#: interpolated across QP bands. Legacy gate; kept for parity with the
+#: pre-Phase-3 catalogue.
+#:
+#: ``fdr_chi2``, ``pooled`` — diagnostic-only alternatives reachable
+#: from the sweep script for sensitivity studies; not recommended as a
+#: production default.
+ThresholdMethod = Literal["mad_row", "tc_chi2", "fdr_chi2", "pooled"]
 
 # Imported lazily inside functions to avoid an import cycle:
 #   qp.events.threshold imports qp.signal.pipeline.SpectralResult
@@ -655,14 +674,13 @@ from qp.signal.polarization_config import (  # noqa: E402
 )
 
 
-def bonferroni_n_sigma_for_cwt(
+def _v_indep_for_cwt(
     n_time: int,
     dt: float,
     freq: np.ndarray,
     morlet_omega0: float = 10.0,
-    alpha: float = SEGMENT_FWER_ALPHA,
 ) -> float:
-    r"""Sigma threshold for FWER control over the Morlet-CWT search volume.
+    r"""Effective number of independent time-frequency cells in the Morlet CWT.
 
     The Morlet wavelet has temporal correlation length ~1 period at
     every frequency and frequency-bandwidth :math:`\Delta f / f \approx
@@ -673,20 +691,33 @@ def bonferroni_n_sigma_for_cwt(
         V_{\mathrm{indep}} = \frac{\omega_0}{2\pi}
             \ln\!\left(\frac{f_{\max}}{f_{\min}}\right)
         \cdot
-        n_t\,dt\,\bar f
-
-    Bonferroni then sets the per-pixel FP probability to
-    :math:`\alpha / V_{\mathrm{indep}}` and the threshold is the
-    corresponding Gaussian quantile (~4.6σ at α = 0.01).
+        n_t\,dt\,\bar f.
     """
-    from scipy.stats import norm
-
     freq = np.asarray(freq, dtype=float)
     f_min = float(freq[freq > 0].min())
     f_max = float(freq.max())
     n_freq_indep = (morlet_omega0 / (2.0 * np.pi)) * np.log(f_max / f_min)
     n_time_indep = n_time * dt * float(freq.mean())
-    v_indep = max(n_freq_indep * n_time_indep, 1.0)
+    return max(n_freq_indep * n_time_indep, 1.0)
+
+
+def bonferroni_n_sigma_for_cwt(
+    n_time: int,
+    dt: float,
+    freq: np.ndarray,
+    morlet_omega0: float = 10.0,
+    alpha: float = SEGMENT_FWER_ALPHA,
+) -> float:
+    r"""Sigma threshold for FWER control over the Morlet-CWT search volume.
+
+    Bonferroni sets the per-pixel FP probability to
+    :math:`\alpha / V_{\mathrm{indep}}` (see :func:`_v_indep_for_cwt`)
+    and the threshold is the corresponding Gaussian quantile (~4.6σ at
+    α = 0.01).
+    """
+    from scipy.stats import norm
+
+    v_indep = _v_indep_for_cwt(n_time, dt, freq, morlet_omega0)
     return float(norm.isf(alpha / v_indep))
 
 
@@ -736,6 +767,10 @@ def detect_round8(
     min_duration_hours: float = 2.0,
     min_pixels: int = 10,
     epoch: datetime.datetime | None = None,
+    threshold_method: ThresholdMethod = "tc_chi2",
+    apply_coi_mask: bool = True,
+    bg_archive: "BGArchive | None" = None,
+    region: str | None = None,
 ) -> list[DetectedEvent]:
     """Round-8 simplified wave-event detector.
 
@@ -749,6 +784,25 @@ def detect_round8(
         Sampling interval, seconds.
     epoch : datetime, optional
         Reference epoch for ``t``. Default 2000-01-01 (J2000-ish).
+    threshold_method : {"mad_row", "tc_chi2", "fdr_chi2", "pooled"}
+        CWT amplitude gate. ``tc_chi2`` (default) — Torrence & Compo
+        1998 AR(1)+χ²(2) per-pixel test at the same Bonferroni FWER
+        ``fwer_alpha``. ``mad_row`` keeps the legacy per-row MAD on
+        background period rows. ``fdr_chi2`` and ``pooled`` are
+        diagnostic-only; ``pooled`` additionally requires ``bg_archive``
+        and ``region``.
+    apply_coi_mask : bool, default True
+        Drop wavelet cells inside the Morlet cone of influence before
+        ridge extraction. The ``min_duration_hours = 2`` cut discards
+        most COI-tainted events implicitly; this is the rigorous
+        version and pairs naturally with the χ²-based gate.
+    bg_archive : BGArchive, optional
+        Pre-computed pooled background-row statistics (see
+        :mod:`qp.events.threshold_diag`). Only used when
+        ``threshold_method='pooled'``.
+    region : str, optional
+        Plasma-region key into ``bg_archive``. Only used when
+        ``threshold_method='pooled'``.
 
     Returns
     -------
@@ -758,6 +812,12 @@ def detect_round8(
     """
     from qp.events.bands import get_band
     from qp.events.threshold import wavelet_sigma_mask
+    from qp.events.threshold_diag import (
+        coi_mask as _coi_mask,
+        fdr_chi2_mask,
+        pooled_archive_mask,
+        torrence_compo_chi2_mask,
+    )
     from qp.signal.polarization import (
         ellipticity_inclination_from_stokes,
         mva_major_axis_parallel_fraction,
@@ -779,15 +839,51 @@ def detect_round8(
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
 
-    # Whitened sigma-mask at the FWER-derived threshold.
-    n_sigma = bonferroni_n_sigma_for_cwt(
-        power1.shape[1],
-        dt,
-        freq,
-        alpha=fwer_alpha,
-    )
-    mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
-    mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+    n_time = power1.shape[1]
+
+    if threshold_method == "mad_row":
+        n_sigma = bonferroni_n_sigma_for_cwt(n_time, dt, freq, alpha=fwer_alpha)
+        mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
+        mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+    elif threshold_method == "tc_chi2":
+        # Bonferroni-corrected per-pixel α under the same FWER budget.
+        v_indep = _v_indep_for_cwt(n_time, dt, freq)
+        alpha_pixel = fwer_alpha / v_indep
+        mask1 = torrence_compo_chi2_mask(
+            power1,
+            freq,
+            b_perp1,
+            dt=dt,
+            alpha=alpha_pixel,
+        )
+        mask2 = torrence_compo_chi2_mask(
+            power2,
+            freq,
+            b_perp2,
+            dt=dt,
+            alpha=alpha_pixel,
+        )
+    elif threshold_method == "fdr_chi2":
+        # FDR target is the FWER budget — apples-to-apples conservatism.
+        mask1 = fdr_chi2_mask(power1, freq, b_perp1, dt=dt, q=fwer_alpha)
+        mask2 = fdr_chi2_mask(power2, freq, b_perp2, dt=dt, q=fwer_alpha)
+    elif threshold_method == "pooled":
+        if bg_archive is None or region is None:
+            raise ValueError(
+                "threshold_method='pooled' requires both bg_archive and region; "
+                "build the archive with scripts/build_bg_archive.py and pass "
+                "the segment's plasma-region label"
+            )
+        n_sigma = bonferroni_n_sigma_for_cwt(n_time, dt, freq, alpha=fwer_alpha)
+        mask1 = pooled_archive_mask(power1, freq, region, bg_archive, n_sigma=n_sigma)
+        mask2 = pooled_archive_mask(power2, freq, region, bg_archive, n_sigma=n_sigma)
+    else:  # pragma: no cover — Literal exhausts the cases
+        raise ValueError(f"unknown threshold_method: {threshold_method!r}")
+
+    if apply_coi_mask:
+        coi = _coi_mask(freq, n_time, dt=dt)
+        mask1 = mask1 & coi
+        mask2 = mask2 & coi
 
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 

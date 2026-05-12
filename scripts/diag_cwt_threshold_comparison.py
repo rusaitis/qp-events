@@ -48,6 +48,7 @@ from qp.events.threshold_diag import (
     BGArchive,
     coi_mask,
     fdr_chi2_mask,
+    load_bg_archive,
     pooled_archive_mask,
     torrence_compo_chi2_mask,
 )
@@ -65,34 +66,10 @@ _N_FREQS: int = 300
 
 def _try_load_bg_archive(path: Path) -> BGArchive | None:
     """Return the pooled-archive Zarr if it exists, else ``None``."""
-    if not path.exists():
-        log.info("bg_archive not found at %s — skipping pooled-mask column", path)
-        return None
-    try:
-        import zarr  # local import; archive is optional
-
-        root = zarr.open(str(path), mode="r")
-        periods = np.asarray(root["periods_sec"])
-        # n_segments stored as one scalar per region under a group;
-        # drop regions with zero contributing segments so callers
-        # don't pull all-NaN stats by accident.
-        n_segments = {
-            r: int(np.asarray(root[f"n_segments/{r}"])) for r in root["n_segments"]
-        }
-        keep = {r for r, n in n_segments.items() if n > 0}
-        medians = {
-            r: np.asarray(root[f"medians/{r}"]) for r in root["medians"] if r in keep
-        }
-        mads = {r: np.asarray(root[f"mads/{r}"]) for r in root["mads"] if r in keep}
-        return BGArchive(
-            periods_sec=periods,
-            medians=medians,
-            mads=mads,
-            n_segments={r: n for r, n in n_segments.items() if r in keep},
-        )
-    except Exception as exc:  # pragma: no cover — defensive only
-        log.warning("could not load bg_archive (%s); skipping pooled-mask", exc)
-        return None
+    archive = load_bg_archive(path)
+    if archive is None:
+        log.info("bg_archive not loadable from %s — skipping pooled-mask column", path)
+    return archive
 
 
 def _per_segment_masks(

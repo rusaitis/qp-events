@@ -60,6 +60,7 @@ discovery rate in multiple testing under dependency", *Ann. Stat.*
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -369,6 +370,58 @@ class BGArchive:
     medians: dict[str, NDArray[np.floating]]
     mads: dict[str, NDArray[np.floating]]
     n_segments: dict[str, int]
+
+
+def load_bg_archive(path: str | os.PathLike[str]) -> BGArchive | None:
+    r"""Load a pooled background archive written by ``build_bg_archive.py``.
+
+    Returns ``None`` if the path does not exist or the store cannot be
+    opened — callers can then fall back to a per-segment threshold
+    method. Regions with zero contributing segments are dropped so
+    consumers never index into an all-NaN row.
+
+    Parameters
+    ----------
+    path : str or path-like
+        Filesystem path to the zarr store
+        (typically ``Output/bg_archive.zarr``).
+    """
+    p = os.fspath(path)
+    if not os.path.exists(p):
+        return None
+    try:
+        from typing import Any, cast
+
+        import zarr
+
+        # zarr's typed interface returns Array | Group | scalar unions that
+        # mypy can't narrow through ``[key]`` indexing or iteration. Treat
+        # the root as ``Any`` — the structure is defined by ``build_bg_archive.py``
+        # and any deviation is caught by the broad except below.
+        root = cast(Any, zarr.open(p, mode="r"))
+        periods = np.asarray(root["periods_sec"], dtype=float)
+        n_segments: dict[str, int] = {
+            str(r): int(np.asarray(root[f"n_segments/{r}"])) for r in root["n_segments"]
+        }
+        keep = {r for r, n in n_segments.items() if n > 0}
+        medians: dict[str, NDArray[np.floating]] = {
+            str(r): np.asarray(root[f"medians/{r}"], dtype=float)
+            for r in root["medians"]
+            if str(r) in keep
+        }
+        mads: dict[str, NDArray[np.floating]] = {
+            str(r): np.asarray(root[f"mads/{r}"], dtype=float)
+            for r in root["mads"]
+            if str(r) in keep
+        }
+        return BGArchive(
+            periods_sec=periods,
+            medians=medians,
+            mads=mads,
+            n_segments={r: n for r, n in n_segments.items() if r in keep},
+        )
+    except Exception:
+        return None
 
 
 def pooled_archive_mask(

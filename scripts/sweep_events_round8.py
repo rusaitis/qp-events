@@ -54,6 +54,7 @@ from qp.events.sweep_loader import (  # noqa: E402
     segment_central_window,
     segment_to_payload,
 )
+from qp.events.threshold_diag import BGArchive, load_bg_archive  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -69,22 +70,28 @@ class SegmentDetectionPayload:
     coord_th: np.ndarray | None
     coord_phi: np.ndarray | None
     info: dict
+    region_midpoint: str
 
 
 def _to_payload(seg_idx: int, seg) -> SegmentDetectionPayload | None:
     base = segment_to_payload(seg_idx, seg)
     if base is None:
         return None
+    times = list(base.times)
+    midpoint = times[len(times) // 2] if times else datetime.datetime(2000, 1, 1)
+    info = dict(base.info)
+    region = region_at_peak_from_info(info, midpoint)
     return SegmentDetectionPayload(
         seg_idx=base.seg_idx,
-        times=list(base.times),
+        times=times,
         b_par=base.b_par,
         b_perp1=base.b_perp1,
         b_perp2=base.b_perp2,
         coord_r=base.coord_r,
         coord_th=base.coord_th,
         coord_phi=base.coord_phi,
-        info=dict(base.info),
+        info=info,
+        region_midpoint=region,
     )
 
 
@@ -128,12 +135,23 @@ def _enrich_at_peak(
 
 
 _MAX_AMP_NT: float = 10.0  # set by main(); workers receive it via Pool initializer
+_THRESHOLD_METHOD: str = "mad_row"
+_APPLY_COI: bool = False
+_BG_ARCHIVE: BGArchive | None = None
 
 
-def _init_worker(cap_nT: float) -> None:
-    """Pool initializer: write the amplitude cap into each worker's module globals."""
-    global _MAX_AMP_NT
+def _init_worker(
+    cap_nT: float,
+    threshold_method: str,
+    apply_coi: bool,
+    bg_archive: BGArchive | None,
+) -> None:
+    """Pool initializer: propagate detector config into each worker's module globals."""
+    global _MAX_AMP_NT, _THRESHOLD_METHOD, _APPLY_COI, _BG_ARCHIVE
     _MAX_AMP_NT = float(cap_nT)
+    _THRESHOLD_METHOD = str(threshold_method)
+    _APPLY_COI = bool(apply_coi)
+    _BG_ARCHIVE = bg_archive
 
 
 def _amp_within_cap(d: DetectedEvent, cap_nT: float) -> bool:
@@ -158,12 +176,22 @@ def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
 
     seg_t0 = times[0]
     t_seconds = np.array(
-        [(t - seg_t0).total_seconds() for t in times], dtype=float,
+        [(t - seg_t0).total_seconds() for t in times],
+        dtype=float,
     )
     fields = np.column_stack([payload.b_par, payload.b_perp1, payload.b_perp2])
 
     try:
-        detections = detect_round8(t_seconds, fields, dt=60.0, epoch=seg_t0)
+        detections = detect_round8(
+            t_seconds,
+            fields,
+            dt=60.0,
+            epoch=seg_t0,
+            threshold_method=_THRESHOLD_METHOD,  # type: ignore[arg-type]
+            apply_coi_mask=_APPLY_COI,
+            bg_archive=_BG_ARCHIVE,
+            region=payload.region_midpoint,
+        )
     except Exception as exc:  # noqa: BLE001 — worker isolation
         log.warning("seg %d: detector raised: %s", payload.seg_idx, exc)
         return []
@@ -186,13 +214,18 @@ def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
         extra["segment_idx"] = payload.seg_idx
         # event_id will be reassigned globally after merge.
         row = event_to_record(
-            d, event_id=k, segment_id=seg_id, extra=extra,
+            d,
+            event_id=k,
+            segment_id=seg_id,
+            extra=extra,
         )
         rows.append(row)
     if n_amp_rejected:
         log.debug(
             "seg %d: rejected %d events exceeding %.0f nT amplitude cap",
-            payload.seg_idx, n_amp_rejected, _MAX_AMP_NT,
+            payload.seg_idx,
+            n_amp_rejected,
+            _MAX_AMP_NT,
         )
     return rows
 
@@ -248,22 +281,57 @@ def main() -> None:
         type=float,
         default=10.0,
         help="Reject events with any wave-component amplitude above this "
-             "value (default: 10 nT). Enforces the small-amplitude linear-wave "
-             "regime (delta-B/B << 1 at Cassini's typical 10-25 R_S range) "
-             "and excludes proximal-orbit perikrone passes where the rotating "
-             "ambient field looks like a wave.",
+        "value (default: 10 nT). Enforces the small-amplitude linear-wave "
+        "regime (delta-B/B << 1 at Cassini's typical 10-25 R_S range) "
+        "and excludes proximal-orbit perikrone passes where the rotating "
+        "ambient field looks like a wave.",
+    )
+    parser.add_argument(
+        "--threshold-method",
+        choices=("mad_row", "tc_chi2", "fdr_chi2", "pooled"),
+        default="tc_chi2",
+        help="CWT amplitude gate. 'tc_chi2' (default) — Torrence-Compo "
+        "AR(1)+chi2(2) test at the round-8 Bonferroni FWER. 'mad_row' is "
+        "the legacy per-row MAD gate. 'fdr_chi2' and 'pooled' are "
+        "diagnostic alternatives; 'pooled' requires --bg-archive.",
+    )
+    parser.add_argument(
+        "--coi",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Apply Morlet cone-of-influence mask before ridge extraction "
+        "(default: on). Pass --no-coi to disable.",
+    )
+    parser.add_argument(
+        "--bg-archive",
+        type=Path,
+        default=qp.OUTPUT_DIR / "bg_archive.zarr",
+        help="Pooled background archive (built by scripts/build_bg_archive.py); "
+        "only used when --threshold-method=pooled.",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
     # Propagate to workers (spawn picks up module globals at import time).
-    global _MAX_AMP_NT
+    global _MAX_AMP_NT, _THRESHOLD_METHOD, _APPLY_COI, _BG_ARCHIVE
     _MAX_AMP_NT = float(args.max_amp_nT)
+    _THRESHOLD_METHOD = str(args.threshold_method)
+    _APPLY_COI = bool(args.coi)
 
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    bg_archive: BGArchive | None = None
+    if args.threshold_method == "pooled":
+        bg_archive = load_bg_archive(args.bg_archive)
+        if bg_archive is None:
+            parser.error(
+                f"--threshold-method=pooled requires {args.bg_archive} to exist; "
+                "build it with scripts/build_bg_archive.py first.",
+            )
+    _BG_ARCHIVE = bg_archive
 
     t_start = time.perf_counter()
     segments, keep_idx = load_segments(args.year)
@@ -288,7 +356,7 @@ def main() -> None:
         with ctx.Pool(
             processes=args.workers,
             initializer=_init_worker,
-            initargs=(args.max_amp_nT,),
+            initargs=(args.max_amp_nT, args.threshold_method, args.coi, bg_archive),
         ) as pool:
             for batch in pool.imap_unordered(process_segment, payloads, chunksize=4):
                 rows.extend(batch)
@@ -312,13 +380,20 @@ def main() -> None:
             "min_stokes_d": MIN_DEGREE_OF_POLARIZATION,
             "max_mva_par_frac": MAX_MVA_PARALLEL_FRACTION,
             "max_amp_nT": float(args.max_amp_nT),
+            "threshold_method": str(args.threshold_method),
+            "apply_coi_mask": bool(args.coi),
+            "bg_archive": (
+                str(args.bg_archive) if args.threshold_method == "pooled" else None
+            ),
         },
         "elapsed_seconds": time.perf_counter() - t_start,
     }
     n_written = events_to_parquet(rows, args.output, attrs=attrs)
     log.info(
         "wrote %d rows to %s in %.1fs",
-        n_written, args.output, attrs["elapsed_seconds"],
+        n_written,
+        args.output,
+        attrs["elapsed_seconds"],
     )
     print(f"Wrote {n_written} events to {args.output}")
 
