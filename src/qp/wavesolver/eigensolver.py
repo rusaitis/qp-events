@@ -11,6 +11,7 @@ is satisfied, by:
 from __future__ import annotations
 
 import logging
+
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.optimize import brentq

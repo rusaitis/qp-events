@@ -9,13 +9,13 @@ import pytest
 from numpy.testing import assert_allclose
 
 from qp.wavesolver.density import (
+    AMU,
+    MU0,
     BagenalDelamere,
     PersoonEtAl,
     PowerLawDensity,
     UniformDensity,
     alfven_velocity,
-    AMU,
-    MU0,
 )
 
 

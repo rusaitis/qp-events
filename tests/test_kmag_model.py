@@ -14,16 +14,18 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from qp.fieldline._numba_kernels import (
+    _imf_penetration,
+    _is_inside_mp,
+)
+from qp.fieldline._numba_kernels import (
+    _internal_field as internal_field_jit,
+)
 from qp.fieldline.kmag_model import SaturnField, SaturnFieldConfig
 from qp.fieldline.saturn_coords import (
     epoch_to_j2000,
     rotate_vector,
     sun_position,
-)
-from qp.fieldline._numba_kernels import (
-    _internal_field as internal_field_jit,
-    _is_inside_mp,
-    _imf_penetration,
 )
 from qp.fieldline.tracer import (
     saturn_field_wrapper,

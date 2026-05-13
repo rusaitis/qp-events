@@ -73,9 +73,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -251,7 +252,7 @@ def events_to_parquet(
     return len(rows)
 
 
-def read_events_parquet(path: str | Path) -> tuple["pd.DataFrame", dict]:
+def read_events_parquet(path: str | Path) -> tuple[pd.DataFrame, dict]:
     """Round-trip companion to :func:`events_to_parquet`.
 
     Returns ``(dataframe, attrs)``. ``attrs`` is the side-car JSON's

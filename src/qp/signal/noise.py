@@ -25,7 +25,6 @@ import numpy as np
 
 from qp.signal.morphology import bandpass
 
-
 # Threshold above which we oversample to suppress low-frequency leakage
 _STEEP_ALPHA_THRESHOLD = 1.5
 _OVERSAMPLE_FACTOR = 10

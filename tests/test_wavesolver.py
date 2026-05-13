@@ -14,15 +14,14 @@ import pytest
 from numpy.testing import assert_allclose
 from scipy.interpolate import CubicSpline
 
-from qp.wavesolver.wave_equation import (
-    _scan_boundary_errors,
-    integrate_wave_equation,
-    boundary_error,
-    count_mode_number,
-)
 from qp.wavesolver.eigensolver import find_eigenfrequencies
 from qp.wavesolver.result import EigenMode, EigenResult
-
+from qp.wavesolver.wave_equation import (
+    _scan_boundary_errors,
+    boundary_error,
+    count_mode_number,
+    integrate_wave_equation,
+)
 
 # ============================================================================
 # Fixtures: uniform medium

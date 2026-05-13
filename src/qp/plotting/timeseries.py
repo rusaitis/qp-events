@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import datetime
 
-import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike
 
@@ -47,7 +47,7 @@ def plot_field_timeseries(
     if labels is None:
         labels = [f"comp {i}" for i in range(len(components))]
 
-    for comp, label, color in zip(components, labels, colors):
+    for comp, label, color in zip(components, labels, colors, strict=False):
         ax.plot(times, comp, color=color, label=label, lw=0.8)
 
     if zero_line:

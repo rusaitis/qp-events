@@ -22,6 +22,7 @@ script that walks the same segment archive.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 from dataclasses import dataclass, field
 from typing import Any
@@ -242,10 +243,8 @@ def ppo_at_peak_from_info(
         cadence = n_samples / len(arr)
         idx = int(round(elapsed_min / cadence))
         idx = max(0, min(len(arr) - 1, idx))
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             out[key.lower()] = float(arr[idx])
-        except (TypeError, ValueError):
-            pass
     return out
 
 

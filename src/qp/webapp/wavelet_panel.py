@@ -32,16 +32,16 @@ from qp.events.detector import (
     SEGMENT_FWER_ALPHA,
     bonferroni_n_sigma_for_cwt,
 )
+from qp.events.threshold import wavelet_sigma_mask
 from qp.signal.polarization_config import (
     MAX_MVA_PARALLEL_FRACTION,
     MIN_DEGREE_OF_POLARIZATION,
 )
-from qp.events.threshold import wavelet_sigma_mask
 from qp.signal.wavelet import morlet_cwt
 from qp.webapp.loaders import (
+    _row_for,
     get_segment_payload,
     load_event_table,
-    _row_for,
 )
 
 log = logging.getLogger(__name__)

@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
+from qp.coords.transforms import lt_to_phi, phi_to_lt
 from qp.plotting.maps import (
     draw_field_indicator,
     draw_latitude_indicator,
@@ -25,8 +26,6 @@ from qp.plotting.maps import (
     plot_lt_lat_heatmap,
     plot_polar_heatmap,
 )
-from qp.plotting.style import save_figure, style_colorbar
-from qp.coords.transforms import phi_to_lt, lt_to_phi
 from qp.plotting.saturn import (
     REFERENCE_SHELLS,
     Arrow3D,
@@ -44,6 +43,7 @@ from qp.plotting.spectra import (
     plot_power_ratios,
     plot_spectrogram,
 )
+from qp.plotting.style import save_figure, style_colorbar
 from qp.plotting.timeseries import (
     field_limits,
     field_range,

@@ -29,8 +29,9 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -549,7 +550,18 @@ def accumulate_full_mirror(
         bt = sp.b_total_nT
         any_mask = np.zeros_like(next(iter(band_to_mask.values())))
 
-        def _accumulate(prefix: str, sample_mask: np.ndarray) -> None:
+        # Bind per-segment values (cache, codes, bt) as default args so the
+        # closure captures the *current* iteration's values. Only matters if
+        # _accumulate ever outlives the loop — it doesn't today, but pinning
+        # the binding is cheap insurance and silences ruff B023.
+        def _accumulate(
+            prefix: str,
+            sample_mask: np.ndarray,
+            *,
+            cache=cache,  # noqa: B008
+            codes=codes,  # noqa: B008
+            bt=bt,  # noqa: B008
+        ) -> None:
             r3d = accumulate_with_regions_cached(
                 cache,
                 codes,
@@ -601,7 +613,7 @@ def full_mirror_grids_to_xarray(
     title: str = "QP Event Time Grid (full-mirror schema)",
     description: str | None = None,
     extra_attrs: dict | None = None,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Wrap full-mirror grids into an xarray Dataset matching the dwell layout."""
     import xarray as xr
 
@@ -897,7 +909,7 @@ def kmag_event_grids_to_xarray(
     *,
     title: str = "QP Event Time Grid (KMAG-traced schemas)",
     extra_attrs: dict | None = None,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Wrap KMAG event grids into an xarray Dataset.
 
     Output dims: ``(kmag_inv_lat, local_time)`` and

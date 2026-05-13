@@ -16,7 +16,7 @@ import datetime
 import pytest
 
 from qp.events.bands import classify_period
-from qp.events.catalog import WaveTemplate, WavePacketPeak
+from qp.events.catalog import WavePacketPeak, WaveTemplate
 from qp.events.detector import dedup_peaks_by_period, detect_wave_packets_multi
 from qp.signal.synthetic import simulate_signal
 

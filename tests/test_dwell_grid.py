@@ -23,7 +23,6 @@ from qp.dwell.grid import (
 from qp.dwell.io import ZarrEncoding, load_zarr, save_zarr, to_xarray
 from qp.dwell.tracing import TracingConfig, TracingResult
 
-
 # ============================================================================
 # DwellGridConfig
 # ============================================================================

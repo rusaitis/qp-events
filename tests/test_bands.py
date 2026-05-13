@@ -7,10 +7,10 @@ import math
 import pytest
 
 from qp.events.bands import (  # noqa: I001
-    QP_SEARCH_BAND,
     QP_BAND_COLORS,
     QP_BAND_NAMES,
     QP_BANDS,
+    QP_SEARCH_BAND,
     classify_period,
     get_band,
     is_in_band,
@@ -31,7 +31,7 @@ class TestBandConstants:
     def test_bands_tile_contiguously(self):
         """No gaps and no overlaps between adjacent bands."""
         ordered = sorted(QP_BANDS.values(), key=lambda b: b.period_min_sec)
-        for a, b in zip(ordered, ordered[1:]):
+        for a, b in zip(ordered, ordered[1:], strict=False):
             assert a.period_max_sec == b.period_min_sec, (
                 f"gap or overlap between {a.name} and {b.name}"
             )

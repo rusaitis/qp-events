@@ -6,6 +6,7 @@ and extracts conjugate (invariant) latitude at Saturn's surface.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import multiprocessing as mp
@@ -322,10 +323,8 @@ def _worker_init(field_config: SaturnFieldConfig | None) -> None:
     global _WORKER_FIELD
     _WORKER_FIELD = SaturnField(field_config)
     # Force JIT compilation now (~2 s) so the first real trace doesn't pay it
-    try:
+    with contextlib.suppress(Exception):
         _WORKER_FIELD.field_cartesian(10.0, 0.0, 0.0, 0.0, coord="KSM")
-    except Exception:
-        pass
 
 
 def _trace_chunk(payload: tuple) -> dict:

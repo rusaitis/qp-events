@@ -9,14 +9,14 @@ from numpy.testing import assert_allclose
 
 from qp.config import (
     COLUMN_DEFS,
+    CROSSING_FILENAME,
     DATETIME_FORMATS,
     DEFAULT_COORD,
-    CoordSystem,
     REFERENCE_EVENTS,
     SATURN_AXISROT,
-    TEST_DATE_RANGE,
     SLS5_FILENAME,
-    CROSSING_FILENAME,
+    TEST_DATE_RANGE,
+    CoordSystem,
 )
 from qp.constants import (
     ELECTRON_MASS,
@@ -42,7 +42,7 @@ class TestCoordSystem:
 
     def test_string_comparison(self):
         assert CoordSystem.KSM == "KSM"
-        assert "KRTP" == CoordSystem.KRTP
+        assert CoordSystem.KRTP == "KRTP"
 
 
 class TestDatetimeFormats:
@@ -74,7 +74,7 @@ class TestReferenceEvents:
     def test_sorted_by_date(self):
         # Events should be chronologically sorted
         sorted_events = tuple(sorted(REFERENCE_EVENTS))
-        assert REFERENCE_EVENTS == sorted_events
+        assert sorted_events == REFERENCE_EVENTS
 
     def test_first_event(self):
         assert REFERENCE_EVENTS[0].year == 2006

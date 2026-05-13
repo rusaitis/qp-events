@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike
 
-from qp.signal.fft import welch_psd, estimate_background
+from qp.signal.fft import estimate_background, welch_psd
 
 
 def compute_power_ratios(

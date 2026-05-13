@@ -6,15 +6,13 @@ All functions take plain numpy arrays.
 
 from __future__ import annotations
 
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 from numpy.typing import ArrayLike
 
-import matplotlib.patches as mpatches
-
 from qp.plotting.style import FIELD_COLORS, FIELD_LABELS_MFA, QP_COLORS
-
 
 # Key periods to annotate (in minutes)
 PERIOD_MARKERS = {
@@ -54,7 +52,7 @@ def plot_power_density(
 
     period_min = np.where(freq > 0, 1 / (freq * 60), np.inf)
 
-    for psd, label, color in zip(psds, labels, colors):
+    for psd, label, color in zip(psds, labels, colors, strict=False):
         ax.loglog(period_min, psd, color=color, label=label, lw=0.8)
 
     if background is not None:
@@ -103,7 +101,7 @@ def plot_power_ratios(
     period_min = np.where(freq > 0, 1 / (freq * 60), np.inf)
 
     keys = ["r_par", "r_perp1", "r_perp2", "r_total"]
-    for key, label, color in zip(keys, labels, colors):
+    for key, label, color in zip(keys, labels, colors, strict=False):
         if key in ratios:
             ax.semilogy(period_min, ratios[key], color=color, label=label, lw=0.8)
 
@@ -148,7 +146,7 @@ def plot_median_power_ratios(
     period_min = np.where(freq > 0, 1 / (freq * 60), np.inf)
 
     keys = ["r_par", "r_perp1", "r_perp2", "r_total"]
-    for key, label, color in zip(keys, labels, colors):
+    for key, label, color in zip(keys, labels, colors, strict=False):
         if key not in median_ratios:
             continue
         ax.semilogy(period_min, median_ratios[key], color=color, label=label, lw=1.2)
@@ -380,7 +378,7 @@ def plot_fft_snapshots(
         ]
         colors = default_palette
 
-    for i, (ax, psd) in enumerate(zip(axes, psd_list)):
+    for i, (ax, psd) in enumerate(zip(axes, psd_list, strict=False)):
         color = colors[i % len(colors)]
         label = snapshot_labels[i] if snapshot_labels else None
         ax.loglog(period_min, psd, color=color, lw=0.8, label=label)

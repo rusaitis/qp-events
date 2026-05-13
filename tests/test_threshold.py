@@ -10,8 +10,8 @@ import pytest
 from qp.events.bands import QP_BANDS
 from qp.events.catalog import WaveTemplate
 from qp.events.threshold import (
-    GateConfig,
     MAD_TO_SIGMA,
+    GateConfig,
     screen_segment_by_power_ratio,
     screen_spectral_result,
     wavelet_sigma_mask,

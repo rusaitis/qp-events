@@ -19,9 +19,9 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from qp.coords.transforms import (
+    rotation_matrix_sph2car,
     sph2car,
     unit_vector,
-    rotation_matrix_sph2car,
 )
 
 

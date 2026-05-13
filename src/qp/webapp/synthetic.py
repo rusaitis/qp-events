@@ -23,7 +23,6 @@ from qp.events.detector import detect_round8
 from qp.signal.fft import welch_psd
 from qp.signal.synthetic import simulate_multi_component
 
-
 _DEFAULT_PERIOD_MIN: dict[str, float] = {
     name: band.period_centroid_minutes for name, band in QP_BANDS.items()
 }

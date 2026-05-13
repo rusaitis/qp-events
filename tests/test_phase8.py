@@ -9,6 +9,7 @@ Covers:
 from __future__ import annotations
 
 import numpy as np
+from scipy.signal import butter, sosfilt
 
 from qp.events.normalization import occurrence_rate, weighted_occurrence_rate
 from qp.signal.cross_correlation import (
@@ -16,8 +17,6 @@ from qp.signal.cross_correlation import (
     ellipticity_inclination_tapered,
     phase_shift,
 )
-from scipy.signal import butter, sosfilt
-
 
 # ── Phase 8.1 — Quality-weighted occurrence rate ───────────────────────────────
 

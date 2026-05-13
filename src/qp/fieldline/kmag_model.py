@@ -20,6 +20,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from qp.fieldline._numba_kernels import (
+    _build_rotation_matrices,
+    field_s3c_kernel,
+)
 from qp.fieldline.kmag_coefficients import (
     CS_DHD,
     DP_NOMINAL,
@@ -33,10 +37,6 @@ from qp.fieldline.saturn_coords import (
     epoch_to_j2000,
     rotate_vector,
     sph2car_field,
-)
-from qp.fieldline._numba_kernels import (
-    _build_rotation_matrices,
-    field_s3c_kernel,
 )
 
 

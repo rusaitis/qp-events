@@ -55,7 +55,8 @@ dtypes stay stable downstream.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING
 
 from qp.events.bands import classify_period
 
@@ -69,10 +70,10 @@ DEFAULT_MIN_OVERLAP_FRAC: float = 0.5
 
 
 def tag_peers(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     min_overlap_frac: float = DEFAULT_MIN_OVERLAP_FRAC,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     r"""Return a copy of ``df`` with peer columns added.
 
     Three new columns are appended (see module docstring for the

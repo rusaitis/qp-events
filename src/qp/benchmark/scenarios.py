@@ -134,7 +134,7 @@ def tier1_mixed_bands() -> ScenarioConfig:
             EventSpec(
                 band=b, amplitude=2.0, center_hours=c, decay_hours=d, difficulty="easy"
             )
-            for b, c, d in zip(bands, centers, decays)
+            for b, c, d in zip(bands, centers, decays, strict=False)
         ],
     )
 
@@ -144,7 +144,7 @@ def tier1_full_spectrum() -> ScenarioConfig:
     periods_min = [5, 10, 20, 30, 45, 60, 80, 90, 100, 110, 120, 130, 150, 180]
     centers = _centers(len(periods_min), 15)
     specs = []
-    for p, c in zip(periods_min, centers):
+    for p, c in zip(periods_min, centers, strict=False):
         band_name = classify_period(p * _MIN)
         specs.append(
             EventSpec(
@@ -250,7 +250,7 @@ def tier2_sawtooth_shapes() -> ScenarioConfig:
                 sawtooth_width=sw,
                 difficulty="moderate",
             )
-            for c, (wf, sw) in zip(centers, shapes)
+            for c, (wf, sw) in zip(centers, shapes, strict=False)
         ],
     )
 
@@ -387,7 +387,7 @@ def tier3_frequency_drift() -> ScenarioConfig:
                 asymmetry=0.3,
                 difficulty="hard",
             )
-            for c, cr in zip(centers, chirps)
+            for c, cr in zip(centers, chirps, strict=False)
         ],
     )
 
@@ -412,7 +412,7 @@ def tier3_asymmetric_envelope() -> ScenarioConfig:
                 asymmetry=a,
                 difficulty="hard",
             )
-            for c, a in zip(centers, asym)
+            for c, a in zip(centers, asym, strict=False)
         ],
     )
 
@@ -493,7 +493,7 @@ def tier3_mixed_waveforms() -> ScenarioConfig:
                 waveform=wf,
                 difficulty="hard",
             )
-            for c, wf in zip(centers, waveforms)
+            for c, wf in zip(centers, waveforms, strict=False)
         ],
     )
 
@@ -598,7 +598,7 @@ def tier4_inter_band_period() -> ScenarioConfig:
                 difficulty="extreme",
                 event_type="qp_wave_inter_band",
             )
-            for p, c in zip(periods, centers)
+            for p, c in zip(periods, centers, strict=False)
         ],
     )
 
@@ -722,7 +722,7 @@ def tier4_elliptical_pol() -> ScenarioConfig:
                 ellipticity=e,
                 difficulty="extreme",
             )
-            for c, e in zip(centers, ellipticities)
+            for c, e in zip(centers, ellipticities, strict=False)
         ],
     )
 

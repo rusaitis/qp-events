@@ -19,9 +19,8 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 from qp.fieldline.kmag_model import SaturnField
-
+from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 
 # Reference: fundamental toroidal eigenfrequencies (mHz) from KMAG + Bagenal
 # at noon local time, from Rusaitis et al. (2021)

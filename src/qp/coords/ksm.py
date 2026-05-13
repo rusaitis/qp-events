@@ -14,7 +14,6 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike
 
-
 # Saturn's dipole axis offset from center of mass (R_S)
 DIPOLE_OFFSET_Z = 0.037
 

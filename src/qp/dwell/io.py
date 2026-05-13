@@ -214,7 +214,7 @@ def to_xarray(
         "title": "Cassini Dwell Time Grid",
         "description": "Accumulated spacecraft time in (r, mag_lat, LT) bins",
         "coordinate_system": "KSM",
-        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "created": datetime.datetime.now(datetime.UTC).isoformat(),
         "n_r": config.n_r,
         "n_lat": config.n_lat,
         "n_lt": config.n_lt,

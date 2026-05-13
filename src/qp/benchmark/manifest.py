@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import csv
 import json
-from dataclasses import asdict, dataclass, field, fields as dc_fields
+from dataclasses import asdict, dataclass, field
+from dataclasses import fields as dc_fields
 from pathlib import Path
 
 

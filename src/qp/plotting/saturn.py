@@ -6,11 +6,10 @@ vector arrows, and reference field-line shell overlays.
 
 from __future__ import annotations
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d
-
 
 # ============================================================================
 # 3D Arrow (used by draw_axes_3d and draw_vector_3d)

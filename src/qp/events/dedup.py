@@ -46,11 +46,11 @@ DEFAULT_PERIOD_REL_TOL: float = 0.10
 
 
 def tag_duplicates(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     dt_sec: float = DEFAULT_DT_SEC,
     period_rel_tol: float = DEFAULT_PERIOD_REL_TOL,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Return a copy of ``df`` with an added boolean ``is_duplicate`` column.
 
     The input is not mutated. The returned frame preserves row order.
@@ -124,11 +124,11 @@ def tag_duplicates(
 
 
 def collapse_duplicates(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     dt_sec: float = DEFAULT_DT_SEC,
     period_rel_tol: float = DEFAULT_PERIOD_REL_TOL,
-) -> "pd.DataFrame":
+) -> pd.DataFrame:
     """Tag-and-filter convenience wrapper around :func:`tag_duplicates`.
 
     Returns a new frame with duplicate rows removed and the

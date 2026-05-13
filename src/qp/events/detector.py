@@ -434,7 +434,7 @@ def detect_round8(
     epoch: datetime.datetime | None = None,
     threshold_method: ThresholdMethod = "tc_chi2",
     apply_coi_mask: bool = True,
-    bg_archive: "BGArchive | None" = None,
+    bg_archive: BGArchive | None = None,
     region: str | None = None,
 ) -> list[DetectedEvent]:
     """Round-8 simplified wave-event detector.
@@ -478,6 +478,8 @@ def detect_round8(
     from qp.events.threshold import wavelet_sigma_mask
     from qp.events.threshold_diag import (
         coi_mask as _coi_mask,
+    )
+    from qp.events.threshold_diag import (
         fdr_chi2_mask,
         pooled_archive_mask,
         torrence_compo_chi2_mask,

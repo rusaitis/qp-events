@@ -83,7 +83,7 @@ def test_default_kwargs_are_tc_chi2_with_coi() -> None:
     )
     # Same number of detections and identical peak times → same dispatch.
     assert len(implicit) == len(explicit)
-    for a, b in zip(implicit, explicit):
+    for a, b in zip(implicit, explicit, strict=False):
         assert a.peak.peak_time == b.peak.peak_time
         assert a.peak.band == b.peak.band
 

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from qp.benchmark.manifest import DatasetManifest, InjectedEvent
 from qp.events.bands import QP_BANDS
 from qp.events.catalog import WaveTemplate
 from qp.signal.noise import (
@@ -19,7 +20,6 @@ from qp.signal.noise import (
     magnetospheric_background,
 )
 from qp.signal.synthetic import simulate_wave_physics
-from qp.benchmark.manifest import DatasetManifest, InjectedEvent
 
 
 @dataclass(frozen=True, slots=True)

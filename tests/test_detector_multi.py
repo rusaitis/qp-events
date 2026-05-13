@@ -175,7 +175,7 @@ class TestAmplitudeProportionality:
             )
             best = max((p.prominence for p in packets if p.band == "QP60"), default=0.0)
             proms.append(best)
-        assert all(a <= b + 1e-9 for a, b in zip(proms, proms[1:])), (
+        assert all(a <= b + 1e-9 for a, b in zip(proms, proms[1:], strict=False)), (
             f"prominences not monotonic: {proms}"
         )
 

@@ -6,10 +6,10 @@ import numpy as np
 import pytest
 
 from qp.events.bands import QP_BANDS
+from qp.events.catalog import WaveTemplate
 from qp.events.ridge import Ridge, extract_ridges
 from qp.signal.synthetic import simulate_signal
 from qp.signal.wavelet import morlet_cwt
-from qp.events.catalog import WaveTemplate
 
 
 def _cwt_for(signal: np.ndarray, dt: float = 60.0):

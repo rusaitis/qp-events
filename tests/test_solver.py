@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from qp.fieldline.kmag_model import SaturnField
+from qp.wavesolver.density import UniformDensity
 from qp.wavesolver.solver import (
     WavesolverConfig,
     solve_eigenfrequencies,
     solve_for_latitude_range,
 )
-from qp.wavesolver.density import UniformDensity
-from qp.fieldline.kmag_model import SaturnField
 
 
 class TestSolveEigenfrequenciesDipole:

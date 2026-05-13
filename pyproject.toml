@@ -6,25 +6,30 @@ authors = [
     { name = "Liutauras Rusaitis", email = "liutauras.rusaitis@nasa.gov" },
 ]
 requires-python = ">=3.13"
+# Floors track the numeric stack actually used for the published figures.
+# Upper caps catch major-version breaks (numpy 3, scipy 2, etc.) but stay
+# loose so lockfile resolution remains flexible.
 dependencies = [
-    "numpy",
-    "scipy",
-    "matplotlib",
-    "statsmodels",
-    "seaborn",
-    "pandas",
-    "numba",
-    "xarray",
-    "zarr",
-    "pyvista",
+    "numpy>=2.0,<3",
+    "scipy>=1.13,<2",
+    "matplotlib>=3.9,<4",
+    "statsmodels>=0.14",
+    "seaborn>=0.13",
+    "pandas>=2.2,<4",
+    "numba>=0.60,<1",
+    "xarray>=2024.6",
+    "zarr>=2.18,<4",
+    "pyvista>=0.44",
     "pyarrow>=23.0.1",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "ruff",
-    "mypy",
+    "pytest>=8",
+    "ruff>=0.7",
+    "mypy>=1.11",
+    "pandas-stubs",
+    "scipy-stubs",
 ]
 webapp = [
     "fastapi",
@@ -49,11 +54,43 @@ markers = [
 line-length = 88
 
 [tool.ruff.lint]
-select = ["E", "F", "W"]
-ignore = ["E402"]
+# E/F/W = baseline pycodestyle/pyflakes.
+# I       = sort imports.
+# UP      = pyupgrade (`Optional[X]` → `X | None`, f-string promotion, etc.).
+# B       = flake8-bugbear (real-bug heuristics, not style).
+# SIM     = flake8-simplify (collapse redundant if/return patterns).
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E402",   # module-level import not at top (needed for `matplotlib.use("Agg")`)
+    "B008",   # function calls in argument defaults — common dataclass idiom
+    "SIM108", # ternary often less readable for numeric branches
+]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
 "src/qp/fieldline/_numba_kernels.py" = ["E501", "E702"]
-"tests/*" = ["E501"]
+"tests/*" = ["E501", "B011"]
 "scripts/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+# Source-only; tests + scripts are pragmatic and don't carry the same hygiene
+# expectations.
+files = ["src/qp"]
+
+[[tool.mypy.overrides]]
+module = [
+    "scipy.*",
+    "matplotlib.*",
+    "zarr.*",
+    "numba.*",
+    "pyvista.*",
+    "statsmodels.*",
+    "seaborn.*",
+    "xarray.*",
+]
+ignore_missing_imports = true

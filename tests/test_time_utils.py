@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 
 from qp.time_utils import from_timestamp, parse_datetime, to_timestamp
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 
 class TestToTimestamp:

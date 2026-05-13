@@ -132,7 +132,7 @@ def build_sparse_grid(
     total = int(offsets[-1])
     bins = np.empty(total, dtype=np.int32)
     weights = np.empty(total, dtype=np.float32)
-    for i, (b, w) in enumerate(zip(per_event_bins, per_event_weights)):
+    for i, (b, w) in enumerate(zip(per_event_bins, per_event_weights, strict=False)):
         start, stop = offsets[i], offsets[i + 1]
         bins[start:stop] = b
         weights[start:stop] = w
@@ -144,7 +144,7 @@ def build_sparse_grid(
     )
 
 
-def apply_filter(df: "pd.DataFrame", expr: str | None) -> NDArray[np.bool_]:
+def apply_filter(df: pd.DataFrame, expr: str | None) -> NDArray[np.bool_]:
     """Convert a pandas-eval expression into a boolean event mask.
 
     ``None``/empty expr returns an all-True mask. The expression is

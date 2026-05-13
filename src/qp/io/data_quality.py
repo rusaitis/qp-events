@@ -195,9 +195,7 @@ def parse_mode_changes(path: Path | None = None) -> list[QualityFlag]:
         upper_first = first_line.upper()
         if "ALL DATA" in upper_first or "ALL" in upper_first:
             sensor = "ALL"
-        elif "VHM" in upper_first and "SHM" in upper_first:
-            sensor = "VHM"
-        elif "VHM" in upper_first:
+        elif "VHM" in upper_first and "SHM" in upper_first or "VHM" in upper_first:
             sensor = "VHM"
         elif "FGM" in upper_first:
             sensor = "FGM"

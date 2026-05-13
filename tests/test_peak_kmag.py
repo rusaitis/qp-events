@@ -22,7 +22,6 @@ from qp.dwell.tracing import TracingConfig
 from qp.events.peak_kmag import J2000_POSIX, kmag_peak_columns
 from qp.fieldline.kmag_model import SaturnField
 
-
 # Mid-mission epoch (2009-01-01 UTC) as J2000 seconds. KMAG is
 # weakly time-dependent at low frequency; any year inside the
 # Cassini mission works.

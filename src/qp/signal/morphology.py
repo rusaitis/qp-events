@@ -11,7 +11,6 @@ import numpy as np
 from numpy.typing import ArrayLike
 from scipy.signal import butter, hilbert, sosfiltfilt
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -18,7 +18,6 @@ from numpy.typing import ArrayLike
 
 from qp.coords.transforms import car2sph
 
-
 # Saturn dipole moment (nT * R_S^3)
 SATURN_DIPOLE_MOMENT = 380.0  # Approximately 0.2154 Gauss * R_S^3
 

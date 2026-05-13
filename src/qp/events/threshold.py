@@ -44,7 +44,6 @@ from qp.events.bands import (
 )
 from qp.signal.pipeline import SpectralResult
 
-
 # ----------------------------------------------------------------------
 # Stage 1: FFT power ratio screen
 # ----------------------------------------------------------------------

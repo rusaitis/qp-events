@@ -5,12 +5,12 @@ import pytest
 
 from qp.benchmark.generator import EventSpec, ScenarioConfig, generate_benchmark_dataset
 from qp.benchmark.manifest import (
-    InjectedEvent,
     DatasetManifest,
-    events_to_csv,
+    InjectedEvent,
     events_from_csv,
-    manifest_to_json,
+    events_to_csv,
     manifest_from_json,
+    manifest_to_json,
 )
 from qp.benchmark.scenarios import ALL_SCENARIOS, tier1_clean_qp60
 from qp.benchmark.scoring import score_dataset, score_suite

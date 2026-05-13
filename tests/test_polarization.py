@@ -81,7 +81,7 @@ def test_signal_plus_noise_decays_smoothly_with_snr():
         z2 = snr * 1j * z_sig + noise2  # circular
         ds.append(degree_of_polarization(z1, z2))
     # Pure-signal limit ~ 1, pure-noise limit ~ 0; monotone in between.
-    for a, b in zip(ds, ds[1:]):
+    for a, b in zip(ds, ds[1:], strict=False):
         assert a >= b - 0.05, f"d should be non-increasing with noise, got {ds}"
     assert ds[0] > 0.9
     assert ds[-1] < 0.5

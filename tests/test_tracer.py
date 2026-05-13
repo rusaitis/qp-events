@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from qp.fieldline.kmag_model import SaturnField
 from qp.fieldline.tracer import (
     FieldLineTrace,
     dipole_field,
@@ -15,7 +16,6 @@ from qp.fieldline.tracer import (
     trace_fieldline,
     trace_fieldline_bidirectional,
 )
-from qp.fieldline.kmag_model import SaturnField
 
 
 class TestTraceFieldline:

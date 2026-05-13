@@ -12,7 +12,6 @@ from pathlib import Path
 
 import qp
 
-
 # --- Column descriptor for PDS TAB files ---
 
 

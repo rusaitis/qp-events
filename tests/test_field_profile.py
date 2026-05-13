@@ -8,12 +8,12 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from qp.fieldline.kmag_model import SaturnField
 from qp.fieldline.tracer import (
     dipole_field,
-    trace_fieldline_bidirectional,
     saturn_field_wrapper,
+    trace_fieldline_bidirectional,
 )
-from qp.fieldline.kmag_model import SaturnField
 from qp.wavesolver.density import (
     BagenalDelamere,
     UniformDensity,

@@ -22,7 +22,6 @@ import qp
 from qp.events.catalog import WavePacketPeak
 from qp.events.wave_packets import compute_separations, separation_statistics
 
-
 PARQUET = qp.OUTPUT_DIR / "events_round8.parquet"
 
 

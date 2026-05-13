@@ -7,7 +7,6 @@ import numpy as np
 
 from qp.signal.fft import estimate_background_powerlaw
 
-
 # ------------------------------------------------------------------
 # Phase 7.1 — power-law FFT background
 # ------------------------------------------------------------------

@@ -129,7 +129,7 @@ def _region_spans(
     pairs = sorted(
         (
             (t, int(c))
-            for t, c in zip(flag_times, locations)
+            for t, c in zip(flag_times, locations, strict=False)
             if isinstance(t, datetime.datetime)
         ),
         key=lambda x: x[0],
@@ -418,4 +418,4 @@ def _to_clean_list(arr: np.ndarray) -> list[float | None]:
     mask = np.isfinite(arr)
     if mask.all():
         return arr.tolist()
-    return [v if m else None for v, m in zip(arr.tolist(), mask.tolist())]
+    return [v if m else None for v, m in zip(arr.tolist(), mask.tolist(), strict=False)]

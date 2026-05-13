@@ -11,8 +11,8 @@ from qp.signal.morphology import (
     envelope_rise_fall,
     freq_drift_rate,
     harmonic_ratio,
-    inter_cycle_coherence,
     instantaneous_frequency,
+    inter_cycle_coherence,
 )
 
 DT = 60.0  # 1-minute samples

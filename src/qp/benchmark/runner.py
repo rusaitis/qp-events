@@ -35,8 +35,10 @@ from qp.events.detector import (
     MIN_DEGREE_OF_POLARIZATION,
     MIN_Q_FACTOR,
     SEGMENT_FWER_ALPHA,
-    bonferroni_n_sigma_for_cwt as _bonferroni_n_sigma,
     detect_round8,
+)
+from qp.events.detector import (
+    bonferroni_n_sigma_for_cwt as _bonferroni_n_sigma,
 )
 
 # Re-exports — kept for backwards compatibility with any external code

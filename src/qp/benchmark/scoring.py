@@ -137,7 +137,7 @@ def score_dataset(
 
         # Build all matched pairs from Hungarian assignment
         all_pairs: list[tuple[int, int, float]] = []
-        for gi, di in zip(gt_idx, det_idx):
+        for gi, di in zip(gt_idx, det_idx, strict=False):
             all_pairs.append((gi, di, float(iou_matrix[gi, di])))
 
         # Primary matches at the main threshold

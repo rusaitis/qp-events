@@ -13,9 +13,9 @@ import pytest
 
 from qp.dwell.grid import DwellGridConfig
 from qp.events.footprints import (
-    EventFootprints,
     GRID_NAMES,
     SCHEMA_VERSION,
+    EventFootprints,
     apply_filter,
     build_sparse_grid,
     grid_shape,

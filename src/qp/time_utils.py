@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import datetime
 
-_UTC = datetime.timezone.utc
+_UTC = datetime.UTC
 
 
 def to_timestamp(dt: datetime.datetime) -> float:

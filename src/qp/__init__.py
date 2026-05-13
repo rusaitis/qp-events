@@ -1,7 +1,7 @@
 """QP — Analysis of quasi-periodic Alfvén waves in Saturn's magnetosphere."""
 
-from pathlib import Path
 import os
+from pathlib import Path
 
 __version__ = "0.1.0"
 
