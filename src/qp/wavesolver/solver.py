@@ -36,6 +36,7 @@ from qp.wavesolver.density import (
 )
 from qp.wavesolver.eigensolver import find_eigenfrequencies
 from qp.wavesolver.field_profile import compute_field_line_profile
+from qp.wavesolver.matrix_solver import find_eigenfrequencies_matrix
 from qp.wavesolver.result import EigenResult
 
 _DENSITY_MODELS: dict[str, type] = {
@@ -102,7 +103,20 @@ class WavesolverConfig:
     density_model: str | DensityModel = "bagenal"
     ion_mass_amu: float = 18.0
 
-    # Solver
+    # v_A boundary-region model — independent toggles (defaults preserve
+    # historical alfven_velocity behaviour). See compute_field_line_profile
+    # for the resolution of the "relativistic" sentinel.
+    density_floor: float | str | None = None
+    relativistic_cap: bool = True
+
+    # Solver backend: "matrix" (default) discretises the self-adjoint
+    # Sturm-Liouville form on the uniform sample grid and solves a symmetric
+    # tridiagonal eigenproblem in one call; "shoot" keeps the legacy
+    # bracket-scan + Brent + numba RK4 shooter. The two have agreed to
+    # machine precision on every case tested in May 2026.
+    method: str = "matrix"
+
+    # Shooter-only knobs (ignored by the matrix backend).
     freq_range: tuple[float, float] = (1e-5, 0.01)
     resolution: int = 300
     tolerance: float = 1e-7
@@ -149,29 +163,54 @@ def solve_eigenfrequencies(config: WavesolverConfig) -> EigenResult:
 
     # 3. Build field line profile
     density = _resolve_density_model(config)
-    profile = compute_field_line_profile(trace, density)
+    profile = compute_field_line_profile(
+        trace,
+        density,
+        density_floor=config.density_floor,
+        relativistic_cap=config.relativistic_cap,
+    )
 
-    # 4. Select the appropriate dlnh spline and pre-sampled arrays
+    # 4. Pick scale factor for the requested wave component
     if config.component == "toroidal":
         dlnh_spline = profile.dlnh1B_spline
         dlnh_samples = profile.dlnh1B_samples
+        h_alpha_samples = profile.h1_samples
     else:
         dlnh_spline = profile.dlnh2B_spline
         dlnh_samples = profile.dlnh2B_samples
+        h_alpha_samples = profile.h2_samples
 
-    # 5. Find eigenfrequencies (numba fast path when samples available)
-    modes = find_eigenfrequencies(
-        s_span=profile.s_span_meters,
-        va_spline=profile.va_spline,
-        dlnh_spline=dlnh_spline,
-        freq_range=config.freq_range,
-        n_modes=config.n_modes,
-        resolution=config.resolution,
-        tolerance=config.tolerance,
-        include_eigenfunctions=config.include_eigenfunctions,
-        va_samples=profile.va_samples,
-        dlnh_samples=dlnh_samples,
-    )
+    # 5. Find eigenfrequencies via the configured backend
+    if config.method == "matrix":
+        assert h_alpha_samples is not None
+        assert profile.s_samples is not None
+        assert profile.B_samples is not None
+        assert profile.va_samples is not None
+        modes = find_eigenfrequencies_matrix(
+            s=profile.s_samples,
+            h_alpha=h_alpha_samples,
+            B=profile.B_samples,
+            va=profile.va_samples,
+            n_modes=config.n_modes,
+            include_eigenfunctions=config.include_eigenfunctions,
+        )
+    elif config.method == "shoot":
+        modes = find_eigenfrequencies(
+            s_span=profile.s_span_meters,
+            va_spline=profile.va_spline,
+            dlnh_spline=dlnh_spline,
+            freq_range=config.freq_range,
+            n_modes=config.n_modes,
+            resolution=config.resolution,
+            tolerance=config.tolerance,
+            include_eigenfunctions=config.include_eigenfunctions,
+            va_samples=profile.va_samples,
+            dlnh_samples=dlnh_samples,
+        )
+    else:
+        raise ValueError(
+            f"Unknown solver method {config.method!r}; choose 'matrix' or 'shoot'"
+        )
 
     return EigenResult(
         modes=modes,

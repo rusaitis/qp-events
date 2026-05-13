@@ -767,11 +767,29 @@ def alfven_velocity(
     B: np.ndarray,
     n: np.ndarray,
     ion_mass_kg: float,
+    *,
+    density_floor: np.ndarray | float | None = None,
+    relativistic_cap: bool = True,
 ) -> np.ndarray:
-    r"""Compute Alfvén speed with relativistic correction.
+    r"""Compute Alfvén speed with optional density floor and/or relativistic cap.
 
-    $$v_A = \frac{B}{\sqrt{\mu_0 \, n \, m_i}} \cdot
-            \frac{c}{\sqrt{v_A^2 + c^2}}$$
+    $$v_A = \frac{B}{\sqrt{\mu_0 \, n_\text{eff} \, m_i}}
+            \;\big[\!\cdot\!\frac{c}{\sqrt{v_A^2 + c^2}}\big]_\text{optional}$$
+
+    Two independent knobs control v_A in low-density boundary regions:
+
+    - ``density_floor``: clamp $n$ from below before computing v_A. Pass a
+      scalar (m⁻³) for a constant floor, or an array broadcasting against
+      ``B`` for a B-dependent floor. ``None`` (default) disables the floor.
+      Resolving the sentinel ``"relativistic"`` is handled upstream in
+      ``compute_field_line_profile``, which converts it into
+      ``B² / (μ₀ m_i c²)`` and passes the resulting array here.
+
+    - ``relativistic_cap``: if True (default), apply
+      $v_A \leftarrow v_A / \sqrt{1 + (v_A/c)^2}$ after the density-floor
+      step. Set to False to disable. Both knobs can be active simultaneously,
+      in which case the density floor runs first and the cap acts as a
+      second-layer safety net.
 
     Parameters
     ----------
@@ -781,14 +799,19 @@ def alfven_velocity(
         Number density (m⁻³).
     ion_mass_kg : float
         Ion mass (kg).
+    density_floor : ndarray or float or None
+        Lower bound on n (m⁻³); ``None`` skips the floor step.
+    relativistic_cap : bool
+        Apply v_A relativistic cap after the density step.
 
     Returns
     -------
     ndarray
-        Alfvén speed (m/s), capped at speed of light.
+        Alfvén speed (m/s).
     """
-    n_safe = np.maximum(n, 1e-10)  # avoid division by zero
-    va_raw = B / np.sqrt(MU0 * n_safe * ion_mass_kg)
-    # Relativistic correction
-    va = np.sqrt(va_raw**2 * SPEED_OF_LIGHT**2 / (va_raw**2 + SPEED_OF_LIGHT**2))
+    n_eff = n if density_floor is None else np.maximum(n, density_floor)
+    n_safe = np.maximum(n_eff, 1e-10)  # avoid division by zero
+    va = B / np.sqrt(MU0 * n_safe * ion_mass_kg)
+    if relativistic_cap:
+        va = va / np.sqrt(1.0 + (va / SPEED_OF_LIGHT) ** 2)
     return np.nan_to_num(va, nan=SPEED_OF_LIGHT, posinf=SPEED_OF_LIGHT)

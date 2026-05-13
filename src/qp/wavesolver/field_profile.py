@@ -20,6 +20,9 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.interpolate import CubicSpline
 
+from scipy.constants import mu_0 as MU0
+from scipy.constants import speed_of_light as SPEED_OF_LIGHT
+
 from qp.coords.transforms import car2sph
 from qp.fieldline.tracer import FieldLineTrace
 from qp.wavesolver.density import (
@@ -27,6 +30,9 @@ from qp.wavesolver.density import (
     DensityModel,
     alfven_velocity,
 )
+
+# Sentinel for the B-dependent relativistic density floor
+DENSITY_FLOOR_RELATIVISTIC = "relativistic"
 
 
 @dataclass(slots=True)
@@ -79,10 +85,16 @@ class FieldLineProfile:
     dlnh1B_spline: CubicSpline
     dlnh2B_spline: CubicSpline
 
-    # Pre-sampled uniform grids for numba fast path
+    # Pre-sampled on a uniform arc-length grid. ``va_samples`` and the dlnh
+    # samples feed the shooter's numba fast path; ``s_samples``/``h1_samples``/
+    # ``h2_samples``/``B_samples`` feed the matrix Sturm-Liouville eigensolver.
+    s_samples: np.ndarray | None = None
     va_samples: np.ndarray | None = None
     dlnh1B_samples: np.ndarray | None = None
     dlnh2B_samples: np.ndarray | None = None
+    h1_samples: np.ndarray | None = None
+    h2_samples: np.ndarray | None = None
+    B_samples: np.ndarray | None = None
 
     @property
     def s_span_meters(self) -> tuple[float, float]:
@@ -98,6 +110,9 @@ class FieldLineProfile:
 def compute_field_line_profile(
     trace: FieldLineTrace,
     density_model: DensityModel,
+    *,
+    density_floor: float | str | None = None,
+    relativistic_cap: bool = True,
 ) -> FieldLineProfile:
     """Build a complete field line profile from a traced field line.
 
@@ -108,12 +123,15 @@ def compute_field_line_profile(
         along the field line, from one footpoint to the other.
     density_model : DensityModel
         Plasma density model (e.g., ``BagenalDelamere()``).
-
-    Returns
-    -------
-    FieldLineProfile
-        Complete profile with precomputed spline interpolants ready for
-        the eigensolver.
+    density_floor : float, ``"relativistic"``, or None
+        Lower bound on density n before computing v_A. A scalar value is
+        interpreted as a constant floor in m⁻³ (useful for plasmasphere-
+        like models). The sentinel ``"relativistic"`` is resolved to the
+        B-dependent floor ``B² / (μ₀ m_i c²)`` — the density at which v_A
+        would naturally equal c. ``None`` (default) skips the floor.
+    relativistic_cap : bool
+        Apply ``v_A ← v_A / √(1 + (v_A/c)²)`` after the density-floor step.
+        Default True preserves the historical behaviour of ``alfven_velocity``.
     """
     positions = trace.positions  # (N, 3) in R_S
     B_nT = trace.field_magnitude  # nT
@@ -143,8 +161,25 @@ def compute_field_line_profile(
     arc_length_rs = arc_length / SATURN_RADIUS
     n = density_model.field_aligned_density(l_shell, arc_length_rs, s_equator_rs)
 
-    # 6. Alfvén velocity
-    va = alfven_velocity(B_T, n, density_model.ion_mass_kg)
+    # 6. Alfvén velocity (resolve "relativistic" sentinel to per-B floor array)
+    if isinstance(density_floor, str):
+        if density_floor != DENSITY_FLOOR_RELATIVISTIC:
+            raise ValueError(
+                f"Unknown density_floor sentinel: {density_floor!r}. "
+                f"Use {DENSITY_FLOOR_RELATIVISTIC!r}, a numeric value, or None."
+            )
+        floor_value: np.ndarray | float | None = (
+            B_T**2 / (MU0 * density_model.ion_mass_kg * SPEED_OF_LIGHT**2)
+        )
+    else:
+        floor_value = density_floor
+    va = alfven_velocity(
+        B_T,
+        n,
+        density_model.ion_mass_kg,
+        density_floor=floor_value,
+        relativistic_cap=relativistic_cap,
+    )
 
     # 7. Scale factors (analytical dipole approximation)
     #    h1 = r·sin(θ) [toroidal], h2 = 1/(|B|·h1) [poloidal]
@@ -166,12 +201,20 @@ def compute_field_line_profile(
     dlnh1B_spline = lnh1B_spline.derivative()
     dlnh2B_spline = lnh2B_spline.derivative()
 
-    # 9. Pre-sample onto uniform grids for numba fast path
+    # 9. Pre-sample onto uniform grids
+    #
+    # va_samples + dlnh1B_samples + dlnh2B_samples feed the shooter's numba
+    # fast path; s_samples + h1_samples + h2_samples + B_samples feed the
+    # matrix Sturm-Liouville eigensolver. Splines for h1, h2, B are built
+    # on the original (non-uniform) arc_length grid and resampled here.
     N_SAMPLES = 5000
     s_uniform = np.linspace(arc_length[0], arc_length[-1], N_SAMPLES)
     va_samples = np.ascontiguousarray(va_spline(s_uniform))
     dlnh1B_samples = np.ascontiguousarray(dlnh1B_spline(s_uniform))
     dlnh2B_samples = np.ascontiguousarray(dlnh2B_spline(s_uniform))
+    h1_samples = np.ascontiguousarray(CubicSpline(arc_length, h1)(s_uniform))
+    h2_samples = np.ascontiguousarray(CubicSpline(arc_length, h2)(s_uniform))
+    B_samples = np.ascontiguousarray(CubicSpline(arc_length, B_T)(s_uniform))
 
     return FieldLineProfile(
         arc_length=arc_length,
@@ -187,7 +230,11 @@ def compute_field_line_profile(
         va_spline=va_spline,
         dlnh1B_spline=dlnh1B_spline,
         dlnh2B_spline=dlnh2B_spline,
+        s_samples=s_uniform,
         va_samples=va_samples,
         dlnh1B_samples=dlnh1B_samples,
         dlnh2B_samples=dlnh2B_samples,
+        h1_samples=h1_samples,
+        h2_samples=h2_samples,
+        B_samples=B_samples,
     )
