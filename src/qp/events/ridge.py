@@ -84,8 +84,10 @@ def _parabolic_interp_period(
     if denom == 0.0:
         return p0
     offset = 0.5 * (log_minus - log_plus) / denom
-    if not -0.6 <= offset <= 0.6:
-        # Numerical edge case (e.g. flat peak); ignore the interpolation.
+    if not -0.5 <= offset <= 0.5:
+        # Outside the parabolic interpolation's valid range (the textbook
+        # bound is +/-0.5 — beyond that the true peak is closer to a
+        # neighbouring bin and the parabola fit is unreliable).
         return p0
     log_p_minus = math.log(float(periods_sec[peak_period_idx - 1]))
     log_p_centre = math.log(p0)
@@ -97,9 +99,14 @@ def _parabolic_interp_period(
     return math.exp(log_p_interp)
 
 
-# Default cone-of-influence factor for the Morlet wavelet with omega0=10.
-# A point at scale s is "inside the COI" if it is at least sqrt(2) * s
-# from either edge; we use a slightly more conservative 1.0 * period.
+# Edge guard for ridge extraction. ``_coi_mask`` here masks cells within
+# ``coi_factor * period`` of each segment edge. This is an additional
+# in-band guard applied *on top of* the strict T&C98 Morlet COI
+# (``threshold_diag.coi_mask``, half-width ``sqrt(2)*omega0/(2*pi*f) ~
+# 2.25*period`` at omega0=10) that ``detect_round8`` already applies when
+# ``apply_coi_mask=True``. The default 1.0*period is therefore *less*
+# aggressive than the strict COI — it is a no-op when the strict mask
+# is in place and a light guard for callers that disable it.
 DEFAULT_COI_FACTOR: float = 1.0
 
 

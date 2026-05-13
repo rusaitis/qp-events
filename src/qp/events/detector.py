@@ -329,22 +329,38 @@ def _v_indep_for_cwt(
 ) -> float:
     r"""Effective number of independent time-frequency cells in the Morlet CWT.
 
-    The Morlet wavelet has temporal correlation length ~1 period at
-    every frequency and frequency-bandwidth :math:`\Delta f / f \approx
-    1/\omega_0`. The number of *independent* time-frequency cells is
+    The Morlet wavelet has frequency bandwidth
+    :math:`\Delta f / f \approx 1/\omega_0` and temporal correlation
+    length :math:`\Delta t \approx \omega_0/(2\pi f)` (Torrence &
+    Compo 1998 §3a / Table 1). The number of *independent* cells over
+    the search volume :math:`[f_{\min}, f_{\max}] \times [0, T]` is then
 
     .. math::
 
-        V_{\mathrm{indep}} = \frac{\omega_0}{2\pi}
-            \ln\!\left(\frac{f_{\max}}{f_{\min}}\right)
-        \cdot
-        n_t\,dt\,\bar f.
+        V_{\mathrm{indep}}
+            \;=\;
+            \underbrace{\frac{\omega_0}{2\pi}
+                       \ln\!\frac{f_{\max}}{f_{\min}}}_{n_{f,\,\text{indep}}}
+            \cdot
+            \underbrace{T \,\langle f\rangle_{\log}}_{n_{t,\,\text{indep}}},
+
+    where
+    :math:`\langle f\rangle_{\log} = \int f\,d\!\log f / \int d\!\log f
+    = (f_{\max}-f_{\min})/\ln(f_{\max}/f_{\min})`
+    is the log-spaced mean — the unbiased weight given that
+    independent rows are uniformly spaced in :math:`\log f`. Using
+    ``freq.mean()`` (a *linear*-grid average) would bias
+    :math:`n_{t,\,\text{indep}}` toward the high-frequency end where
+    the CWT grid is densely oversampled, inflating ``V_indep`` by
+    ~2.5× at the repo defaults and over-tightening the Bonferroni
+    threshold by ~0.2σ.
     """
     freq = np.asarray(freq, dtype=float)
     f_min = float(freq[freq > 0].min())
     f_max = float(freq.max())
     n_freq_indep = (morlet_omega0 / (2.0 * np.pi)) * np.log(f_max / f_min)
-    n_time_indep = n_time * dt * float(freq.mean())
+    log_mean_f = (f_max - f_min) / np.log(f_max / f_min)
+    n_time_indep = n_time * dt * log_mean_f
     return max(n_freq_indep * n_time_indep, 1.0)
 
 

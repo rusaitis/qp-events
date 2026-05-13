@@ -141,13 +141,14 @@ MAD_TO_SIGMA: float = 1.4826
 
 #: Lower period bound for the σ-mask noise pool, in seconds. Wider than
 #: REJECT_BAND_HF (10 min): rows in [5, 10) min are not suitable for
-#: *detection* (sub-5× Nyquist for 1-min data) but their per-row
-#: median+MAD on the segment's time series remains a valid noise
-#: estimate, and including them anchors the log-period interpolation
-#: on the short-period side of QP15. Without this anchor, in-band
-#: thresholds at 15-30 min get extrapolated from the [160 min, 12 h)
-#: bg pool — a region of higher CWT power for a red-noise background
-#: — which inflates the threshold and starves detection.
+#: *detection* (only ~2.5× the 2-min Nyquist period at 1-min sampling)
+#: but their per-row median+MAD on the segment's time series remains a
+#: valid noise estimate, and including them anchors the log-period
+#: interpolation on the short-period side of QP15. Without this anchor,
+#: in-band thresholds at 15-30 min get extrapolated from the
+#: [160 min, 12 h) bg pool — a region of higher CWT power for a
+#: red-noise background — which inflates the threshold and starves
+#: detection.
 _NOISE_POOL_PERIOD_MIN_SEC: float = 5 * 60.0
 
 

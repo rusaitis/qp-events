@@ -1,9 +1,30 @@
-"""Morlet continuous wavelet transform for quasi-periodic event detection.
+r"""Morlet continuous wavelet transform for quasi-periodic event detection.
 
-Uses the Morlet wavelet (Eq 5 in the paper):
-    psi(t, omega) = c_omega * exp(-t^2/sigma^2) * exp(i*omega*t)
+The wavelet implemented here is the standard simplified Morlet of
+Torrence & Compo (1998, hereafter T&C98) Eq. (1):
 
-Implements CWT directly since scipy.signal.cwt was removed in scipy 1.15.
+.. math::
+
+    \psi_0(\eta) = \pi^{-1/4} \exp(i \omega_0 \eta) \exp(-\eta^2/2),
+
+with :math:`\eta = t/s` the dimensionless time and :math:`s` the scale
+parameter in samples. The strict admissibility correction
+:math:`-\exp(-\omega_0^2/2)` is omitted — at the repository default
+:math:`\omega_0 = 10` it is :math:`\sim 2\times10^{-22}` and entirely
+negligible.
+
+Relation to the paper's Eq. (5) — which writes the Morlet as
+:math:`\psi(t,\omega) = c_\omega \exp(-t^2/\sigma^2) \exp(i\omega t)` —
+is :math:`\sigma = s\sqrt{2}`, :math:`\omega = \omega_0/s`, and
+:math:`c_\omega = \pi^{-1/4}`. Substituting recovers the form above.
+
+Implements CWT directly since ``scipy.signal.cwt`` was removed in
+SciPy 1.15.
+
+References
+----------
+Torrence, C. & Compo, G. P. (1998), "A Practical Guide to Wavelet
+Analysis", *Bull. Amer. Meteor. Soc.* **79**, 61–78.
 """
 
 from __future__ import annotations
@@ -21,7 +42,7 @@ def morlet_cwt(
     freq_max: float | None = None,
     n_freqs: int = 500,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute continuous wavelet transform using Morlet wavelet.
+    r"""Compute continuous wavelet transform using the Morlet wavelet.
 
     Parameters
     ----------
@@ -29,16 +50,29 @@ def morlet_cwt(
         Input time series.
     dt : float
         Sampling interval in seconds.
-    omega0 : float
-        Central frequency parameter of the Morlet wavelet.
-        Higher values give better frequency resolution at the cost
-        of time resolution.
+    omega0 : float, default 10.0
+        Central frequency parameter of the Morlet wavelet
+        (T&C98 :math:`\omega_0`). Sets the time-frequency resolution
+        trade-off: higher :math:`\omega_0` gives narrower frequency
+        bandwidth :math:`\Delta f / f \approx 1/\omega_0` and wider
+        temporal extent :math:`\Delta t \propto \omega_0/f`. The
+        repo default :math:`\omega_0 = 10` is above the T&C98 §3a
+        choice of 6 — it is chosen to resolve the QP30/QP60/QP120
+        peaks that sit at factor-2 period separations, where the
+        :math:`\omega_0 = 6` bandwidth of ~17 % overlaps adjacent
+        QP bands.
     freq_min : float, optional
         Minimum frequency in Hz. Default: 1/(4 hours).
     freq_max : float, optional
         Maximum frequency in Hz. Default: Nyquist/2.
     n_freqs : int
-        Number of frequency bins.
+        Number of linearly-spaced frequency bins. The grid is
+        deliberately linear (constant :math:`\Delta f`) rather than
+        the conventional log-scale grid of T&C98 §3h — this matches
+        the FFT comparison axis used elsewhere in the pipeline.
+        Downstream consumers (ridge extractor, parabolic peak
+        interpolator in :mod:`qp.events.ridge`) handle the resulting
+        non-uniform log-period spacing correctly.
 
     Returns
     -------
@@ -61,10 +95,15 @@ def morlet_cwt(
     time = np.arange(N) * dt
     freq = np.linspace(freq_min, freq_max, n_freqs)
 
-    # Scale parameter: width in samples for each frequency
-    # At scale s, the wavelet has central frequency omega0/(2*pi*s*dt)
-    # So s = omega0 / (2*pi*f*dt)
-    scales = omega0 / (2 * np.pi * freq * dt)
+    # Scale parameter: width in samples for each frequency.
+    # The exact Morlet Fourier-period-to-scale relation (T&C98 Table 1) is
+    #     f = (omega0 + sqrt(2 + omega0**2)) / (4 pi s dt),
+    # i.e. s = (omega0 + sqrt(2 + omega0**2)) / (4 pi f dt). Inverting gives
+    # the form used here. The often-quoted simplified inverse
+    # s_simple = omega0 / (2 pi f dt) differs from the exact value by a
+    # factor (omega0 + sqrt(2 + omega0**2)) / (2 omega0) — at omega0 = 10
+    # this is 1.005, a 0.5 % bias in reported peak periods.
+    scales = (omega0 + np.sqrt(2.0 + omega0**2)) / (4.0 * np.pi * freq * dt)
 
     cwt_matrix = np.empty((n_freqs, N), dtype=complex)
     for i, s in enumerate(scales):
@@ -96,5 +135,3 @@ def cwt_power(
     """
     freq, time, cwt_matrix = morlet_cwt(data, dt, **kwargs)
     return freq, time, np.abs(cwt_matrix) ** 2
-
-
