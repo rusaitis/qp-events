@@ -476,18 +476,18 @@ class TestLtToPhi:
     def test_noon(self):
         from numpy.testing import assert_allclose
 
-        assert_allclose(lt_to_phi(12), np.pi)
+        # Noon (12 LT) maps to phi=0 along +x (sunward) — same convention
+        # as qp.coords.ksm.local_time.
+        assert_allclose(lt_to_phi(12), 0.0, atol=1e-12)
 
     def test_midnight(self):
         from numpy.testing import assert_allclose
 
-        assert_allclose(lt_to_phi(0), 0.0)
+        # Midnight (0 LT) maps to phi=-pi (equivalent to +pi mod 2pi).
+        assert_allclose(lt_to_phi(0), -np.pi)
 
     def test_roundtrip_noon(self):
-        """phi_to_lt(lt_to_phi(12)) should give 12 (noon is the fixed point)."""
+        """phi_to_lt and lt_to_phi are inverses; noon is a fixed point."""
         from numpy.testing import assert_allclose
 
-        # Note: lt_to_phi maps 0h→0, 12h→π, 24h→2π
-        # phi_to_lt maps 0→12h, π→24h
-        # So the roundtrip only works for the convention overlap at noon
-        assert_allclose(phi_to_lt(lt_to_phi(12)), 24.0)  # 12h → π → 24h (wrap)
+        assert_allclose(phi_to_lt(lt_to_phi(12)), 12.0)

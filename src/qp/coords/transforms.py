@@ -109,4 +109,4 @@ def lt_to_phi(lt: ArrayLike) -> np.ndarray:
         Azimuthal angle in radians.
     """
     lt = np.asarray(lt, dtype=float)
-    return lt / 12 * np.pi
+    return (lt - 12.0) / 12.0 * np.pi

@@ -50,16 +50,13 @@ class TestTransforms:
         np.testing.assert_allclose(phi_to_lt(0.0), 12.0)
         np.testing.assert_allclose(phi_to_lt(np.pi) % 24.0, 0.0, atol=1e-12)
 
-    @pytest.mark.xfail(
-        reason="phi_to_lt and lt_to_phi disagree by 12h on their phi convention; "
-        "phi_to_lt treats phi=0 as noon while lt_to_phi treats phi=0 as midnight. "
-        "Real bug — flagged for follow-up, not fixed in cleanup pass.",
-        strict=True,
-    )
     def test_lt_phi_roundtrip(self) -> None:
         lt_in = np.linspace(0.0, 24.0, 25, endpoint=False)
         lt_out = phi_to_lt(lt_to_phi(lt_in))
-        np.testing.assert_allclose(np.mod(lt_out - lt_in, 24.0), 0.0, atol=1e-9)
+        # Wrap the difference into (-12, 12] so the modular boundary at 24h
+        # doesn't masquerade as a real error.
+        delta = np.mod(lt_out - lt_in + 12.0, 24.0) - 12.0
+        np.testing.assert_allclose(delta, 0.0, atol=1e-9)
 
     def test_rotation_matrix_orthonormal(self) -> None:
         # Rotation matrices should be orthogonal: R @ R.T == I.
