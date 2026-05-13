@@ -116,18 +116,30 @@ class TestSolveEigenfrequenciesDipole:
 
     @pytest.mark.slow
     def test_higher_l_shell_lower_frequencies(self):
-        """Longer field lines (higher L) should have lower eigenfrequencies."""
+        """Longer field lines (higher L) should have lower eigenfrequencies.
+
+        Two test-config requirements that bit a previous version of this
+        test:
+          * `freq_range[0]` must be ≤ 1e-5 — the L=10 Bagenal-Delamere
+            fundamental sits at ~6e-5 rad/s (≈29 h period). A lower bound
+            of 1e-4 silently clipped it and the bracket search returned
+            the second mode instead, inverting the comparison.
+          * `resolution` must be ≥ ~150 once the lower bound drops to
+            1e-5 — coarser scans expose spurious low-ω zero crossings
+            (artifacts of the y'=1 initial condition at s_min) that
+            brentq happily refines but that aren't physical modes.
+        """
         config_6 = WavesolverConfig(
             l_shell=6.0,
             n_modes=1,
-            freq_range=(1e-4, 0.01),
-            resolution=80,
+            freq_range=(1e-5, 0.01),
+            resolution=200,
         )
         config_10 = WavesolverConfig(
             l_shell=10.0,
             n_modes=1,
-            freq_range=(1e-4, 0.005),
-            resolution=80,
+            freq_range=(1e-5, 0.005),
+            resolution=200,
         )
         result_6 = solve_eigenfrequencies(config_6)
         result_10 = solve_eigenfrequencies(config_10)
