@@ -46,11 +46,4 @@ jobs:
         with:
           enable-cache: true
       - run: uv sync --extra dev
-      # Two wavesolver numerical regressions (test_solver,
-      # test_validation::test_kmag_fundamental_at_L8) are pre-existing
-      # and tracked separately; deselect them so CI signals on new
-      # breakage only. Remove the -k clause once those are fixed.
-      - run: >
-          uv run pytest -q --maxfail=5
-          -k "not test_higher_l_shell_lower_frequencies
-              and not test_kmag_fundamental_at_L8"
+      - run: uv run pytest -q --maxfail=5
