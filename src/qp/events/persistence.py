@@ -54,6 +54,19 @@ Optional (populated when ephemeris/region info is available):
 - ``sls5_phase_n`` float     — northern SLS5 phase at peak, deg
 - ``sls5_phase_s`` float     — southern SLS5 phase at peak, deg
 - ``dipole_inv_lat`` float   — analytic dipole invariant latitude, deg
+
+Optional (populated by the peer-tagging post-pass,
+:func:`qp.events.peers.tag_peers`; see that module for the overlap
+criterion). All three columns are list-typed and aligned by position
+— empty lists when the row has no peers, never NaN:
+
+- ``peer_event_ids``   list[int64]   peer ``event_id`` values
+- ``peer_periods_min`` list[float64] peer ``period_min`` values, minutes
+- ``peer_overlap_frac`` list[float64] overlap fraction in [τ, 1]
+
+Band labels for cobands are *not* stored — they are derived at view
+time from ``peer_periods_min`` via :func:`qp.events.peers.derive_co_bands`,
+so the catalogue is band-scheme-agnostic.
 """
 
 from __future__ import annotations
@@ -100,12 +113,15 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "b_par_amp",
 )
 
-#: Bumped when new required columns are added. Round-8.1 introduces the
-#: full Stokes vector and derived (ellipticity, inclination,
-#: polarized fraction). Legacy parquet files written with the round-8
-#: schema remain readable; callers can detect the upgrade via the
+#: Bumped when new required columns are added or the optional-column
+#: contract changes. Round-8.1 introduced the full Stokes vector and
+#: derived geometry. Round-8.2 adds the optional ``peer_event_ids /
+#: peer_periods_min / peer_overlap_frac`` triple from
+#: :func:`qp.events.peers.tag_peers`, replacing the band-labelled
+#: ``co_bands`` string. Legacy parquet files written with earlier
+#: schemas remain readable; callers detect the upgrade via the
 #: side-car ``meta.json`` ``schema_version`` key.
-SCHEMA_VERSION: str = "round8.1"
+SCHEMA_VERSION: str = "round8.2"
 
 
 def event_to_record(

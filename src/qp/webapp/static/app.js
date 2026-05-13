@@ -167,7 +167,7 @@ const HELP_TEXT = {
   l_shell:  "Dipole L-shell parameter L = R / cos²(λ_mag). Equatorial radius of the field line through the spacecraft, in Rs. Derived from r_distance and mag_lat.",
   mva_par:  "MVA major-axis parallel fraction: (ê_max · b̂∥)². The minimum-variance principal axis of the bandpass-filtered field. Lower = more transverse. Detector requires ≤ 0.5.",
   sigma_pk: "Robust σ above the per-row CWT background. Each frequency row's noise model is the median + MAD × 1.4826 (Gaussian-equivalent σ) computed on out-of-band period rows only, then interpolated in log-period to the in-band rows so QP signal cannot inflate its own noise estimate. The threshold itself is set by Bonferroni FWER control over the effective number of independent time-frequency cells in the search volume (α = 0.01, n_σ ≈ 4.6 for a 36-h segment). Not a fixed 3σ or 5σ — derived from the search volume.",
-  co_bands: "Other QP bands whose detection window overlaps this event's [date_from, date_to] inside the same 36-h MFA segment. Multi-harmonic events (e.g., simultaneous QP60 + QP120) flag the FLR's even-mode comb directly.",
+  co_bands: "Co-occurring peer detections in the same 36-h MFA segment whose detection window overlaps this event's by ≥ 50 % of the shorter window. Peer periods are stored raw (min) on the parquet; band labels are derived client-side here using the paper's QP15/30/60/120 octave grid. Same-band peers are kept (intra-octave co-occurrence is real); the event's own band is excluded from the chip list so the row label and the co-band chips don't double up.",
 };
 
 // Gate-summary classifier: returns CSS class for a value compared to its
@@ -253,14 +253,35 @@ function renderEventStats(summary, wf, detail, wavelet) {
   const qPill = `<span class="q-chip ${qFactorClass(q)}">${fmt(q, 2)}</span>`;
   const w = wavelet || {};
   const thr = w.thresholds || {};
-  // Co-occurring sibling bands — string field on the parquet row.
-  const coRaw = (detail && detail.co_bands) || summary.co_bands || "";
-  const coBands = (coRaw && coRaw !== "" )
-    ? String(coRaw).split(",").map(b => b.trim()).filter(Boolean)
-    : [];
+  // Peer detections — raw period (min) + overlap fraction arrays from
+  // the parquet. Band labels are NOT stored; we derive them here using
+  // the canonical octave grid in WAVE_BAND_RANGES so the storage layer
+  // stays band-scheme-agnostic.
+  const peerPeriods = (detail && detail.peer_periods_min)
+                   || summary.peer_periods_min || [];
+  const peerFracs   = (detail && detail.peer_overlap_frac)
+                   || summary.peer_overlap_frac || [];
+  const selfBand    = wf?.band ?? summary.band ?? null;
+  const coBandSet = new Set();
+  for (const p of peerPeriods) {
+    const name = classifyPeriodToBand(+p);
+    if (name && name !== selfBand) coBandSet.add(name);
+  }
+  const coBands = Array.from(coBandSet).sort();
+  const peerCount = peerPeriods.length;
+  const peerTitle = peerCount
+    ? peerPeriods.map((p, k) => {
+        const frac = peerFracs[k];
+        const fracStr = (frac != null && Number.isFinite(frac))
+          ? ` (${(100 * frac).toFixed(0)}% overlap)` : "";
+        return `${(+p).toFixed(1)} min${fracStr}`;
+      }).join("\n")
+    : "";
   const coBandsHtml = coBands.length
-    ? coBands.map(b => `<span class="pill" data-band="${escapeHtml(b)}">${escapeHtml(b)}</span>`).join(" ")
-    : '—';
+    ? coBands.map(b => `<span class="pill" data-band="${escapeHtml(b)}" title="${escapeHtml(peerTitle)}">${escapeHtml(b)}</span>`).join(" ")
+    : (peerCount
+        ? `<span class="pill" title="${escapeHtml(peerTitle)}">${peerCount}× same-band peer</span>`
+        : '—');
   // Fall back to the canonical detector defaults so the gate chips
   // colour correctly even before the wavelet fetch has resolved.
   const Q_MIN     = thr.q_factor_min     ?? 3.0;
@@ -345,6 +366,17 @@ const WAVE_BAND_RANGES = [      // (band, lo_min, hi_min, css-var)
   ["QP60",  40, 80,  "--b-qp60"],
   ["QP120", 80, 160, "--b-qp120"],
 ];
+
+// View-stage band classifier. Mirrors qp.events.bands.classify_period
+// (half-open [lo, hi) octaves). Used to derive co-band labels from raw
+// peer periods so the parquet stores no band-scheme decision.
+function classifyPeriodToBand(periodMin) {
+  if (!Number.isFinite(periodMin)) return null;
+  for (const [name, lo, hi] of WAVE_BAND_RANGES) {
+    if (periodMin >= lo && periodMin < hi) return name;
+  }
+  return null;
+}
 const WAVE_HIST_TICKS = [10, 20, 30, 60, 120, 180];
 
 function logScale(v) { return Math.log10(v); }

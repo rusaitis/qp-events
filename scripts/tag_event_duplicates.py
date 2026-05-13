@@ -1,4 +1,4 @@
-"""Post-process the round-8 event catalogue: tag duplicates + co-bands.
+"""Post-process the round-8 event catalogue: tag duplicates + peers.
 
 Two annotations are written back into ``Output/events_round8.parquet``:
 
@@ -6,11 +6,14 @@ Two annotations are written back into ``Output/events_round8.parquet``:
    :func:`qp.events.dedup.tag_duplicates`. Same-band peaks within 2 h
    and within 10 % of each other in period are collapsed to the
    highest-q_factor representative; the rest are tagged.
-2. ``co_bands`` — sorted comma-separated list of *other* bands that
-   temporally overlap this row within the same ``segment_idx``,
-   produced by :func:`qp.events.cooccurrence.tag_co_bands`. Empty for
-   pure-band events. Duplicates are skipped both as siblings and as
-   recipients.
+2. Peer columns ``peer_event_ids``, ``peer_periods_min``,
+   ``peer_overlap_frac`` — list-typed columns from
+   :func:`qp.events.peers.tag_peers`. A peer is another non-duplicate
+   detection in the same ``segment_idx`` whose window overlaps this
+   one by ≥ ``--peer-min-overlap-frac`` of the shorter window
+   (default 0.5). Same-band peers are recorded; band membership is
+   irrelevant to the criterion. Band-label views ("QP60+QP120 event")
+   are derived at analysis time via :func:`qp.events.peers.derive_co_bands`.
 
 A CSV log of the duplicate rows lands in
 ``Output/diagnostics/round8_duplicates.csv`` for spot-checking against
@@ -24,14 +27,16 @@ safety copy.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 from pathlib import Path
 
 import pandas as pd
 
-from qp.events.cooccurrence import tag_co_bands
 from qp.events.dedup import tag_duplicates
+from qp.events.peers import DEFAULT_MIN_OVERLAP_FRAC, tag_peers
+from qp.events.persistence import SCHEMA_VERSION
 
 log = logging.getLogger("tag_event_duplicates")
 
@@ -46,6 +51,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dt-sec", type=float, default=7200.0)
     parser.add_argument("--period-rel-tol", type=float, default=0.10)
     parser.add_argument(
+        "--peer-min-overlap-frac",
+        type=float,
+        default=DEFAULT_MIN_OVERLAP_FRAC,
+        help=(
+            "Minimum overlap fraction (of the shorter window) required "
+            "for two same-segment, non-duplicate detections to be peers. "
+            "0.0 reproduces the legacy any-overlap rule."
+        ),
+    )
+    parser.add_argument(
         "--no-backup",
         action="store_true",
         help="Skip writing a .bak copy (default: backup before overwrite).",
@@ -58,43 +73,36 @@ def main(argv: list[str] | None = None) -> int:
     log.info("loaded %d events from %s", len(df), args.parquet)
 
     # 1. Tag duplicates.
-    tagged = tag_duplicates(
-        df, dt_sec=args.dt_sec, period_rel_tol=args.period_rel_tol
-    )
+    tagged = tag_duplicates(df, dt_sec=args.dt_sec, period_rel_tol=args.period_rel_tol)
     n_dup = int(tagged["is_duplicate"].sum())
     log.info(
         "tagged %d duplicates (%.1f%%) — %d unique events remain",
-        n_dup, 100.0 * n_dup / max(len(tagged), 1), len(tagged) - n_dup,
+        n_dup,
+        100.0 * n_dup / max(len(tagged), 1),
+        len(tagged) - n_dup,
     )
     dup_breakdown = (
-        tagged.groupby("band")["is_duplicate"].agg(["sum", "count"])
+        tagged.groupby("band")["is_duplicate"]
+        .agg(["sum", "count"])
         .rename(columns={"sum": "n_dup", "count": "n_total"})
     )
-    dup_breakdown["pct_dup"] = (
-        100.0 * dup_breakdown["n_dup"] / dup_breakdown["n_total"]
-    )
+    dup_breakdown["pct_dup"] = 100.0 * dup_breakdown["n_dup"] / dup_breakdown["n_total"]
     log.info("per-band duplicate breakdown:\n%s", dup_breakdown.to_string())
 
-    # 2. Tag co-occurring bands (sees the is_duplicate column to exclude dups).
-    tagged = tag_co_bands(tagged)
-    co_mask = tagged["co_bands"].fillna("").ne("")
-    n_co = int(co_mask.sum())
+    # 2. Tag peers (sees is_duplicate to skip dups; same-band peers included).
+    tagged = tag_peers(tagged, min_overlap_frac=args.peer_min_overlap_frac)
+    peer_counts = tagged["peer_event_ids"].map(len)
+    n_with_peer = int((peer_counts > 0).sum())
     log.info(
-        "tagged %d events with co_bands (%.1f%%)",
-        n_co, 100.0 * n_co / max(len(tagged), 1),
+        "tagged %d events with ≥1 peer (%.1f%%) at min_overlap_frac=%.2f",
+        n_with_peer,
+        100.0 * n_with_peer / max(len(tagged), 1),
+        args.peer_min_overlap_frac,
     )
-    if n_co:
-        co_breakdown = (
-            tagged.loc[co_mask]
-            .groupby(["band", "co_bands"])
-            .size()
-            .rename("n")
-            .reset_index()
-            .sort_values("n", ascending=False)
-        )
+    if n_with_peer:
+        peer_hist = peer_counts[peer_counts > 0].value_counts().sort_index()
         log.info(
-            "(band, co_bands) co-occurrence table:\n%s",
-            co_breakdown.to_string(index=False),
+            "peer-count distribution (n_peers → n_events):\n%s", peer_hist.to_string()
         )
 
     # Persist the dropped-row log (duplicates only).
@@ -114,8 +122,27 @@ def main(argv: list[str] | None = None) -> int:
 
     tagged.to_parquet(args.parquet, engine="pyarrow", index=False)
     log.info(
-        "rewrote %s with is_duplicate + co_bands columns", args.parquet,
+        "rewrote %s with is_duplicate + peer_* columns",
+        args.parquet,
     )
+
+    # Update the side-car so the catalogue is self-describing.
+    meta_path = args.parquet.with_suffix(args.parquet.suffix + ".meta.json")
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+        attrs = dict(meta.get("attrs", {}))
+        attrs["schema_version"] = SCHEMA_VERSION
+        attrs["peer_min_overlap_frac"] = float(args.peer_min_overlap_frac)
+        meta["attrs"] = attrs
+        meta["columns"] = list(tagged.columns)
+        meta["n_rows"] = len(tagged)
+        meta_path.write_text(json.dumps(meta, indent=2, default=str))
+        log.info(
+            "updated %s with peer_min_overlap_frac=%.3f, schema=%s",
+            meta_path,
+            args.peer_min_overlap_frac,
+            SCHEMA_VERSION,
+        )
     return 0
 
 

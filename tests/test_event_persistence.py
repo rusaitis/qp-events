@@ -154,7 +154,7 @@ class TestParquetRoundTrip:
         df, attrs = read_events_parquet(path)
         assert len(df) == 3
         assert attrs["run"] == "test"
-        assert attrs["schema_version"] == "round8.1"
+        assert attrs["schema_version"] == "round8.2"
         assert sorted(df["band"].tolist()) == ["QP120", "QP30", "QP60"]
         assert (df["q_factor"] > 0).all()
 
@@ -166,7 +166,7 @@ class TestParquetRoundTrip:
         meta = json.loads((path.with_suffix(".parquet.meta.json")).read_text())
         assert meta["attrs"]["foo"] == "bar"
         assert meta["attrs"]["n"] == 1
-        assert meta["attrs"]["schema_version"] == "round8.1"
+        assert meta["attrs"]["schema_version"] == "round8.2"
         assert meta["n_rows"] == 1
 
     def test_empty_records(self, tmp_path: Path) -> None:

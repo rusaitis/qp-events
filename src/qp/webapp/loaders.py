@@ -191,15 +191,30 @@ def event_summaries(
     if sort in df.columns:
         df = df.sort_values(sort, kind="mergesort")
     cols = [
-        "event_id", "event_uid", "peak_time", "band", "region",
-        "b_perp1_amp", "b_perp2_amp", "b_par_amp",
-        "q_factor", "period_min", "stokes_d",
-        "r_distance", "local_time", "mag_lat",
+        "event_id",
+        "event_uid",
+        "peak_time",
+        "band",
+        "region",
+        "b_perp1_amp",
+        "b_perp2_amp",
+        "b_par_amp",
+        "q_factor",
+        "period_min",
+        "stokes_d",
+        "r_distance",
+        "local_time",
+        "mag_lat",
     ]
     if "is_duplicate" in df.columns:
         cols.append("is_duplicate")
-    if "co_bands" in df.columns:
-        cols.append("co_bands")
+    # Peer columns are list-typed; only include those present on this
+    # parquet (older catalogues won't have them). Band labels are NOT
+    # stored — the JS derives them client-side from peer_periods_min
+    # so the band scheme stays a view-stage choice.
+    for c in ("peer_event_ids", "peer_periods_min", "peer_overlap_frac"):
+        if c in df.columns:
+            cols.append(c)
     out = df[cols].copy()
     out["peak_time"] = out["peak_time"].dt.strftime("%Y-%m-%dT%H:%M:%S")
     # Dipole L-shell L = R / cos²(λ_mag); computed once here so the JS
@@ -208,9 +223,18 @@ def event_summaries(
     out["l_shell"] = out["r_distance"].to_numpy(dtype=float) / (np.cos(lam) ** 2)
     # Round floats — slider/filter UI doesn't need full repr precision,
     # and 4 decimals halves gzipped payload (~82 KB → ~49 KB).
-    for c in ("b_perp1_amp", "b_perp2_amp", "b_par_amp",
-              "q_factor", "period_min", "stokes_d",
-              "r_distance", "local_time", "mag_lat", "l_shell"):
+    for c in (
+        "b_perp1_amp",
+        "b_perp2_amp",
+        "b_par_amp",
+        "q_factor",
+        "period_min",
+        "stokes_d",
+        "r_distance",
+        "local_time",
+        "mag_lat",
+        "l_shell",
+    ):
         out[c] = out[c].round(4)
     # NaN floats are not valid JSON; convert to None so JS can treat them
     # as "missing" and exclude them from active range filters.
@@ -280,7 +304,8 @@ def event_waveform(event_id: int, hours_pad: float = 12.0) -> dict[str, Any] | N
 
 @lru_cache(maxsize=2048)
 def event_spectrum(
-    event_id: int, hours_pad: float = 12.0,
+    event_id: int,
+    hours_pad: float = 12.0,
 ) -> dict[str, Any] | None:
     """Welch PSD over the event window (1-min cadence, 12-h window)."""
     df = load_event_table()
@@ -310,11 +335,11 @@ def event_spectrum(
     # frequency, so reverse so the smallest period is first.
     order = np.argsort(period_min)
     return {
-        "freq_hz":      f[order].tolist(),
-        "period_min":   period_min[order].tolist(),
-        "psd_par":      _to_clean_list(psd_par[keep][order]),
-        "psd_perp1":    _to_clean_list(psd_p1[keep][order]),
-        "psd_perp2":    _to_clean_list(psd_p2[keep][order]),
+        "freq_hz": f[order].tolist(),
+        "period_min": period_min[order].tolist(),
+        "psd_par": _to_clean_list(psd_par[keep][order]),
+        "psd_perp1": _to_clean_list(psd_p1[keep][order]),
+        "psd_perp2": _to_clean_list(psd_p2[keep][order]),
         "qp_periods_min": [30.0, 60.0, 120.0],
     }
 
@@ -347,20 +372,24 @@ def region_intervals() -> list[dict[str, Any]]:
         t1 = float(times_unix[i + 1])
         if t1 <= t0:
             continue
-        out.append({
-            "epoch_start": t0,
-            "epoch_end":   t1,
-            "region":      _REGION_CODE_TO_NAME.get(int(codes[i]), "unknown"),
-        })
+        out.append(
+            {
+                "epoch_start": t0,
+                "epoch_end": t1,
+                "region": _REGION_CODE_TO_NAME.get(int(codes[i]), "unknown"),
+            }
+        )
     # Tail interval until end of mission (2017-09-15) keeps coverage complete.
     t_last = float(times_unix[-1])
     t_end = datetime.datetime(2017, 9, 15).timestamp()
     if t_end > t_last:
-        out.append({
-            "epoch_start": t_last,
-            "epoch_end":   t_end,
-            "region":      _REGION_CODE_TO_NAME.get(int(codes[-1]), "unknown"),
-        })
+        out.append(
+            {
+                "epoch_start": t_last,
+                "epoch_end": t_end,
+                "region": _REGION_CODE_TO_NAME.get(int(codes[-1]), "unknown"),
+            }
+        )
     return out
 
 
