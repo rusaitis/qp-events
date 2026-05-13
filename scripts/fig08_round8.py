@@ -35,7 +35,7 @@ _HARMONIC_HINT = {"QP15": "m=8?", "QP30": "m=6", "QP60": "m=4", "QP120": "m=2"}
 BANDS = list(QP_BAND_NAMES)
 BAND_LABELS = {
     b: f"{b} (~{int(get_band(b).period_centroid_minutes)} min, "
-       f"{_HARMONIC_HINT.get(b, '')})"
+    f"{_HARMONIC_HINT.get(b, '')})"
     for b in BANDS
 }
 
@@ -76,9 +76,7 @@ def main() -> None:
     ev_path = _PROJECT_ROOT / "Output" / "event_time_grid_round8.zarr"
     dw_path = _PROJECT_ROOT / "Output" / "dwell_grid_cassini_saturn.zarr"
     if not ev_path.exists() or not dw_path.exists():
-        raise SystemExit(
-            f"Missing input(s):\n  {ev_path}\n  {dw_path}"
-        )
+        raise SystemExit(f"Missing input(s):\n  {ev_path}\n  {dw_path}")
 
     ev = xr.open_zarr(ev_path, consolidated=False)
     dw = xr.open_zarr(dw_path, consolidated=False)
@@ -92,8 +90,7 @@ def main() -> None:
     # axis here mirrors orbital coverage, not intrinsic asymmetry.
     dw_kmag = dw["kmag_inv_lat_closed_magnetosphere"].values  # (inv_lat, LT)
 
-    log.info("dwell coverage (closed MS): %.0f h",
-             float(dw_kmag.sum()) / 60.0)
+    log.info("dwell coverage (closed MS): %.0f h", float(dw_kmag.sum()) / 60.0)
 
     # Compute per-band ratios.
     ratios: dict[str, np.ndarray] = {}
@@ -111,9 +108,7 @@ def main() -> None:
 
     # Shared color scale across bands so the QP60 vs QP30/QP120 contrast is
     # comparable. p99 of the union of finite ratios sets the upper bound.
-    finite = np.concatenate([
-        r[np.isfinite(r)] for r in ratios.values()
-    ])
+    finite = np.concatenate([r[np.isfinite(r)] for r in ratios.values()])
     vmax = float(np.percentile(finite, 99)) if finite.size else 0.1
     vmin = 0.0
 
@@ -122,14 +117,16 @@ def main() -> None:
     # pair so the populated hemispheres dominate the figure.
     use_paper_style()
     fig, axes_grid = plt.subplots(
-        2, len(BANDS),
+        2,
+        len(BANDS),
         figsize=(5 * len(BANDS), 5.2),
         sharex="col",
         gridspec_kw={"height_ratios": [3, 3], "hspace": 0.06, "wspace": 0.05},
         constrained_layout=False,
     )
-    fig.subplots_adjust(left=0.06, right=0.92, top=0.9, bottom=0.1,
-                        hspace=0.06, wspace=0.05)
+    fig.subplots_adjust(
+        left=0.06, right=0.92, top=0.9, bottom=0.1, hspace=0.06, wspace=0.05
+    )
     axes_north = axes_grid[0]
     axes_south = axes_grid[1]
 
@@ -138,8 +135,13 @@ def main() -> None:
         Z = np.ma.masked_invalid(ratios[band])
         for ax in (ax_n, ax_s):
             im = ax.pcolormesh(
-                lt, inv_lat, Z, shading="auto",
-                cmap="plasma", vmin=vmin, vmax=vmax,
+                lt,
+                inv_lat,
+                Z,
+                shading="auto",
+                cmap="plasma",
+                vmin=vmin,
+                vmax=vmax,
             )
             images.append(im)
             ax.set_xlim(0, 24)
@@ -149,7 +151,7 @@ def main() -> None:
         ax_n.set_ylim(40, 90)
         ax_s.set_ylim(-90, -40)
         ax_n.set_title(
-            f"{BAND_LABELS[band]}  ({n_event_min[band]/60:.0f} event-h)",
+            f"{BAND_LABELS[band]}  ({n_event_min[band] / 60:.0f} event-h)",
             fontsize=11,
         )
         ax_s.set_xlabel("Local time [h]")
@@ -166,23 +168,23 @@ def main() -> None:
 
     axes_north[0].set_ylabel("KMAG inv. lat. [deg]")
     axes_south[0].set_ylabel("KMAG inv. lat. [deg]")
-    cbar = fig.colorbar(images[1], ax=axes_grid.ravel().tolist(),
-                        fraction=0.025, pad=0.02)
+    cbar = fig.colorbar(
+        images[1], ax=axes_grid.ravel().tolist(), fraction=0.025, pad=0.02
+    )
     cbar.set_label("Event time / dwell time  (closed-field MS)")
 
     n_events = ev.attrs.get("n_events", "?")
     fig.suptitle(
         f"Figure 8 (round-8) — QP occurrence in KMAG inv. lat × LT  "
         f"(n={n_events} events; closed-field MS; "
-        f"{int(MIN_DWELL_MINUTES/60)} h dwell floor; sigma={SMOOTHING_SIGMA} smooth)",
+        f"{int(MIN_DWELL_MINUTES / 60)} h dwell floor; sigma={SMOOTHING_SIGMA} smooth)",
         fontsize=11,
     )
 
     out_dir = _PROJECT_ROOT / "Output" / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "figure8_round8.png"
-    fig.savefig(out, dpi=180, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     log.info("wrote %s", out)
 

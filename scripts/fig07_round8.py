@@ -55,7 +55,9 @@ LAT_BIN_WIDTH_DEG = 5.0
 
 
 def _rebin_latitude(
-    arr_1d: np.ndarray, lat_centers: np.ndarray, bin_width: float,
+    arr_1d: np.ndarray,
+    lat_centers: np.ndarray,
+    bin_width: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sum a 1D latitude array into wider bins (sum-preserving)."""
     edges = np.arange(-90.0, 90.0 + bin_width / 2, bin_width)
@@ -68,7 +70,9 @@ def _rebin_latitude(
 
 
 def _bootstrap_band(
-    ev_1d: np.ndarray, dw_1d: np.ndarray, n: int = 500,
+    ev_1d: np.ndarray,
+    dw_1d: np.ndarray,
+    n: int = 500,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Poisson bootstrap of the per-latitude ratio."""
@@ -86,9 +90,12 @@ def _bootstrap_band(
 
 
 def _sector_ratio(
-    ev_3d: np.ndarray, dw_3d: np.ndarray,
-    lt_centers: np.ndarray, lat_centers: np.ndarray,
-    center: float, half_width: float,
+    ev_3d: np.ndarray,
+    dw_3d: np.ndarray,
+    lt_centers: np.ndarray,
+    lat_centers: np.ndarray,
+    center: float,
+    half_width: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute the per-latitude event/dwell ratio inside one LT sector."""
     ev_2d = slice_lt_sector(ev_3d, lt_centers, center, half_width)
@@ -99,7 +106,9 @@ def _sector_ratio(
     dw_b, _ = _rebin_latitude(dw_1d, lat_centers, LAT_BIN_WIDTH_DEG)
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(
-            dw_b >= MIN_DWELL_MINUTES_LATITUDE, ev_b / dw_b, np.nan,
+            dw_b >= MIN_DWELL_MINUTES_LATITUDE,
+            ev_b / dw_b,
+            np.nan,
         )
     lo, hi = _bootstrap_band(ev_b, dw_b)
     return ratio, lo, hi, lat_b
@@ -135,7 +144,10 @@ def main() -> None:
 
     use_paper_style()
     fig, axes = plt.subplots(
-        1, len(LT_SECTORS), figsize=(16, 4.8), sharey=True,
+        1,
+        len(LT_SECTORS),
+        figsize=(16, 4.8),
+        sharey=True,
         constrained_layout=True,
     )
 
@@ -147,7 +159,12 @@ def main() -> None:
                 continue
             ev_3d = ev[ev_var].values
             ratio, lo, hi, lat_b = _sector_ratio(
-                ev_3d, dw_mag, lt_centers, lat_centers, center, hw,
+                ev_3d,
+                dw_mag,
+                lt_centers,
+                lat_centers,
+                center,
+                hw,
             )
             color = BAND_COLORS[band]
             ax.plot(lat_b, ratio, color=color, lw=1.7, label=band)
@@ -169,7 +186,7 @@ def main() -> None:
     fig.suptitle(
         f"Figure 7 (round-8) — QP occurrence vs magnetic latitude  "
         f"(n={n_events} events; magnetosphere-only dwell; "
-        f"{int(MIN_DWELL_MINUTES_LATITUDE/60)} h dwell floor; "
+        f"{int(MIN_DWELL_MINUTES_LATITUDE / 60)} h dwell floor; "
         f"Poisson 16-84% band)",
         fontsize=11,
     )
@@ -177,8 +194,7 @@ def main() -> None:
     out_dir = _PROJECT_ROOT / "Output" / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "figure7_round8.png"
-    fig.savefig(out, dpi=180, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     log.info("wrote %s", out)
 

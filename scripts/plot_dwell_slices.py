@@ -40,8 +40,11 @@ def equatorial_slice(ds, ax, variable="total"):
 
     R, Theta = np.meshgrid(r, theta, indexing="ij")
     pcm = ax.pcolormesh(
-        Theta, R, np.log10(data + 1),
-        cmap="inferno", shading="auto",
+        Theta,
+        R,
+        np.log10(data + 1),
+        cmap="inferno",
+        shading="auto",
     )
     ax.set_theta_zero_location("S")  # midnight at bottom
     ax.set_theta_direction(-1)  # clockwise (standard LT convention)
@@ -78,8 +81,11 @@ def meridian_slice(ds, ax, lt_center, lt_half_width=1.0, variable="total", title
 
     R, Lat = np.meshgrid(r, lat, indexing="ij")
     pcm = ax.pcolormesh(
-        Lat, R, np.log10(data + 1),
-        cmap="inferno", shading="auto",
+        Lat,
+        R,
+        np.log10(data + 1),
+        cmap="inferno",
+        shading="auto",
     )
     ax.set_xlabel("Magnetic latitude [°]")
     ax.set_ylabel("r [R_S]")
@@ -91,8 +97,12 @@ def main():
     parser = argparse.ArgumentParser(description="Plot dwell-time grid slices")
     parser.add_argument("--input", type=str, default="Output/dwell_grid.zarr")
     parser.add_argument("--output-dir", type=str, default="Output")
-    parser.add_argument("--variable", type=str, default="total",
-                        choices=["total", "magnetosphere", "magnetosheath", "solar_wind"])
+    parser.add_argument(
+        "--variable",
+        type=str,
+        default="total",
+        choices=["total", "magnetosphere", "magnetosheath", "solar_wind"],
+    )
     args = parser.parse_args()
 
     use_paper_style()
@@ -114,8 +124,14 @@ def main():
 
     # Noon-midnight (x-z plane)
     ax_xz = fig.add_subplot(2, 2, 2)
-    pcm2 = meridian_slice(ds, ax_xz, lt_center=12.0, lt_half_width=1.0,
-                          variable=var, title="Noon-midnight meridian (x-z)")
+    pcm2 = meridian_slice(
+        ds,
+        ax_xz,
+        lt_center=12.0,
+        lt_half_width=1.0,
+        variable=var,
+        title="Noon-midnight meridian (x-z)",
+    )
     # Also add the midnight side
     lt = ds.coords["local_time"].values
     r = ds.coords["r"].values
@@ -123,14 +139,26 @@ def main():
     midnight_mask = (lt <= 1.0) | (lt >= 23.0)
     midnight_data = ds[var].values[:, :, midnight_mask].sum(axis=2)
     R2, Lat2 = np.meshgrid(r, lat_vals, indexing="ij")
-    ax_xz.pcolormesh(-Lat2, R2, np.log10(midnight_data + 1),
-                     cmap="inferno", shading="auto", alpha=0.5)
+    ax_xz.pcolormesh(
+        -Lat2,
+        R2,
+        np.log10(midnight_data + 1),
+        cmap="inferno",
+        shading="auto",
+        alpha=0.5,
+    )
     fig.colorbar(pcm2, ax=ax_xz, label="log₁₀(minutes + 1)")
 
     # Dawn-dusk (y-z plane)
     ax_yz = fig.add_subplot(2, 2, 3)
-    pcm3 = meridian_slice(ds, ax_yz, lt_center=6.0, lt_half_width=1.0,
-                          variable=var, title="Dawn-dusk meridian (y-z)")
+    pcm3 = meridian_slice(
+        ds,
+        ax_yz,
+        lt_center=6.0,
+        lt_half_width=1.0,
+        variable=var,
+        title="Dawn-dusk meridian (y-z)",
+    )
     fig.colorbar(pcm3, ax=ax_yz, label="log₁₀(minutes + 1)")
 
     # Summary text
@@ -144,15 +172,22 @@ def main():
         f"{'─' * 30}\n"
         f"Period: {year_from}–{year_to}\n"
         f"Variable: {var}\n"
-        f"Total: {total_hours:,.0f} hours ({total_hours/8766:.1f} years)\n"
+        f"Total: {total_hours:,.0f} hours ({total_hours / 8766:.1f} years)\n"
         f"Grid: {ds.sizes['r']}×{ds.sizes['magnetic_latitude']}×{ds.sizes['local_time']}\n"
         f"r: {float(ds.r.min()):.0f}–{float(ds.r.max()):.0f} R_S\n"
         f"lat: {float(ds.magnetic_latitude.min()):.0f}° to {float(ds.magnetic_latitude.max()):.0f}°\n"
         f"LT: {float(ds.local_time.min()):.1f}–{float(ds.local_time.max()):.1f} h"
     )
-    ax_text.text(0.1, 0.5, text, transform=ax_text.transAxes,
-                 fontsize=14, family="monospace", verticalalignment="center",
-                 color="white")
+    ax_text.text(
+        0.1,
+        0.5,
+        text,
+        transform=ax_text.transAxes,
+        fontsize=14,
+        family="monospace",
+        verticalalignment="center",
+        color="white",
+    )
 
     fig.suptitle(f"Cassini Dwell Time — {var}", fontsize=16, y=0.98)
     fig.tight_layout()
@@ -170,16 +205,22 @@ def main():
     print("\nValidation:")
     print(f"  Grid integral:  {total_h:,.1f} hours")
     print(f"  Stored total:   {stored_h:,.1f} hours (from compute script)")
-    print(f"  Raw samples:    {expected_h:,.1f} hours (from {n_samples:,} 1-min samples)")
+    print(
+        f"  Raw samples:    {expected_h:,.1f} hours (from {n_samples:,} 1-min samples)"
+    )
     if stored_h > 0:
         # Compare grid integral against the stored total (which accounts for out-of-range)
         pct_diff = abs(total_h - stored_h) / stored_h * 100
         print(f"  Grid vs stored: {pct_diff:.2f}%")
         if expected_h > stored_h:
             out_of_range = expected_h - stored_h
-            print(f"  Out of range:   {out_of_range:,.1f} hours ({out_of_range/expected_h*100:.1f}%)")
+            print(
+                f"  Out of range:   {out_of_range:,.1f} hours ({out_of_range / expected_h * 100:.1f}%)"
+            )
         if pct_diff > 0.1:
-            print(f"  WARNING: Grid integral differs from stored total by {pct_diff:.2f}%")
+            print(
+                f"  WARNING: Grid integral differs from stored total by {pct_diff:.2f}%"
+            )
         else:
             print("  ✓ Grid integral matches stored total")
 

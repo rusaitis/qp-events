@@ -28,6 +28,7 @@ import logging
 from pathlib import Path
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -81,13 +82,16 @@ def candidates_from_segment(
         return []
 
     freq, _, cwt_par = morlet_cwt(b_par, dt=DT_SEC, n_freqs=300)
-    _,    _, cwt1   = morlet_cwt(b_perp1, dt=DT_SEC, n_freqs=300)
-    _,    _, cwt2   = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=300)
+    _, _, cwt1 = morlet_cwt(b_perp1, dt=DT_SEC, n_freqs=300)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=300)
     p1 = np.abs(cwt1)
     p2 = np.abs(cwt2)
 
     n_sigma = bonferroni_n_sigma_for_cwt(
-        p1.shape[1], DT_SEC, freq, alpha=SEGMENT_FWER_ALPHA,
+        p1.shape[1],
+        DT_SEC,
+        freq,
+        alpha=SEGMENT_FWER_ALPHA,
     )
     mask1 = wavelet_sigma_mask(p1, freq, n_sigma=n_sigma)
     mask2 = wavelet_sigma_mask(p2, freq, n_sigma=n_sigma)
@@ -146,11 +150,13 @@ def candidates_from_segment(
             continue
         i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
         sl = slice(i_start, i_end + 1)
-        field_bp = np.column_stack([
-            np.real(cwt_par[i_freq_peak, sl]),
-            np.real(cwt1[i_freq_peak, sl]),
-            np.real(cwt2[i_freq_peak, sl]),
-        ])
+        field_bp = np.column_stack(
+            [
+                np.real(cwt_par[i_freq_peak, sl]),
+                np.real(cwt1[i_freq_peak, sl]),
+                np.real(cwt2[i_freq_peak, sl]),
+            ]
+        )
         par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
         if par_frac > MAX_MVA_PARALLEL_FRACTION:
             continue
@@ -163,16 +169,18 @@ def candidates_from_segment(
             cwt1[in_band, sl].ravel(),
             cwt2[in_band, sl].ravel(),
         )
-        out.append({
-            "segment_idx": seg_idx,
-            "peak_time": peak.peak_time.isoformat(),
-            "band": peak.band,
-            "period_min": peak.period_sec / 60.0,
-            "q_factor": float(q),
-            "mva_par_frac": float(par_frac),
-            "stokes_d": float(d),
-            "passes_canonical": bool(d >= MIN_DEGREE_OF_POLARIZATION),
-        })
+        out.append(
+            {
+                "segment_idx": seg_idx,
+                "peak_time": peak.peak_time.isoformat(),
+                "band": peak.band,
+                "period_min": peak.period_sec / 60.0,
+                "q_factor": float(q),
+                "mva_par_frac": float(par_frac),
+                "stokes_d": float(d),
+                "passes_canonical": bool(d >= MIN_DEGREE_OF_POLARIZATION),
+            }
+        )
     return out
 
 
@@ -181,11 +189,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--stride", type=int, default=43)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument(
-        "--csv", type=Path,
+        "--csv",
+        type=Path,
         default=Path("Output/diagnostics/stokes_candidates.csv"),
     )
     p.add_argument(
-        "--fig", type=Path,
+        "--fig",
+        type=Path,
         default=Path("Output/figures/diag_p4_stokes_distribution.png"),
     )
     args = p.parse_args(argv)
@@ -193,11 +203,15 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
     arr, keep_idx = load_segments()
-    sampled = keep_idx[::args.stride]
+    sampled = keep_idx[:: args.stride]
     if args.limit:
         sampled = sampled[: args.limit]
-    log.info("processing %d / %d segments (stride %d)",
-             len(sampled), len(keep_idx), args.stride)
+    log.info(
+        "processing %d / %d segments (stride %d)",
+        len(sampled),
+        len(keep_idx),
+        args.stride,
+    )
 
     all_cands: list[dict] = []
     for k, idx in enumerate(sampled):
@@ -206,20 +220,28 @@ def main(argv: list[str] | None = None) -> int:
             continue
         try:
             cands = candidates_from_segment(
-                idx, payload.times,
-                payload.b_par, payload.b_perp1, payload.b_perp2,
+                idx,
+                payload.times,
+                payload.b_par,
+                payload.b_perp1,
+                payload.b_perp2,
             )
         except Exception as exc:  # noqa: BLE001
             log.warning("seg %d raised: %s", idx, exc)
             continue
         all_cands.extend(cands)
         if (k + 1) % 20 == 0:
-            log.info("  %d / %d segments done, %d candidates so far",
-                     k + 1, len(sampled), len(all_cands))
+            log.info(
+                "  %d / %d segments done, %d candidates so far",
+                k + 1,
+                len(sampled),
+                len(all_cands),
+            )
 
     log.info(
         "sweep complete: %d candidates from %d segments",
-        len(all_cands), len(sampled),
+        len(all_cands),
+        len(sampled),
     )
 
     df = pd.DataFrame(all_cands)
@@ -234,36 +256,54 @@ def main(argv: list[str] | None = None) -> int:
     # Per-cutoff catalogue size.
     log.info(
         "Stokes-d distribution: min=%.3f median=%.3f max=%.3f",
-        df.stokes_d.min(), df.stokes_d.median(), df.stokes_d.max(),
+        df.stokes_d.min(),
+        df.stokes_d.median(),
+        df.stokes_d.max(),
     )
     table_rows = []
     for c in CUTOFFS:
         kept = int((df.stokes_d >= c).sum())
         pct = 100.0 * kept / len(df)
         table_rows.append((c, kept, len(df) - kept, pct))
-        log.info("  d ≥ %.2f: %d kept (%.1f%%)  %d rejected",
-                 c, kept, pct, len(df) - kept)
+        log.info(
+            "  d ≥ %.2f: %d kept (%.1f%%)  %d rejected", c, kept, pct, len(df) - kept
+        )
 
     # Plot: histogram + cumulative survival curve.
     fig, (ax_hist, ax_surv) = plt.subplots(
-        1, 2, figsize=(11, 4.5), dpi=120, constrained_layout=True,
+        1,
+        2,
+        figsize=(11, 4.5),
+        dpi=120,
+        constrained_layout=True,
     )
 
     # Histogram of Stokes d, coloured by canonical pass/fail.
     bins = np.linspace(0.0, 1.0, 41)
     ax_hist.hist(
         df.loc[df.stokes_d >= MIN_DEGREE_OF_POLARIZATION, "stokes_d"],
-        bins=bins, color="#2bd07b", alpha=0.85, label="pass (d ≥ 0.7)",
-        edgecolor="black", linewidth=0.4,
+        bins=bins,
+        color="#2bd07b",
+        alpha=0.85,
+        label="pass (d ≥ 0.7)",
+        edgecolor="black",
+        linewidth=0.4,
     )
     ax_hist.hist(
         df.loc[df.stokes_d < MIN_DEGREE_OF_POLARIZATION, "stokes_d"],
-        bins=bins, color="#f29539", alpha=0.85, label="rejected (d < 0.7)",
-        edgecolor="black", linewidth=0.4,
+        bins=bins,
+        color="#f29539",
+        alpha=0.85,
+        label="rejected (d < 0.7)",
+        edgecolor="black",
+        linewidth=0.4,
     )
     ax_hist.axvline(
-        MIN_DEGREE_OF_POLARIZATION, color="#dddddd", linestyle="--",
-        linewidth=1.2, label=f"canonical cut d = {MIN_DEGREE_OF_POLARIZATION}",
+        MIN_DEGREE_OF_POLARIZATION,
+        color="#dddddd",
+        linestyle="--",
+        linewidth=1.2,
+        label=f"canonical cut d = {MIN_DEGREE_OF_POLARIZATION}",
     )
     ax_hist.set_xlim(0, 1)
     ax_hist.set_xlabel("Stokes degree-of-polarization d")
@@ -274,22 +314,24 @@ def main(argv: list[str] | None = None) -> int:
 
     # Cumulative survival curve.
     d_axis = np.linspace(0.0, 1.0, 201)
-    n_kept = np.array(
-        [(df.stokes_d >= c).sum() for c in d_axis], dtype=float
-    )
+    n_kept = np.array([(df.stokes_d >= c).sum() for c in d_axis], dtype=float)
     ax_surv.plot(d_axis, n_kept, color="#4dd2ff", linewidth=1.8)
     for c, kept, _, pct in table_rows:
-        ax_surv.axvline(c, color="#dddddd", linestyle=":",
-                        linewidth=0.6, alpha=0.7)
+        ax_surv.axvline(c, color="#dddddd", linestyle=":", linewidth=0.6, alpha=0.7)
         ax_surv.scatter([c], [kept], s=30, color="#ffb000", zorder=5)
         ax_surv.annotate(
             f"{c:.1f} → {kept}\n({pct:.0f}%)",
-            xy=(c, kept), xytext=(c + 0.01, kept + 0.4),
-            fontsize=8, color="#dddddd",
+            xy=(c, kept),
+            xytext=(c + 0.01, kept + 0.4),
+            fontsize=8,
+            color="#dddddd",
         )
     ax_surv.axvline(
-        MIN_DEGREE_OF_POLARIZATION, color="#2bd07b", linestyle="--",
-        linewidth=1.2, alpha=0.9,
+        MIN_DEGREE_OF_POLARIZATION,
+        color="#2bd07b",
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.9,
     )
     ax_surv.set_xlim(0, 1)
     ax_surv.set_ylim(0, max(n_kept) * 1.05)

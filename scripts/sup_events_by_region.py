@@ -100,7 +100,9 @@ def summary_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
         for b in QP_BAND_NAMES:
             row[f"{b} [%]"] = 100 * (g.band == b).mean()
         retain_frac = (
-            float((g.mva_par_frac <= FLR_PURE_MVA_CUT).mean()) if len(g) else float("nan")
+            float((g.mva_par_frac <= FLR_PURE_MVA_CUT).mean())
+            if len(g)
+            else float("nan")
         )
         rows.append(
             {
@@ -158,10 +160,13 @@ def make_figure(groups: dict[str, pd.DataFrame], out_path: Path) -> None:
         title="period distribution",
     )
     from qp.events.bands import QP_BAND_COLORS, get_band
+
     for b in QP_BAND_NAMES:
         axes[0, 0].axvline(
             get_band(b).period_centroid_minutes,
-            color=QP_BAND_COLORS[b], ls=":", alpha=0.7,
+            color=QP_BAND_COLORS[b],
+            ls=":",
+            alpha=0.7,
         )
     axes[0, 0].legend(fontsize=8, loc="upper right", framealpha=0.5)
 
@@ -194,7 +199,10 @@ def make_figure(groups: dict[str, pd.DataFrame], out_path: Path) -> None:
     # 3. A_par / A_perp
     step_hist(
         axes[0, 2],
-        lambda g: g.b_par_amp.values / np.maximum(np.hypot(g.b_perp1_amp, g.b_perp2_amp).values, 1e-6),
+        lambda g: (
+            g.b_par_amp.values
+            / np.maximum(np.hypot(g.b_perp1_amp, g.b_perp2_amp).values, 1e-6)
+        ),
         bins=np.linspace(-3, 1, 50),
         xlim=(-3, 1),
         xlabel=r"$\log_{10}(A_\parallel / A_\perp)$",

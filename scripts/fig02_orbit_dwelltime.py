@@ -7,30 +7,41 @@ Panel (b): Dwell time heatmap in conjugate latitude vs local time bins.
 Referee: remove spurious tilted dashed line, make green 10 R_S more visible.
 """
 
+import os
 import sys
 import types
-import os
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-
 from pathlib import Path
+
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
 # Register stubs
-for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
-                 "cassinilib", "cassinilib.NewSignal", "cassinilib.PlotFFT"]:
+for mod_path in [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+    "cassinilib.PlotFFT",
+]:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in ["SignalSnapshot", "NewSignal", "Interval", "FFT_list",
-                     "WaveSignal", "Wave"]:
+    for cls_name in [
+        "SignalSnapshot",
+        "NewSignal",
+        "Interval",
+        "FFT_list",
+        "WaveSignal",
+        "Wave",
+    ]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
 
 import qp
-from qp.plotting.style import use_paper_style, style_axes
+from qp.plotting.style import style_axes, use_paper_style
 
 
 def load_orbit_data():
@@ -103,11 +114,13 @@ def load_dwell_time_map():
     return dwell_2d
 
 
-def compute_shell_curves(l_shells=[10, 20, 25]):
+def compute_shell_curves(l_shells=None):
     """Compute conjugate latitude vs LT for dipole field line shells.
 
     Returns dict: {L: (lt_array, lat_north, lat_south)}
     """
+    if l_shells is None:
+        l_shells = [10, 20, 25]
     curves = {}
     for L in l_shells:
         # For a dipole, conjugate latitude only depends on L:
@@ -138,7 +151,9 @@ def main():
     use_paper_style()
 
     fig, (ax_a, ax_b) = plt.subplots(
-        2, 1, figsize=(10, 10),
+        2,
+        1,
+        figsize=(10, 10),
         gridspec_kw={"height_ratios": [1, 1.5]},
     )
     fig.subplots_adjust(hspace=0.18, left=0.10, right=0.92, top=0.95, bottom=0.06)
@@ -157,23 +172,52 @@ def main():
     for loc_code, color, label in loc_config:
         mask = (locations == loc_code) & unflagged
         if np.any(mask):
-            ax_a.scatter(lts[mask], mlats[mask], c=color, s=4, alpha=0.4,
-                         edgecolors="none", label=label, rasterized=True)
+            ax_a.scatter(
+                lts[mask],
+                mlats[mask],
+                c=color,
+                s=4,
+                alpha=0.4,
+                edgecolors="none",
+                label=label,
+                rasterized=True,
+            )
 
     # Plot flagged data as black crosses
     if np.any(flagged):
-        ax_a.scatter(lts[flagged], mlats[flagged], c="black", s=10, marker="x",
-                     alpha=0.6, label="Flagged Data", linewidths=0.5)
+        ax_a.scatter(
+            lts[flagged],
+            mlats[flagged],
+            c="black",
+            s=10,
+            marker="x",
+            alpha=0.6,
+            label="Flagged Data",
+            linewidths=0.5,
+        )
 
     ax_a.set_xlabel("Local Time (h)", fontsize=13)
     ax_a.set_ylabel("Magnetic Latitude (deg)", fontsize=13)
     ax_a.set_title("Spacecraft Location", fontsize=15)
     ax_a.set_xlim(0, 24)
     ax_a.set_ylim(-70, 70)
-    ax_a.legend(loc="lower center", ncol=5, frameon=False, fontsize=9,
-                markerscale=3, bbox_to_anchor=(0.5, -0.01))
-    ax_a.text(0.01, 0.97, "a", transform=ax_a.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    ax_a.legend(
+        loc="lower center",
+        ncol=5,
+        frameon=False,
+        fontsize=9,
+        markerscale=3,
+        bbox_to_anchor=(0.5, -0.01),
+    )
+    ax_a.text(
+        0.01,
+        0.97,
+        "a",
+        transform=ax_a.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
     ax_a.tick_params(labelsize=11)
     style_axes(ax_a, minimal=False)
 
@@ -189,7 +233,9 @@ def main():
     dwell_masked = np.ma.masked_where(dwell_days == 0, dwell_days)
 
     im = ax_b.pcolormesh(
-        lt_edges, lat_edges, dwell_masked,
+        lt_edges,
+        lat_edges,
+        dwell_masked,
         cmap="inferno",
         norm=mcolors.LogNorm(vmin=0.1, vmax=np.max(dwell_days)),
         shading="auto",
@@ -231,21 +277,34 @@ def main():
     ax_b.remove()
 
     # Create two sub-axes for North and South
-    gs = fig.add_gridspec(3, 1, height_ratios=[1, 0.75, 0.75],
-                          hspace=0.18, left=0.10, right=0.88, top=0.95, bottom=0.06)
+    gs = fig.add_gridspec(
+        3,
+        1,
+        height_ratios=[1, 0.75, 0.75],
+        hspace=0.18,
+        left=0.10,
+        right=0.88,
+        top=0.95,
+        bottom=0.06,
+    )
     # Keep ax_a in place (already drawn)
     ax_n = fig.add_subplot(gs[1])
     ax_s = fig.add_subplot(gs[2])
 
-    for ax, lat_lo, lat_hi, label in [(ax_n, 65, 90, "North"), (ax_s, -90, -65, "South")]:
+    for ax, lat_lo, lat_hi, label in [
+        (ax_n, 65, 90, "North"),
+        (ax_s, -90, -65, "South"),
+    ]:
         # Select the rows for this latitude range
-        lat_idx_lo = int((lat_lo + 90))  # bin index
-        lat_idx_hi = int((lat_hi + 90))
+        lat_idx_lo = int(lat_lo + 90)  # bin index
+        lat_idx_hi = int(lat_hi + 90)
         dwell_sub = dwell_masked[lat_idx_lo:lat_idx_hi, :]
-        lat_sub_edges = lat_edges[lat_idx_lo:lat_idx_hi + 1]
+        lat_sub_edges = lat_edges[lat_idx_lo : lat_idx_hi + 1]
 
         im = ax.pcolormesh(
-            lt_edges, lat_sub_edges, dwell_sub,
+            lt_edges,
+            lat_sub_edges,
+            dwell_sub,
             cmap="inferno",
             norm=mcolors.LogNorm(vmin=0.1, vmax=np.max(dwell_days)),
             shading="auto",
@@ -256,24 +315,51 @@ def main():
         for L, (lt_sh, lat_n_sh, lat_s_sh) in shells.items():
             color, ls, lw, slabel = shell_styles[L]
             if lat_lo > 0:
-                ax.plot(lt_sh, lat_n_sh, color=color, ls=ls, lw=lw,
-                        label=slabel if ax is ax_n else None)
+                ax.plot(
+                    lt_sh,
+                    lat_n_sh,
+                    color=color,
+                    ls=ls,
+                    lw=lw,
+                    label=slabel if ax is ax_n else None,
+                )
             else:
-                ax.plot(lt_sh, lat_s_sh, color=color, ls=ls, lw=lw,
-                        label=slabel if ax is ax_s else None)
+                ax.plot(
+                    lt_sh,
+                    lat_s_sh,
+                    color=color,
+                    ls=ls,
+                    lw=lw,
+                    label=slabel if ax is ax_s else None,
+                )
 
         ax.set_xlim(0, 24)
         ax.set_ylabel("Conjugate Lat (deg)", fontsize=11)
-        ax.text(0.5, 0.92, label, transform=ax.transAxes, fontsize=12,
-                color="white", ha="center", va="top")
+        ax.text(
+            0.5,
+            0.92,
+            label,
+            transform=ax.transAxes,
+            fontsize=12,
+            color="white",
+            ha="center",
+            va="top",
+        )
         ax.tick_params(labelsize=11)
         style_axes(ax, minimal=False, grid=False)
 
     ax_n.set_xticklabels([])
     ax_s.set_xlabel("Local Time (h)", fontsize=13)
     ax_n.set_title("Dwell Time", fontsize=15, color="orange")
-    ax_n.text(0.01, 0.92, "b", transform=ax_n.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    ax_n.text(
+        0.01,
+        0.92,
+        "b",
+        transform=ax_n.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
     ax_n.legend(loc="lower right", frameon=False, fontsize=9, ncol=3)
 
     # Colorbar
@@ -282,8 +368,12 @@ def main():
 
     style_axes(ax_b, minimal=False, grid=False)
 
-    plt.savefig("output/figure2.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    plt.savefig(
+        "output/figure2.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
     print("Saved output/figure2.png")
     plt.close()
 

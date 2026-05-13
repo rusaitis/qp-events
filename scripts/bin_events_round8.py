@@ -52,6 +52,7 @@ import numpy as np
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 import qp  # noqa: E402
+from qp.cli import add_verbosity_arg, add_workers_arg  # noqa: E402
 from qp.dwell.grid import (  # noqa: E402
     DwellGridConfig,
     accumulate_inv_lat_grid_cached,
@@ -59,9 +60,11 @@ from qp.dwell.grid import (  # noqa: E402
     accumulate_with_regions_cached,
     precompute_bins,
 )
-from qp.cli import add_verbosity_arg, add_workers_arg  # noqa: E402
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
-from qp.events.binning import build_band_masks, full_mirror_grids_to_xarray  # noqa: E402
+from qp.events.binning import (  # noqa: E402
+    build_band_masks,
+    full_mirror_grids_to_xarray,
+)
 from qp.io.trajectory import load_mission_trajectory, load_region_codes  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -178,10 +181,18 @@ def _accumulate_per_band(
             continue
         log.info("band %s: %d minutes mapped", band, int(mask.sum()))
         r3d = accumulate_with_regions_cached(
-            cache, region_codes, 1.0, mask=mask, config=config,
+            cache,
+            region_codes,
+            1.0,
+            mask=mask,
+            config=config,
         )
         r2d = accumulate_inv_lat_grid_cached(
-            cache, region_codes, 1.0, mask=mask, config=config,
+            cache,
+            region_codes,
+            1.0,
+            mask=mask,
+            config=config,
         )
         rwf = accumulate_weak_field_grid_cached(
             cache,

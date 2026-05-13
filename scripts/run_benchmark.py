@@ -18,23 +18,32 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description="QP event detection benchmark")
     parser.add_argument(
-        "--tier", type=str, default=None,
+        "--tier",
+        type=str,
+        default=None,
         help="Run only scenarios from this tier (tier1-tier4, decoy)",
     )
     parser.add_argument(
-        "--scenario", type=str, nargs="+", default=None,
+        "--scenario",
+        type=str,
+        nargs="+",
+        default=None,
         help="Run specific scenario(s) by name",
     )
     parser.add_argument(
-        "--output", type=Path, default=Path("Output/benchmark"),
+        "--output",
+        type=Path,
+        default=Path("Output/benchmark"),
         help="Output directory (default: Output/benchmark)",
     )
     parser.add_argument(
-        "--generate", action="store_true",
+        "--generate",
+        action="store_true",
         help="Generate canonical datasets (zarr + manifest JSON)",
     )
     parser.add_argument(
-        "--regenerate", action="store_true",
+        "--regenerate",
+        action="store_true",
         help="Regenerate even if canonical data exists",
     )
     parser.add_argument("-v", "--verbose", action="store_true")

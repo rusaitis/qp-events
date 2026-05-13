@@ -224,7 +224,7 @@ def main():
     crossing_times_unix, crossing_codes = crossing_lookup_arrays(crossings)
     log.info("  → %d boundary crossings", len(crossing_times_unix))
 
-    run_start = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    run_start = datetime.datetime.now(datetime.UTC).isoformat()
 
     # Accumulators — use same names as REGION_CODES in grid.py
     from qp.dwell.grid import REGION_CODES

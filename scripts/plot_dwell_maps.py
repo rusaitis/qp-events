@@ -91,7 +91,7 @@ def plot_inv_lat_vs_lt(ds: xr.Dataset, outpath: Path) -> None:
         # are rough paper values for visual orientation only.
         # QP15 ~L=4 → 60.0°  (exploratory)
         # QP30 ~L=6 → 65.9°,  QP60 ~L=10 → 71.6°,  QP120 ~L=20 → 77.1°
-        for lat_ref, label in [
+        for lat_ref, _label in [
             (60.0, "QP15"),
             (65.9, "QP30"),
             (71.6, "QP60"),
@@ -138,7 +138,7 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     # Rebin into (L, LT)
     n_L = 80
     L_edges = np.linspace(0, L_max, n_L + 1)
-    L_centers = 0.5 * (L_edges[:-1] + L_edges[1:])
+    0.5 * (L_edges[:-1] + L_edges[1:])
 
     L_flat = L_mesh.flatten()  # (n_r * n_lat,)
     valid_geom = np.isfinite(L_flat) & (L_flat >= 0) & (L_flat < L_max)
@@ -161,11 +161,11 @@ def plot_equatorial_L_polar(ds: xr.Dataset, outpath: Path, L_max: float = 40.0) 
     ax.set_theta_direction(-1)
 
     # Convert LT (hours) to angle so that noon → top, dawn → right, etc.
-    theta = (lt / 24.0) * 2.0 * np.pi
+    (lt / 24.0) * 2.0 * np.pi
     # The theta offset already handles LT=12 → top via set_theta_zero_location.
     # We need theta=0 to correspond to LT=12 though. With zero at 'N' and
     # clockwise direction, theta=0 is at top. So we need LT=12 → theta=0:
-    theta = ((lt - 12.0) / 24.0) * 2.0 * np.pi
+    ((lt - 12.0) / 24.0) * 2.0 * np.pi
     # Build mesh for pcolormesh: theta and L edges
     theta_edges = (
         ((np.concatenate([lt - 0.125, [lt[-1] + 0.125]]) - 12.0) / 24.0) * 2.0 * np.pi
@@ -305,8 +305,8 @@ def plot_meridional_rho_z(
     plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
 
     ax.set_title(
-        f"Cassini meridional dwell time (MS, summed over local time)\n"
-        f"Side view — Saturn at origin, equator horizontal",
+        "Cassini meridional dwell time (MS, summed over local time)\n"
+        "Side view — Saturn at origin, equator horizontal",
         color="white",
         pad=12,
     )
@@ -369,7 +369,7 @@ def _compute_weak_field_mag_lat_lt(
         sample_unix = np.array(
             [
                 datetime.datetime.strptime(t, DATETIME_FMT)
-                .replace(tzinfo=datetime.timezone.utc)
+                .replace(tzinfo=datetime.UTC)
                 .timestamp()
                 for t in data[:, 0]
             ],

@@ -48,7 +48,10 @@ _BAND_COLORS = {
 
 
 def _bandpass(
-    x: np.ndarray, period_sec: float, *, half_width_frac: float = 0.4,
+    x: np.ndarray,
+    period_sec: float,
+    *,
+    half_width_frac: float = 0.4,
 ) -> np.ndarray:
     """4th-order Butterworth zero-phase bandpass around ``1/period_sec``."""
     f0 = 1.0 / period_sec
@@ -62,7 +65,8 @@ def _bandpass(
 
 
 def _event_per_cycle(
-    seg, event: pd.Series,
+    seg,
+    event: pd.Series,
 ) -> tuple[float, float, int]:
     """Return (median ellipticity, IQR, n_cycles_used) for one event."""
     payload = segment_to_payload(int(event["segment_idx"]), seg)
@@ -80,7 +84,10 @@ def _event_per_cycle(
     if b1.size < int(round(period_sec / _DT)) * 2:
         return float("nan"), float("nan"), 0
     median_e, iqr_e = per_oscillation_ellipticity(
-        b1, b2, dt=_DT, period=period_sec,
+        b1,
+        b2,
+        dt=_DT,
+        period=period_sec,
     )
     n_cycles = b1.size // int(round(period_sec / _DT))
     return float(median_e), float(iqr_e), int(n_cycles)
@@ -90,7 +97,8 @@ def _compute_all(df: pd.DataFrame) -> pd.DataFrame:
     legacy_pickle.register_stubs()
     log.info("loading MFA segment archive")
     arr = np.load(
-        qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy", allow_pickle=True,
+        qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy",
+        allow_pickle=True,
     )
     log.info("processing %d events", len(df))
     out_med = np.full(len(df), np.nan)
@@ -132,13 +140,8 @@ def _plot(df: pd.DataFrame, output_path: Path) -> None:
             edgecolors="none",
             label=f"{band}  n={len(sub)}",
         )
-    valid = (
-        df["ellipticity"].notna()
-        & df["ellipticity_percycle_median"].notna()
-    )
-    r = df.loc[valid, "ellipticity"].corr(
-        df.loc[valid, "ellipticity_percycle_median"]
-    )
+    valid = df["ellipticity"].notna() & df["ellipticity_percycle_median"].notna()
+    r = df.loc[valid, "ellipticity"].corr(df.loc[valid, "ellipticity_percycle_median"])
     lim = 1.05
     ax.plot([-lim, lim], [-lim, lim], ls=":", color="white", lw=0.8, alpha=0.7)
     ax.axhline(0, color="white", lw=0.4, alpha=0.3)
@@ -175,8 +178,12 @@ def _plot(df: pd.DataFrame, output_path: Path) -> None:
             continue
         ax.hist(
             sub["ellipticity_percycle_median"].abs(),
-            bins=bins, histtype="step", lw=1.4, density=True,
-            color=_BAND_COLORS[band], label=band,
+            bins=bins,
+            histtype="step",
+            lw=1.4,
+            density=True,
+            color=_BAND_COLORS[band],
+            label=band,
         )
     ax.axvline(0.5, ls=":", color="white", lw=0.6, alpha=0.6)
     ax.axvline(0.7, ls=":", color="white", lw=0.6, alpha=0.6)
@@ -217,9 +224,13 @@ def main() -> None:
     df = _compute_all(df)
     csv_path = qp.OUTPUT_DIR / "ellipticity_comparison.csv"
     cols = [
-        "event_id", "band", "period_min",
-        "ellipticity", "ellipticity_percycle_median",
-        "ellipticity_percycle_iqr", "ellipticity_percycle_n",
+        "event_id",
+        "band",
+        "period_min",
+        "ellipticity",
+        "ellipticity_percycle_median",
+        "ellipticity_percycle_iqr",
+        "ellipticity_percycle_n",
     ]
     df[cols].to_csv(csv_path, index=False)
     log.info("wrote %s", csv_path)

@@ -52,8 +52,15 @@ BANDS = [
 ]
 
 
-def _polar_pcolormesh(ax, lt_centers: np.ndarray, L_edges: np.ndarray, Z: np.ndarray, *,
-                      norm, cmap: str = "inferno") -> object:
+def _polar_pcolormesh(
+    ax,
+    lt_centers: np.ndarray,
+    L_edges: np.ndarray,
+    Z: np.ndarray,
+    *,
+    norm,
+    cmap: str = "inferno",
+) -> object:
     """Polar pcolormesh with noon at top, dawn on right (view from N pole)."""
     ax.set_theta_zero_location("N")
     ax.set_theta_direction(-1)
@@ -102,7 +109,9 @@ def main() -> None:
     log.info("dwell sibling   : %s", eq_path)
 
     if "kmag_eq_r_closed_total" not in dw:
-        raise SystemExit("dwell zarr lacks kmag_eq_r_closed_total — re-run compute_dwell_grid.py")
+        raise SystemExit(
+            "dwell zarr lacks kmag_eq_r_closed_total — re-run compute_dwell_grid.py"
+        )
     den = dw["kmag_eq_r_closed_total"]  # (kmag_eq_r, local_time), minutes
     L_native = den["kmag_eq_r"].values
     lt_native = den["local_time"].values
@@ -159,7 +168,9 @@ def main() -> None:
         n_events_by_band[band] = int(np.nansum(num_arr))
 
     # Pick a shared log color range so panels are directly comparable.
-    finite = np.concatenate([r[np.isfinite(r) & (r > 0)].ravel() for r in ratios.values()])
+    finite = np.concatenate(
+        [r[np.isfinite(r) & (r > 0)].ravel() for r in ratios.values()]
+    )
     if finite.size == 0:
         raise SystemExit("All ratios are NaN — nothing to plot.")
     vmin = float(np.percentile(finite, 5))
@@ -174,41 +185,57 @@ def main() -> None:
 
     images = []
     for i, (band, period_label, mode_label) in enumerate(BANDS):
-        ax = fig.add_subplot(1, n_bands, i + 1, projection="polar",
-                             facecolor=plt.rcParams["axes.facecolor"])
+        ax = fig.add_subplot(
+            1,
+            n_bands,
+            i + 1,
+            projection="polar",
+            facecolor=plt.rcParams["axes.facecolor"],
+        )
         Z = np.ma.masked_invalid(ratios[band])
         im = _polar_pcolormesh(ax, lt_centers, L_edges, Z, norm=norm)
         _format_polar(ax, L_max=L_max)
         ax.set_title(
             f"{band}  (~{period_label})\n{mode_label}",
-            color="white", pad=18, fontsize=13,
+            color="white",
+            pad=18,
+            fontsize=13,
         )
         images.append(im)
 
     # Single shared colorbar in the right margin we reserved via subplots_adjust.
     cbar_ax = fig.add_axes((0.90, 0.15, 0.015, 0.65))
-    cbar = fig.colorbar(images[1], cax=cbar_ax,
-                        label="event-time / dwell-time ratio  (closed field lines)")
+    cbar = fig.colorbar(
+        images[1],
+        cax=cbar_ax,
+        label="event-time / dwell-time ratio  (closed field lines)",
+    )
     cbar.ax.yaxis.set_tick_params(color="white")
     plt.setp(plt.getp(cbar.ax.axes, "yticklabels"), color="white")
 
     # Annotate denominator threshold and L-cutoff at the bottom.
     fig.text(
-        0.46, 0.02,
+        0.46,
+        0.02,
         f"LT in hours (12=noon, 06=dawn, 00=midnight, 18=dusk).  "
         f"L = KMAG-traced equatorial apex r (R$_S$);  "
         f"L $\\leq$ {L_max:.0f}; bins with dwell < {min_dwell_minutes:.0f} min masked.",
-        ha="center", color="white", fontsize=10,
+        ha="center",
+        color="white",
+        fontsize=10,
     )
     fig.suptitle(
         "Equatorial event/dwell ratio per QP band  "
         "(field-line traced to magnetic equator)",
-        color="white", fontsize=14, y=0.98,
+        color="white",
+        fontsize=14,
+        y=0.98,
     )
 
     out = qp.OUTPUT_DIR / "figures" / "sup_event_dwell_polar.png"
-    fig.savefig(out, dpi=200, bbox_inches="tight",
-                facecolor=plt.rcParams["figure.facecolor"])
+    fig.savefig(
+        out, dpi=200, bbox_inches="tight", facecolor=plt.rcParams["figure.facecolor"]
+    )
     log.info("wrote %s", out)
 
     # Quick numerical summary printed alongside.
@@ -224,8 +251,10 @@ def main() -> None:
         with np.errstate(invalid="ignore"):
             agg = np.nanmean(r, axis=1)
         peak_i = int(np.nanargmax(agg))
-        print(f"  {band}: peak LT-avg ratio = {agg[peak_i]:.3f} at L = {L_centers[peak_i]:.1f} R_S "
-              f"(median ratio = {float(np.nanmedian(finite_r)):.3f})")
+        print(
+            f"  {band}: peak LT-avg ratio = {agg[peak_i]:.3f} at L = {L_centers[peak_i]:.1f} R_S "
+            f"(median ratio = {float(np.nanmedian(finite_r)):.3f})"
+        )
 
 
 if __name__ == "__main__":

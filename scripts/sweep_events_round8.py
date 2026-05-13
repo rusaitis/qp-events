@@ -40,15 +40,15 @@ from qp.cli import add_tracing_args, add_verbosity_arg  # noqa: E402
 from qp.io import register_legacy_pickle_stubs  # noqa: E402
 
 register_legacy_pickle_stubs()
+from qp.dwell.tracing import TracingConfig  # noqa: E402
 from qp.events.detector import (  # noqa: E402
-    DetectedEvent,
     MAX_MVA_PARALLEL_FRACTION,
     MIN_DEGREE_OF_POLARIZATION,
     MIN_Q_FACTOR,
     SEGMENT_FWER_ALPHA,
+    DetectedEvent,
     detect_round8,
 )
-from qp.dwell.tracing import TracingConfig  # noqa: E402
 from qp.events.peak_kmag import J2000_POSIX, kmag_peak_columns  # noqa: E402
 from qp.events.persistence import event_to_record, events_to_parquet  # noqa: E402
 from qp.events.sweep_loader import (  # noqa: E402

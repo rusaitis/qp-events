@@ -15,24 +15,34 @@ import csv
 import sys
 import types
 from collections import defaultdict
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-
 from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
 # Register stubs.
 # DO NOT REMOVE: stub names match the module paths used when the legacy
 # DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
-                 "cassinilib", "cassinilib.NewSignal"]:
+for mod_path in [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+]:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in ["SignalSnapshot", "NewSignal", "Interval", "FFT_list",
-                     "WaveSignal", "Wave"]:
+    for cls_name in [
+        "SignalSnapshot",
+        "NewSignal",
+        "Interval",
+        "FFT_list",
+        "WaveSignal",
+        "Wave",
+    ]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
 
@@ -110,8 +120,14 @@ def estimate_observed_bands():
 
         pad = 360
         ratios = compute_power_ratios(
-            bpar[pad:-pad], bp1[pad:-pad], bp2[pad:-pad], btot[pad:-pad],
-            dt=60.0, nperseg=720, noverlap=360, window="hann",
+            bpar[pad:-pad],
+            bp1[pad:-pad],
+            bp2[pad:-pad],
+            btot[pad:-pad],
+            dt=60.0,
+            nperseg=720,
+            noverlap=360,
+            window="hann",
         )
         all_r_perp1.append(ratios["r_perp1"])
         if freq_ref is None:
@@ -158,9 +174,9 @@ def estimate_observed_bands():
 def _default_bands():
     """Fallback band widths from visual estimation of the paper's Figure 5."""
     return {
-        "QP15": (0.95, 1.40),   # mHz (~12-17 min, exploratory)
-        "QP30": (0.45, 0.65),   # mHz
-        "QP60": (0.22, 0.35),   # mHz
+        "QP15": (0.95, 1.40),  # mHz (~12-17 min, exploratory)
+        "QP30": (0.45, 0.65),  # mHz
+        "QP60": (0.22, 0.35),  # mHz
         "QP120": (0.10, 0.18),  # mHz
     }
 
@@ -168,39 +184,64 @@ def _default_bands():
 from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 
 
-def plot_panel(ax, title, eigen_tor, eigen_pol, bands, lat_range=(72, 76),
-               inv_lats=None, published_ref=None):
+def plot_panel(
+    ax,
+    title,
+    eigen_tor,
+    eigen_pol,
+    bands,
+    lat_range=(72, 76),
+    inv_lats=None,
+    published_ref=None,
+):
     """Plot one panel of eigenfrequency curves + observed bands."""
     # Overlay published reference curves (subtle grey, behind everything)
     if published_ref is not None:
         for mode in sorted(published_ref.keys()):
             lats, freqs = published_ref[mode]
-            ax.plot(lats, freqs, color="grey", lw=1.0, ls="-",
-                    alpha=0.35, zorder=1)
+            ax.plot(lats, freqs, color="grey", lw=1.0, ls="-", alpha=0.35, zorder=1)
 
     # Plot eigenfrequency curves
     for mode in sorted(eigen_tor.keys()):
         color = MODE_COLORS.get(mode, "#333333")
-        lats = inv_lats[:len(eigen_tor[mode])]
-        ax.plot(lats, eigen_tor[mode], color=color, lw=2, ls="-",
-                label=f"m={mode}" if mode <= 6 else None, zorder=2)
+        lats = inv_lats[: len(eigen_tor[mode])]
+        ax.plot(
+            lats,
+            eigen_tor[mode],
+            color=color,
+            lw=2,
+            ls="-",
+            label=f"m={mode}" if mode <= 6 else None,
+            zorder=2,
+        )
         if mode in eigen_pol and len(eigen_pol[mode]) > 0:
-            lats_p = inv_lats[:len(eigen_pol[mode])]
-            ax.plot(lats_p, eigen_pol[mode], color=color, lw=1, ls="--",
-                    alpha=0.6, zorder=2)
+            lats_p = inv_lats[: len(eigen_pol[mode])]
+            ax.plot(
+                lats_p, eigen_pol[mode], color=color, lw=1, ls="--", alpha=0.6, zorder=2
+            )
 
     # Overlay observed QP bands as rectangles
     for name, (f_lo, f_hi) in bands.items():
         color = QP_BAND_COLORS[name]
         rect = mpatches.Rectangle(
-            (lat_range[0], f_lo), lat_range[1] - lat_range[0], f_hi - f_lo,
-            color=color, alpha=0.4, zorder=3,
+            (lat_range[0], f_lo),
+            lat_range[1] - lat_range[0],
+            f_hi - f_lo,
+            color=color,
+            alpha=0.4,
+            zorder=3,
         )
         ax.add_patch(rect)
         ax.text(
-            np.mean(lat_range), (f_lo + f_hi) / 2, name,
-            ha="center", va="center", fontsize=11, fontweight="bold",
-            color=color, zorder=4,
+            np.mean(lat_range),
+            (f_lo + f_hi) / 2,
+            name,
+            ha="center",
+            va="center",
+            fontsize=11,
+            fontweight="bold",
+            color=color,
+            zorder=4,
         )
 
     # Formatting
@@ -230,8 +271,9 @@ def plot_panel(ax, title, eigen_tor, eigen_pol, bands, lat_range=(72, 76),
     period_ticks_min = [5, 10, 30, 60, 90, 120, 300, 600]
     period_ticks_mhz = [1000 / (t * 60) for t in period_ticks_min]
     ax3.set_yticks(period_ticks_mhz)
-    ax3.set_yticklabels([f"{t} min" if t < 120 else f"{t//60} h"
-                         for t in period_ticks_min])
+    ax3.set_yticklabels(
+        [f"{t} min" if t < 120 else f"{t // 60} h" for t in period_ticks_min]
+    )
     ax3.set_ylabel("Period", fontsize=11)
     ax3.tick_params(labelsize=9)
 
@@ -261,12 +303,14 @@ def compute_eigenfrequencies_dynamic(
     eigen_pol : dict
         Poloidal eigenfrequencies (mHz) by mode number.
     """
-    from qp.wavesolver.solver import WavesolverConfig, solve_for_latitude_range
     from qp.fieldline.kmag_model import SaturnField
+    from qp.wavesolver.solver import WavesolverConfig, solve_for_latitude_range
 
     field = SaturnField() if use_kmag else None
-    print(f"  Computing eigenfrequencies at {local_time_hours}h LT "
-          f"({'KMAG' if use_kmag else 'dipole'})...")
+    print(
+        f"  Computing eigenfrequencies at {local_time_hours}h LT "
+        f"({'KMAG' if use_kmag else 'dipole'})..."
+    )
 
     eigen_tor: dict[int, list[float]] = {m: [] for m in range(1, n_modes + 1)}
     eigen_pol: dict[int, list[float]] = {m: [] for m in range(1, n_modes + 1)}
@@ -281,11 +325,15 @@ def compute_eigenfrequencies_dynamic(
             freq_range=(1e-4, 0.008),
             resolution=150,
         )
-        results = solve_for_latitude_range(config, lat_min=63, lat_max=76, n_fieldlines=25)
+        results = solve_for_latitude_range(
+            config, lat_min=63, lat_max=76, n_fieldlines=25
+        )
 
         for result in results:
             if component == "toroidal":
-                inv_lats_list.append(np.degrees(np.arccos(1.0 / np.sqrt(result.l_shell))))
+                inv_lats_list.append(
+                    np.degrees(np.arccos(1.0 / np.sqrt(result.l_shell)))
+                )
             for mode in result.modes:
                 if mode.mode_number <= n_modes:
                     eigen_dict[mode.mode_number].append(mode.frequency_mhz)
@@ -299,11 +347,18 @@ def compute_eigenfrequencies_dynamic(
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Figure 6: Eigenfrequencies")
-    parser.add_argument("--compute", action="store_true",
-                        help="Compute eigenfrequencies dynamically instead of using lookup tables")
-    parser.add_argument("--dipole", action="store_true",
-                        help="Use dipole field model instead of KMAG (with --compute)")
+    parser.add_argument(
+        "--compute",
+        action="store_true",
+        help="Compute eigenfrequencies dynamically instead of using lookup tables",
+    )
+    parser.add_argument(
+        "--dipole",
+        action="store_true",
+        help="Use dipole field model instead of KMAG (with --compute)",
+    )
     args = parser.parse_args()
 
     print("Estimating observed QP band widths...")
@@ -323,10 +378,12 @@ def main():
         sys.exit(1)
 
     inv_lats_noon, eigen_tor_noon, eigen_pol_noon = compute_eigenfrequencies_dynamic(
-        local_time_hours=12.0, use_kmag=not args.dipole,
+        local_time_hours=12.0,
+        use_kmag=not args.dipole,
     )
     inv_lats_mid, eigen_tor_mid, eigen_pol_mid = compute_eigenfrequencies_dynamic(
-        local_time_hours=0.0, use_kmag=not args.dipole,
+        local_time_hours=0.0,
+        use_kmag=not args.dipole,
     )
 
     # --- Plot ---
@@ -336,31 +393,75 @@ def main():
     fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(16, 7))
     fig.subplots_adjust(wspace=0.35, left=0.06, right=0.90, top=0.88, bottom=0.12)
 
-    plot_panel(ax_a, "Field Lines at 12 LT", eigen_tor_noon, eigen_pol_noon,
-               bands, lat_range=(72, 76), inv_lats=inv_lats_noon,
-               published_ref=ref_noon)
-    ax_a.text(0.02, 0.95, "a", transform=ax_a.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    plot_panel(
+        ax_a,
+        "Field Lines at 12 LT",
+        eigen_tor_noon,
+        eigen_pol_noon,
+        bands,
+        lat_range=(72, 76),
+        inv_lats=inv_lats_noon,
+        published_ref=ref_noon,
+    )
+    ax_a.text(
+        0.02,
+        0.95,
+        "a",
+        transform=ax_a.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
 
-    plot_panel(ax_b, "Field Lines at 0 LT", eigen_tor_mid, eigen_pol_mid,
-               bands, lat_range=(72, 74), inv_lats=inv_lats_mid,
-               published_ref=ref_midnight)
-    ax_b.text(0.02, 0.95, "b", transform=ax_b.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    plot_panel(
+        ax_b,
+        "Field Lines at 0 LT",
+        eigen_tor_mid,
+        eigen_pol_mid,
+        bands,
+        lat_range=(72, 74),
+        inv_lats=inv_lats_mid,
+        published_ref=ref_midnight,
+    )
+    ax_b.text(
+        0.02,
+        0.95,
+        "b",
+        transform=ax_b.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
 
     # Legend
-    handles_model = [plt.Line2D([0], [0], color=MODE_COLORS[m], lw=2, label=f"m={m}")
-                     for m in range(1, 7)]
+    handles_model = [
+        plt.Line2D([0], [0], color=MODE_COLORS[m], lw=2, label=f"m={m}")
+        for m in range(1, 7)
+    ]
     handles_model.append(
         plt.Line2D([0], [0], color="grey", lw=1.0, alpha=0.35, label="Published")
     )
-    handles_obs = [mpatches.Patch(color=QP_BAND_COLORS[n], alpha=0.4, label=n)
-                   for n in QP_BAND_NAMES]
+    handles_obs = [
+        mpatches.Patch(color=QP_BAND_COLORS[n], alpha=0.4, label=n)
+        for n in QP_BAND_NAMES
+    ]
 
-    ax_a.legend(handles=handles_model, loc="upper right", title="MODELED",
-                frameon=True, fontsize=9, title_fontsize=10)
-    ax_b.legend(handles=handles_obs, loc="center right", title="OBSERVED",
-                frameon=True, fontsize=9, title_fontsize=10)
+    ax_a.legend(
+        handles=handles_model,
+        loc="upper right",
+        title="MODELED",
+        frameon=True,
+        fontsize=9,
+        title_fontsize=10,
+    )
+    ax_b.legend(
+        handles=handles_obs,
+        loc="center right",
+        title="OBSERVED",
+        frameon=True,
+        fontsize=9,
+        title_fontsize=10,
+    )
 
     Path("output").mkdir(exist_ok=True)
     suffix = "_computed" if args.compute else ""

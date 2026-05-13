@@ -16,30 +16,41 @@ Referee: full 360° range, no phase-jump artifacts.
 
 import sys
 import types
+from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from scipy import signal as sig
-
-from pathlib import Path
 
 _project_root = Path(__file__).resolve().parents[1]
 
 # Register stubs.
 # DO NOT REMOVE: stub names match the module paths used when the legacy
 # DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-for mod_path in ["__main__", "data_sweeper", "mag_fft_sweeper",
-                 "cassinilib", "cassinilib.NewSignal", "cassinilib.PlotFFT"]:
+for mod_path in [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+    "cassinilib.PlotFFT",
+]:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in ["SignalSnapshot", "NewSignal", "Interval", "FFT_list",
-                     "WaveSignal", "Wave"]:
+    for cls_name in [
+        "SignalSnapshot",
+        "NewSignal",
+        "Interval",
+        "FFT_list",
+        "WaveSignal",
+        "Wave",
+    ]:
         setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
 
 
 import qp
-from qp.plotting.style import use_paper_style, style_axes
+from qp.plotting.style import style_axes, use_paper_style
 
 
 def running_phase(b_perp1, b_perp2, dt=60.0, period_sec=3600.0):
@@ -75,8 +86,8 @@ def running_phase(b_perp1, b_perp2, dt=60.0, period_sec=3600.0):
     deg_per_sec = 360.0 / period_sec
 
     for ind in range(half_window, N - half_window):
-        y1 = b_perp1[ind - half_window:ind + half_window]
-        y2 = b_perp2[ind - half_window:ind + half_window]
+        y1 = b_perp1[ind - half_window : ind + half_window]
+        y2 = b_perp2[ind - half_window : ind + half_window]
         npts = len(y1)
         ccor = sig.correlate(y2, y1, mode="same", method="direct")
         lags_samples = sig.correlation_lags(npts, npts, mode="same")
@@ -154,8 +165,15 @@ def plot_example(axes_ts, axes_ph, seg, period_sec, title, panel_labels):
     ax.axhline(0, ls="--", lw=0.5, color="grey", alpha=0.3)
     ax.legend(loc="upper right", frameon=False, fontsize=11, ncol=2)
     ax.set_title(title, fontsize=14, loc="left", color="white")
-    ax.text(0.01, 0.92, panel_labels[0], transform=ax.transAxes,
-            fontsize=16, fontweight="bold", va="top")
+    ax.text(
+        0.01,
+        0.92,
+        panel_labels[0],
+        transform=ax.transAxes,
+        fontsize=16,
+        fontweight="bold",
+        va="top",
+    )
     ax.set_xlim(0, 24)
     ax.set_xticklabels([])
     style_axes(ax)
@@ -174,8 +192,15 @@ def plot_example(axes_ts, axes_ph, seg, period_sec, title, panel_labels):
     ax.set_ylim(-200, 200)
     ax.set_yticks([-180, -90, 0, 90, 180])
     ax.set_xlim(0, 24)
-    ax.text(0.01, 0.92, panel_labels[1], transform=ax.transAxes,
-            fontsize=16, fontweight="bold", va="top")
+    ax.text(
+        0.01,
+        0.92,
+        panel_labels[1],
+        transform=ax.transAxes,
+        fontsize=16,
+        fontweight="bold",
+        va="top",
+    )
     style_axes(ax)
 
 
@@ -205,13 +230,17 @@ def main():
 
     use_paper_style()
     fig, (ax_a, ax_b, ax_c, ax_d) = plt.subplots(
-        4, 1, figsize=(12, 10),
+        4,
+        1,
+        figsize=(12, 10),
         gridspec_kw={"height_ratios": [2, 1.5, 2, 1.5]},
     )
     fig.subplots_adjust(hspace=0.12, left=0.08, right=0.95, top=0.95, bottom=0.06)
 
     plot_example(
-        ax_a, ax_b, seg_circ,
+        ax_a,
+        ax_b,
+        seg_circ,
         period_sec=float(circ_row["period_min"]) * 60.0,
         title=(
             f"EXAMPLE 1 (Circular: |e|={abs(circ_row['ellipticity']):.2f}, "
@@ -220,7 +249,9 @@ def main():
         panel_labels=("a", "b"),
     )
     plot_example(
-        ax_c, ax_d, seg_lin,
+        ax_c,
+        ax_d,
+        seg_lin,
         period_sec=float(lin_row["period_min"]) * 60.0,
         title=(
             f"EXAMPLE 2 (Linear: |e|={abs(lin_row['ellipticity']):.2f}, "

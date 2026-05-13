@@ -76,8 +76,12 @@ def main() -> None:
 
     use_paper_style()
     fig, axes = plt.subplots(
-        2, len(BANDS), figsize=(4.3 * len(BANDS), 7),
-        sharex=True, sharey="row", constrained_layout=True,
+        2,
+        len(BANDS),
+        figsize=(4.3 * len(BANDS), 7),
+        sharex=True,
+        sharey="row",
+        constrained_layout=True,
     )
 
     for col, band in enumerate(BANDS):
@@ -86,17 +90,29 @@ def main() -> None:
             ax = axes[row, col]
             phases = sub[key].dropna().to_numpy()
             if phases.size == 0:
-                ax.text(0.5, 0.5, "no data", transform=ax.transAxes,
-                        ha="center", va="center")
+                ax.text(
+                    0.5,
+                    0.5,
+                    "no data",
+                    transform=ax.transAxes,
+                    ha="center",
+                    va="center",
+                )
                 continue
             counts, edges = np.histogram(phases, bins=bins)
             centers = 0.5 * (edges[:-1] + edges[1:])
             uniform = phases.size / (bins.size - 1)
             color = BAND_COLORS[band] if row == 0 else "#7fcdcd"
-            ax.bar(centers, counts, width=14, color=color,
-                   alpha=0.85, edgecolor="black", lw=0.3)
-            ax.axhline(uniform, color="grey", lw=1, ls="--",
-                       label="uniform")
+            ax.bar(
+                centers,
+                counts,
+                width=14,
+                color=color,
+                alpha=0.85,
+                edgecolor="black",
+                lw=0.3,
+            )
+            ax.axhline(uniform, color="grey", lw=1, ls="--", label="uniform")
             ax.set_xlim(0, 360)
             ax.set_xticks([0, 90, 180, 270, 360])
             if row == 1:

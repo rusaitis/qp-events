@@ -202,7 +202,7 @@ def main() -> None:
         "year_to": args.year_to,
         "source_parquet": str(args.input),
         "elapsed_seconds": elapsed,
-        "completed": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "completed": datetime.datetime.now(datetime.UTC).isoformat(),
     }
 
     # Use events_to_parquet so the side-car JSON layout matches the

@@ -7,23 +7,35 @@ Panel (c): Power ratios r_i = P(b_i) / P(<B_T>_f), showing QP60 peak.
 Referee notes: dark background, ephemeris ticks, visible vertical period lines.
 """
 
+import datetime
 import sys
 import types
-import datetime
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
 from pathlib import Path
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
 # Register stubs for legacy pickle deserialization.
 # DO NOT REMOVE: stub names match the module paths used when the legacy
 # DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-_stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list", "WaveSignal", "Wave"]
-_stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper", "cassinilib", "cassinilib.NewSignal"]
+_stub_classes = [
+    "SignalSnapshot",
+    "NewSignal",
+    "Interval",
+    "FFT_list",
+    "WaveSignal",
+    "Wave",
+]
+_stub_modules = [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+]
 for mod_path in _stub_modules:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
@@ -33,13 +45,16 @@ for mod_path in _stub_modules:
 
 import qp
 from qp.coords.mfa import to_mfa
-from qp.signal.timeseries import running_average
-from qp.signal.power_ratio import compute_power_ratios
 from qp.plotting.style import (
-    FIELD_COLORS, FIELD_COLORS_SPECTRA, use_paper_style, style_axes,
-    draw_period_lines, plot_segmented,
+    FIELD_COLORS,
+    FIELD_COLORS_SPECTRA,
+    draw_period_lines,
+    plot_segmented,
+    style_axes,
+    use_paper_style,
 )
-
+from qp.signal.power_ratio import compute_power_ratios
+from qp.signal.timeseries import running_average
 
 TARGET_DATE = datetime.date(2007, 1, 2)
 DETREND_WINDOW_MIN = 180  # 3-hour running average for MFA background
@@ -85,7 +100,9 @@ def process_segment(seg, target_date):
 
     # MFA transform
     position = np.column_stack([coords_24h["x"], coords_24h["y"], coords_24h["z"]])
-    field = np.column_stack([perturbations["Bx"], perturbations["By"], perturbations["Bz"]])
+    field = np.column_stack(
+        [perturbations["Bx"], perturbations["By"], perturbations["Bz"]]
+    )
     background = np.column_stack([bg_fields["Bx"], bg_fields["By"], bg_fields["Bz"]])
 
     mfa = to_mfa(position, field, background, coords="KSM")
@@ -111,8 +128,14 @@ def main():
 
     # Compute power ratios
     ratios = compute_power_ratios(
-        b_par, b_perp1, b_perp2, b_tot,
-        dt=dt, nperseg=nperseg, noverlap=noverlap, window="hann",
+        b_par,
+        b_perp1,
+        b_perp2,
+        b_tot,
+        dt=dt,
+        nperseg=nperseg,
+        noverlap=noverlap,
+        window="hann",
     )
     freq = ratios["freq"]
 
@@ -120,21 +143,38 @@ def main():
     use_paper_style()
 
     fig, (ax_a, ax_b, ax_c) = plt.subplots(
-        3, 1, figsize=(12, 11),
+        3,
+        1,
+        figsize=(12, 11),
         gridspec_kw={"height_ratios": [2, 2, 2]},
     )
     fig.subplots_adjust(hspace=0.15, left=0.10, right=0.95, top=0.93, bottom=0.06)
 
     # ===== Panel (a): MFA perturbations timeseries =====
-    labels_mfa = [r"$B_{\parallel}$", r"$B_{\perp 1}$", r"$B_{\perp 2}$", r"$B_{total}$"]
-    for comp, label, color in zip([b_par, b_perp1, b_perp2, b_tot], labels_mfa, FIELD_COLORS):
+    labels_mfa = [
+        r"$B_{\parallel}$",
+        r"$B_{\perp 1}$",
+        r"$B_{\perp 2}$",
+        r"$B_{total}$",
+    ]
+    for comp, label, color in zip(
+        [b_par, b_perp1, b_perp2, b_tot], labels_mfa, FIELD_COLORS, strict=False
+    ):
         ax_a.plot(times, comp, color=color, label=label, lw=1.5, alpha=0.8)
 
     ax_a.set_ylabel("Field Perturbations (nT)", fontsize=14)
     ax_a.axhline(0, ls="--", lw=1, color="grey", alpha=0.3)
     ax_a.legend(loc="upper left", frameon=False, fontsize=12, ncol=4)
     ax_a.set_title(f"Spectral Density of Wave Activity ({TARGET_DATE})", fontsize=18)
-    ax_a.text(0.01, 0.95, "a", transform=ax_a.transAxes, fontsize=18, fontweight="bold", va="top")
+    ax_a.text(
+        0.01,
+        0.95,
+        "a",
+        transform=ax_a.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
     style_axes(ax_a)
 
     # Mark wave train intervals (from original: ~3-8 UT, ~13-18 UT, ~20-24 UT)
@@ -153,7 +193,8 @@ def main():
         mid = t1_end + (t2_start - t1_end) / 2
         ypos = ax_a.get_ylim()[0] * 0.7
         ax_a.annotate(
-            "", xy=(mdates.date2num(t2_start), ypos),
+            "",
+            xy=(mdates.date2num(t2_start), ypos),
             xytext=(mdates.date2num(t1_end), ypos),
             arrowprops=dict(arrowstyle="<->", color="orange", lw=1),
         )
@@ -161,13 +202,25 @@ def main():
 
     for lbl, pos in zip(
         ["Strong QP60\nActivity"] * 3,
-        [activity[0][0] + (activity[0][1] - activity[0][0]) / 2,
-         activity[1][0] + (activity[1][1] - activity[1][0]) / 2,
-         activity[2][0] + (activity[2][1] - activity[2][0]) / 2],
+        [
+            activity[0][0] + (activity[0][1] - activity[0][0]) / 2,
+            activity[1][0] + (activity[1][1] - activity[1][0]) / 2,
+            activity[2][0] + (activity[2][1] - activity[2][0]) / 2,
+        ],
+        strict=False,
     ):
-        ax_a.text(pos, ax_a.get_ylim()[0] * 0.95, lbl, fontsize=6, color="orange",
-                  ha="center", va="bottom",
-                  bbox=dict(boxstyle="round,pad=0.15", fc="black", ec="orange", alpha=0.7, lw=0.5))
+        ax_a.text(
+            pos,
+            ax_a.get_ylim()[0] * 0.95,
+            lbl,
+            fontsize=6,
+            color="orange",
+            ha="center",
+            va="bottom",
+            bbox=dict(
+                boxstyle="round,pad=0.15", fc="black", ec="orange", alpha=0.7, lw=0.5
+            ),
+        )
 
     ax_a.xaxis.set_major_formatter(mdates.DateFormatter("%H"))
     ax_a.xaxis.set_major_locator(mdates.HourLocator(interval=2))
@@ -178,29 +231,54 @@ def main():
     colors_spec = FIELD_COLORS_SPECTRA
 
     psd_keys = ["psd_par", "psd_perp1", "psd_perp2", "psd_total"]
-    for key, label, color in zip(psd_keys, labels_mfa, colors_spec):
-        plot_segmented(ax_b, freq, ratios[key], lw=2, marker="o", ms=2,
-                       color=color, label=label)
+    for key, label, color in zip(psd_keys, labels_mfa, colors_spec, strict=False):
+        plot_segmented(
+            ax_b, freq, ratios[key], lw=2, marker="o", ms=2, color=color, label=label
+        )
 
     # Background estimate (dashed white)
-    plot_segmented(ax_b, freq, ratios["background"], lw=2, ls="--",
-                   color="white", base_alpha=0.3, label="Background")
+    plot_segmented(
+        ax_b,
+        freq,
+        ratios["background"],
+        lw=2,
+        ls="--",
+        color="white",
+        base_alpha=0.3,
+        label="Background",
+    )
 
     ax_b.set_yscale("log")
     ax_b.set_xscale("log")
     ax_b.set_ylabel(r"Power Density (nT$^2$/Hz)", fontsize=14)
     ax_b.legend(loc="upper right", frameon=False, fontsize=10, ncol=3)
-    ax_b.text(0.01, 0.95, "b", transform=ax_b.transAxes, fontsize=18, fontweight="bold", va="top")
-    ax_b.text(0.01, 0.82, "Power Density", transform=ax_b.transAxes, fontsize=12, color="white")
+    ax_b.text(
+        0.01,
+        0.95,
+        "b",
+        transform=ax_b.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
+    ax_b.text(
+        0.01,
+        0.82,
+        "Power Density",
+        transform=ax_b.transAxes,
+        fontsize=12,
+        color="white",
+    )
     style_axes(ax_b, minimal=False)
 
     draw_period_lines(ax_b)
 
     # ===== Panel (c): Power ratios =====
     ratio_keys = ["r_par", "r_perp1", "r_perp2", "r_total"]
-    for key, label, color in zip(ratio_keys, labels_mfa, colors_spec):
-        plot_segmented(ax_c, freq, ratios[key], lw=2, marker="o", ms=2,
-                       color=color, label=label)
+    for key, label, color in zip(ratio_keys, labels_mfa, colors_spec, strict=False):
+        plot_segmented(
+            ax_c, freq, ratios[key], lw=2, marker="o", ms=2, color=color, label=label
+        )
 
     ax_c.axhline(1.0, ls="--", lw=2, color="orange", alpha=0.5)
     ax_c.set_yscale("log")
@@ -208,9 +286,23 @@ def main():
     ax_c.set_ylabel(r"Power Ratio $r_i$", fontsize=14)
     ax_c.set_xlabel("Frequency (mHz)", fontsize=14)
     ax_c.legend(loc="upper right", frameon=False, fontsize=10, ncol=2)
-    ax_c.text(0.01, 0.95, "c", transform=ax_c.transAxes, fontsize=18, fontweight="bold", va="top")
-    ax_c.text(0.01, 0.82, r"Power Ratio to $B_T$ Background Power",
-              transform=ax_c.transAxes, fontsize=12, color="white")
+    ax_c.text(
+        0.01,
+        0.95,
+        "c",
+        transform=ax_c.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
+    ax_c.text(
+        0.01,
+        0.82,
+        r"Power Ratio to $B_T$ Background Power",
+        transform=ax_c.transAxes,
+        fontsize=12,
+        color="white",
+    )
     style_axes(ax_c, minimal=False)
 
     draw_period_lines(ax_c)
@@ -220,8 +312,12 @@ def main():
         ax.set_xlim(freq[1] / 1e-3, freq[-1] / 1e-3)
         ax.tick_params(axis="both", labelsize=12)
 
-    plt.savefig("output/figure4.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    plt.savefig(
+        "output/figure4.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
     print("Saved output/figure4.png")
     plt.close()
 

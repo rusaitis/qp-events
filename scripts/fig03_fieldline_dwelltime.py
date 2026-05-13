@@ -7,21 +7,20 @@ right = noon (12 LT ± 2h). Uses realistic KMAG field model.
 Referee: dark background.
 """
 
-import os
 import datetime
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
-import matplotlib.collections as mcoll
-
+import os
 from pathlib import Path
+
+import matplotlib.collections as mcoll
+import matplotlib.colors as mcolors
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
 import qp
 from qp.analysis.filtering import value_to_bin
-from qp.plotting.style import use_paper_style, BG_COLOR
+from qp.plotting.style import BG_COLOR, use_paper_style
 
 # SurfaceMap bins
 N_LAT_BINS = 180
@@ -68,10 +67,34 @@ def run_kmag_traces(colats_deg, side="noon"):
     etime = (t_ref - j2000).total_seconds()
 
     # Write params
-    params_fields = ["Epoch", "ETime(sec)", "BY_IMF", "BZ_IMF", "Dp", "IN_COORD",
-                     "OUT_COORD", "COMMENT", "TRACE(Y/N)", "CARSPH", "STEP", "FLATTENING"]
-    params_values = ["j2000", str(etime), "-0.2", "0.1", "0.017", "KSM",
-                     "DIS", "000", "Y", "CAR", "0.01", "0.09796"]
+    params_fields = [
+        "Epoch",
+        "ETime(sec)",
+        "BY_IMF",
+        "BZ_IMF",
+        "Dp",
+        "IN_COORD",
+        "OUT_COORD",
+        "COMMENT",
+        "TRACE(Y/N)",
+        "CARSPH",
+        "STEP",
+        "FLATTENING",
+    ]
+    params_values = [
+        "j2000",
+        str(etime),
+        "-0.2",
+        "0.1",
+        "0.017",
+        "KSM",
+        "DIS",
+        "000",
+        "Y",
+        "CAR",
+        "0.01",
+        "0.09796",
+    ]
     data = np.vstack([params_fields, params_values])
     np.savetxt(kmag_dir / "kmag_params.txt", data, fmt="%14s", delimiter=" ")
 
@@ -91,10 +114,12 @@ def run_kmag_traces(colats_deg, side="noon"):
 
     # Run KMAG
     import subprocess
-    result = subprocess.run(
+
+    subprocess.run(
         [str(_project_root / "fortran" / "KMAG")],
         cwd=str(_project_root),
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
 
     # Read traces
@@ -135,8 +160,9 @@ def extract_dwell_vs_mlat(surface_map, inv_lat_deg, lt_center, lt_half_width):
     else:
         lt_bin_lo = value_to_bin(lt_lo, 0, 24, N_LT_BINS)
         lt_bin_hi = value_to_bin(lt_hi, 0, 24, N_LT_BINS)
-        dwell = (surface_map[lat_bin, lt_bin_lo:, :].sum(axis=0) +
-                 surface_map[lat_bin, :lt_bin_hi, :].sum(axis=0))
+        dwell = surface_map[lat_bin, lt_bin_lo:, :].sum(axis=0) + surface_map[
+            lat_bin, :lt_bin_hi, :
+        ].sum(axis=0)
 
     return dwell / (3600 * 24)  # seconds to days
 
@@ -193,7 +219,7 @@ def main():
 
     # Plot noon traces (x > 0 side)
     for trace in noon_traces:
-        r_eq = np.max(np.sqrt(trace[:, 0]**2 + trace[:, 1]**2 + trace[:, 2]**2))
+        r_eq = np.max(np.sqrt(trace[:, 0] ** 2 + trace[:, 1] ** 2 + trace[:, 2] ** 2))
         inv_lat = l_shell_to_inv_lat(r_eq)
         dwell = extract_dwell_vs_mlat(surface_map, inv_lat, 12, 2)
         dwell_neg = extract_dwell_vs_mlat(surface_map, -inv_lat, 12, 2)
@@ -205,7 +231,7 @@ def main():
 
     # Plot midnight traces (x < 0 side)
     for trace in midnight_traces:
-        r_eq = np.max(np.sqrt(trace[:, 0]**2 + trace[:, 1]**2 + trace[:, 2]**2))
+        r_eq = np.max(np.sqrt(trace[:, 0] ** 2 + trace[:, 1] ** 2 + trace[:, 2] ** 2))
         inv_lat = l_shell_to_inv_lat(r_eq)
         dwell = extract_dwell_vs_mlat(surface_map, inv_lat, 0, 2)
         dwell_neg = extract_dwell_vs_mlat(surface_map, -inv_lat, 0, 2)
@@ -228,10 +254,24 @@ def main():
     ax.axvline(0, color="grey", ls="--", lw=0.5, alpha=0.3)
     ax.grid(True, color="grey", alpha=0.15, ls="--")
 
-    ax.text(-10, 16, r"0 LT $\pm$ 2h", fontsize=16, color="white", ha="center",
-            bbox=dict(fc=BG_COLOR, ec="white", boxstyle="round,pad=0.3", alpha=0.8))
-    ax.text(10, 16, r"12 LT $\pm$ 2h", fontsize=16, color="white", ha="center",
-            bbox=dict(fc=BG_COLOR, ec="white", boxstyle="round,pad=0.3", alpha=0.8))
+    ax.text(
+        -10,
+        16,
+        r"0 LT $\pm$ 2h",
+        fontsize=16,
+        color="white",
+        ha="center",
+        bbox=dict(fc=BG_COLOR, ec="white", boxstyle="round,pad=0.3", alpha=0.8),
+    )
+    ax.text(
+        10,
+        16,
+        r"12 LT $\pm$ 2h",
+        fontsize=16,
+        color="white",
+        ha="center",
+        bbox=dict(fc=BG_COLOR, ec="white", boxstyle="round,pad=0.3", alpha=0.8),
+    )
 
     sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
     sm.set_array([])
@@ -239,8 +279,12 @@ def main():
     cbar.set_label("Dwell Time (days)", fontsize=14, color="white")
     cbar.ax.tick_params(colors="white")
 
-    plt.savefig("output/figure3.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    plt.savefig(
+        "output/figure3.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
     print("Saved output/figure3.png")
     plt.close()
 

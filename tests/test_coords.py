@@ -68,7 +68,9 @@ class TestTransforms:
         phi = rng.uniform(-np.pi, np.pi, 5)
         R = rotation_matrix_sph2car(theta, phi)
         eye = np.einsum("nij,nkj->nik", R, R)
-        np.testing.assert_allclose(eye, np.broadcast_to(np.eye(3), eye.shape), atol=1e-12)
+        np.testing.assert_allclose(
+            eye, np.broadcast_to(np.eye(3), eye.shape), atol=1e-12
+        )
 
 
 class TestKSM:
@@ -113,4 +115,6 @@ class TestKSM:
         expected = np.degrees(np.arccos(1.0 / np.sqrt(L)))
         # Sign matches hemisphere of z_off; z == DIPOLE_OFFSET_Z makes
         # z_off == 0 — copysign on 0.0 returns +0, so expect +expected.
-        np.testing.assert_allclose(dipole_invariant_latitude(x, y, z), expected, atol=1e-9)
+        np.testing.assert_allclose(
+            dipole_invariant_latitude(x, y, z), expected, atol=1e-9
+        )

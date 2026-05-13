@@ -49,7 +49,9 @@ def main() -> None:
     inv_total = dwell.dipole_inv_lat_total.values
     with np.errstate(divide="ignore", invalid="ignore"):
         sheet_fraction = np.where(
-            inv_total > 60.0, weak_total / inv_total, np.nan,
+            inv_total > 60.0,
+            weak_total / inv_total,
+            np.nan,
         )
     sheet_fraction = np.clip(sheet_fraction, 0, 1)
 
@@ -70,29 +72,38 @@ def main() -> None:
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5), constrained_layout=True)
     im1 = axes[0].pcolormesh(
-        lts, inv_lat, sheet_fraction,
-        shading="auto", cmap="cividis", vmin=0, vmax=0.6,
+        lts,
+        inv_lat,
+        sheet_fraction,
+        shading="auto",
+        cmap="cividis",
+        vmin=0,
+        vmax=0.6,
     )
-    axes[0].set_title("Plasma sheet fraction\n(weak_field_total / dipole_inv_lat_total)")
+    axes[0].set_title(
+        "Plasma sheet fraction\n(weak_field_total / dipole_inv_lat_total)"
+    )
     axes[0].set_xlabel("Local time (h)")
     axes[0].set_ylabel("Dipole invariant latitude (deg)")
     axes[0].set_ylim(-90, 90)
-    fig.colorbar(im1, ax=axes[0], fraction=0.04, pad=0.02,
-                 label="dwell fraction")
+    fig.colorbar(im1, ax=axes[0], fraction=0.04, pad=0.02, label="dwell fraction")
 
     im2 = axes[1].pcolormesh(
-        lts, events.magnetic_latitude.values, qp60_rate,
-        shading="auto", cmap="plasma", vmin=0, vmax=0.4,
+        lts,
+        events.magnetic_latitude.values,
+        qp60_rate,
+        shading="auto",
+        cmap="plasma",
+        vmin=0,
+        vmax=0.4,
     )
     axes[1].set_title("QP60 occurrence rate\n(event_time / dwell, this run)")
     axes[1].set_xlabel("Local time (h)")
     axes[1].set_ylabel("Magnetic latitude (deg)")
     axes[1].set_ylim(-90, 90)
-    fig.colorbar(im2, ax=axes[1], fraction=0.04, pad=0.02,
-                 label="event/dwell")
+    fig.colorbar(im2, ax=axes[1], fraction=0.04, pad=0.02, label="event/dwell")
 
-    fig.suptitle("Phase 6.8 — Plasma sheet proxy vs QP60 occurrence",
-                 fontsize=13)
+    fig.suptitle("Phase 6.8 — Plasma sheet proxy vs QP60 occurrence", fontsize=13)
     out_dir = _PROJECT_ROOT / "Output" / "figures"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "figure12_plasma_sheet_split.png"

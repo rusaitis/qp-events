@@ -23,7 +23,8 @@ def main():
     parser = argparse.ArgumentParser(description="Build quality flags CSV")
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument(
-        "--output", type=Path,
+        "--output",
+        type=Path,
         default=DATA_ROOT / "CASSINI-DATA" / "DataProducts" / "quality_flags.csv",
     )
     args = parser.parse_args()
@@ -64,7 +65,9 @@ def main():
     total_sec = sum((f.end - f.start).total_seconds() for f in flags)
     total_hours = total_sec / 3600
     mission_hours = 14 * 365.25 * 24
-    print(f"  Total flagged time: {total_hours:.1f} hours ({total_hours / mission_hours * 100:.2f}% of mission)")
+    print(
+        f"  Total flagged time: {total_hours:.1f} hours ({total_hours / mission_hours * 100:.2f}% of mission)"
+    )
     print(f"{'=' * 55}")
 
     flags_to_csv(flags, args.output)

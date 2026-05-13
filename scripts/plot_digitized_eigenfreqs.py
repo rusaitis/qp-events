@@ -52,8 +52,12 @@ def extract_calibration_12lt(data: dict) -> tuple[float, float, float, float]:
 
 
 def px_to_physical(
-    xPx: float, yPx: float,
-    x1_px: float, x2_px: float, y1_px: float, y2_px: float,
+    xPx: float,
+    yPx: float,
+    x1_px: float,
+    x2_px: float,
+    y1_px: float,
+    y2_px: float,
 ) -> tuple[float, float]:
     """Convert pixel coordinates to (latitude_deg, freq_mhz).
 
@@ -61,12 +65,16 @@ def px_to_physical(
     y-axis: log from 0.1 to 1.0 mHz
     """
     lat = 64.0 + (xPx - x1_px) / (x2_px - x1_px) * 12.0
-    log_y = math.log10(0.1) + (yPx - y1_px) / (y2_px - y1_px) * (math.log10(1.0) - math.log10(0.1))
-    freq = 10.0 ** log_y
+    log_y = math.log10(0.1) + (yPx - y1_px) / (y2_px - y1_px) * (
+        math.log10(1.0) - math.log10(0.1)
+    )
+    freq = 10.0**log_y
     return lat, freq
 
 
-def extract_panel(json_path: Path, panel_name: str) -> dict[int, list[tuple[float, float]]]:
+def extract_panel(
+    json_path: Path, panel_name: str
+) -> dict[int, list[tuple[float, float]]]:
     """Extract all modes from a JSON export file.
 
     Returns dict[mode_number] = [(lat, freq_mhz), ...] sorted by latitude.
@@ -109,7 +117,9 @@ def save_csv(noon: dict, midnight: dict, path: Path):
             for mode_num in sorted(modes):
                 for lat, freq in modes[mode_num]:
                     writer.writerow([panel_name, f"{lat:.2f}", mode_num, f"{freq:.5f}"])
-    print(f"Saved {path} ({sum(len(v) for v in noon.values()) + sum(len(v) for v in midnight.values())} points)")
+    print(
+        f"Saved {path} ({sum(len(v) for v in noon.values()) + sum(len(v) for v in midnight.values())} points)"
+    )
 
 
 def plot_panel(ax, title: str, modes: dict[int, list[tuple[float, float]]]):
@@ -119,8 +129,7 @@ def plot_panel(ax, title: str, modes: dict[int, list[tuple[float, float]]]):
         lats = [p[0] for p in pts]
         freqs = [p[1] for p in pts]
         color = MODE_COLORS.get(mode_num, "#333333")
-        ax.plot(lats, freqs, "-o", color=color, lw=2, ms=3,
-                label=f"m={mode_num}")
+        ax.plot(lats, freqs, "-o", color=color, lw=2, ms=3, label=f"m={mode_num}")
 
     for period_min, label in [(30, "30 min"), (60, "60 min")]:
         f_mhz = 1000.0 / (period_min * 60)
@@ -142,8 +151,9 @@ def plot_panel(ax, title: str, modes: dict[int, list[tuple[float, float]]]):
     period_ticks = [5, 10, 30, 60, 120, 300]
     period_freqs = [1000.0 / (t * 60) for t in period_ticks]
     ax2.set_yticks(period_freqs)
-    ax2.set_yticklabels([f"{t} min" if t < 120 else f"{t // 60} h"
-                         for t in period_ticks])
+    ax2.set_yticklabels(
+        [f"{t} min" if t < 120 else f"{t // 60} h" for t in period_ticks]
+    )
     ax2.set_ylabel("Period")
 
 
@@ -156,9 +166,11 @@ def main():
         print(f"\n=== {name} ===")
         for mode_num in sorted(modes):
             pts = modes[mode_num]
-            print(f"  m={mode_num}: {len(pts)} points, "
-                  f"lat [{pts[0][0]:.1f}° .. {pts[-1][0]:.1f}°], "
-                  f"freq [{pts[-1][1]:.4f} .. {pts[0][1]:.4f}] mHz")
+            print(
+                f"  m={mode_num}: {len(pts)} points, "
+                f"lat [{pts[0][0]:.1f}° .. {pts[-1][0]:.1f}°], "
+                f"freq [{pts[-1][1]:.4f} .. {pts[0][1]:.4f}] mHz"
+            )
 
     # Save CSV
     csv_path = OUTPUT_DIR / "published_eigenfrequencies.csv"
@@ -185,8 +197,9 @@ def main():
         if ax.get_ylabel():
             ax.yaxis.label.set_color("white")
 
-    fig.suptitle("Digitized from paper/figure6.jpeg", color="white",
-                 fontsize=14, y=0.98)
+    fig.suptitle(
+        "Digitized from paper/figure6.jpeg", color="white", fontsize=14, y=0.98
+    )
     fig.tight_layout(rect=(0, 0, 1, 0.95))
 
     out = OUTPUT_DIR / "digitized_eigenfreqs.png"

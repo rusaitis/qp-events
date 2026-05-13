@@ -43,7 +43,7 @@ python3 mission_trace.py --help
 ### Optional arguments:
   **-h, --help**
   show this help message and exit
-  
+
   **--step (default = 0.1)**
   Field line tracing step size (in planetary radius)
 
@@ -70,20 +70,20 @@ python3 mission_trace.py --help
 
   **--year (default = 2005)**
   Year to analyze the data
-  
+
   **--calc**
   Compute the Alfven waves
-  
+
   **--mov**
   Generate a movie
-  
+
   **--save**
   Save the figures instead of showing
 ## Program Directory Tree
 
 The program save figures in the `output` directory. For example, an eigenfrequency plot will be created in it as "figure_eigfreq.pdf".
 
-### PROGRAM TREE 
+### PROGRAM TREE
 * mission_trace.py
   * Reads Cassini spacecract position and analyzes orbital bias
 * mission_trace_reader.py
@@ -165,4 +165,3 @@ Jackman, C. M., Thomsen, M. F., & Dougherty, M. K. (2019). Survey of Saturn’s 
 ## License
 [MIT](https://choosealicense.com/licenses/mit/)
 Liutauras Rusaitis
-

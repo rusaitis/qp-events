@@ -66,8 +66,9 @@ def detect_with_gate(*_args, **_kwargs):  # type: ignore[no-redef]
 # ----------------------------------------------------------------------
 
 
-def make_red_noise(n: int, sigma: float = 0.05, alpha: float = 0.95,
-                    seed: int = 0) -> np.ndarray:
+def make_red_noise(
+    n: int, sigma: float = 0.05, alpha: float = 0.95, seed: int = 0
+) -> np.ndarray:
     rng = np.random.default_rng(seed)
     x = np.zeros(n)
     e = rng.normal(0, sigma, n)
@@ -76,10 +77,15 @@ def make_red_noise(n: int, sigma: float = 0.05, alpha: float = 0.95,
     return x
 
 
-def make_packet(period_min: float, amplitude: float, n: int, dt: float,
-                  decay_hours: float = 4.0,
-                  center_hours: float = 18.0,
-                  seed: int = 1) -> np.ndarray:
+def make_packet(
+    period_min: float,
+    amplitude: float,
+    n: int,
+    dt: float,
+    decay_hours: float = 4.0,
+    center_hours: float = 18.0,
+    seed: int = 1,
+) -> np.ndarray:
     wave = WaveTemplate(
         period=period_min * 60.0,
         amplitude=amplitude,
@@ -87,7 +93,10 @@ def make_packet(period_min: float, amplitude: float, n: int, dt: float,
         shift=center_hours * 3600.0,
     )
     _, sig = simulate_signal(
-        n_samples=n, dt=dt, waves=[wave], seed=seed,
+        n_samples=n,
+        dt=dt,
+        waves=[wave],
+        seed=seed,
     )
     return sig
 
@@ -141,10 +150,11 @@ def run_band_calibration(
                 # Injection
                 noise1 = make_red_noise(n_samples, seed=2 * trial)
                 noise2 = make_red_noise(n_samples, seed=2 * trial + 1)
-                sig1 = make_packet(period_min, amp, n_samples, dt,
-                                    seed=trial) + noise1
-                sig2 = make_packet(period_min, 0.7 * amp, n_samples, dt,
-                                    seed=trial + 5000) + noise2
+                sig1 = make_packet(period_min, amp, n_samples, dt, seed=trial) + noise1
+                sig2 = (
+                    make_packet(period_min, 0.7 * amp, n_samples, dt, seed=trial + 5000)
+                    + noise2
+                )
                 pkts = detect_with_gate(sig1, sig2, times, dt=dt, gate=gate)
                 n_packets_inj += len(pkts)
                 if any(p.band == band_name for p in pkts):
@@ -206,13 +216,21 @@ def pick_best_sigma(
     valid = [r for r in candidates if r.fpr <= max_fpr]
     if valid:
         best = max(valid, key=lambda r: r.recall)
-        return best.n_sigma, best.recall, best.fpr, (
-            f"fpr<={max_fpr} but recall<{target_recall} (best: "
-            f"recall={best.recall:.2f})"
+        return (
+            best.n_sigma,
+            best.recall,
+            best.fpr,
+            (
+                f"fpr<={max_fpr} but recall<{target_recall} (best: "
+                f"recall={best.recall:.2f})"
+            ),
         )
     best = min(candidates, key=lambda r: r.fpr)
-    return best.n_sigma, best.recall, best.fpr, (
-        f"no n_sigma achieves fpr<={max_fpr}; best fpr={best.fpr:.2f}"
+    return (
+        best.n_sigma,
+        best.recall,
+        best.fpr,
+        (f"no n_sigma achieves fpr<={max_fpr}; best fpr={best.fpr:.2f}"),
     )
 
 
@@ -220,23 +238,42 @@ def write_csv(rows: list[CalibrationRow], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow([
-            "band", "period_min", "amplitude_nT", "n_sigma", "n_trials",
-            "recall", "fpr", "avg_packets_inj", "avg_packets_bg",
-        ])
+        writer.writerow(
+            [
+                "band",
+                "period_min",
+                "amplitude_nT",
+                "n_sigma",
+                "n_trials",
+                "recall",
+                "fpr",
+                "avg_packets_inj",
+                "avg_packets_bg",
+            ]
+        )
         for r in rows:
-            writer.writerow([
-                r.band, r.period_min, r.amplitude, r.n_sigma, r.n_trials,
-                f"{r.recall:.4f}", f"{r.fpr:.4f}",
-                f"{r.avg_packets_per_inj:.3f}",
-                f"{r.avg_packets_per_bg:.3f}",
-            ])
+            writer.writerow(
+                [
+                    r.band,
+                    r.period_min,
+                    r.amplitude,
+                    r.n_sigma,
+                    r.n_trials,
+                    f"{r.recall:.4f}",
+                    f"{r.fpr:.4f}",
+                    f"{r.avg_packets_per_inj:.3f}",
+                    f"{r.avg_packets_per_bg:.3f}",
+                ]
+            )
 
 
 def plot_curves(rows: list[CalibrationRow], path: Path) -> None:
     n_bands = len(QP_BAND_NAMES)
     fig, axes = plt.subplots(
-        2, n_bands, figsize=(4.3 * n_bands, 7), sharey="row",
+        2,
+        n_bands,
+        figsize=(4.3 * n_bands, 7),
+        sharey="row",
     )
     for col, band in enumerate(QP_BAND_NAMES):
         ax_r = axes[0, col]
@@ -246,13 +283,13 @@ def plot_curves(rows: list[CalibrationRow], path: Path) -> None:
         for amp in amps:
             xs = sorted({r.n_sigma for r in band_rows if r.amplitude == amp})
             recall = [
-                next(r for r in band_rows
-                     if r.amplitude == amp and r.n_sigma == s).recall
+                next(
+                    r for r in band_rows if r.amplitude == amp and r.n_sigma == s
+                ).recall
                 for s in xs
             ]
             fpr = [
-                next(r for r in band_rows
-                     if r.amplitude == amp and r.n_sigma == s).fpr
+                next(r for r in band_rows if r.amplitude == amp and r.n_sigma == s).fpr
                 for s in xs
             ]
             ax_r.plot(xs, recall, "o-", label=f"{amp:.2f} nT")
@@ -268,8 +305,10 @@ def plot_curves(rows: list[CalibrationRow], path: Path) -> None:
         ax_r.grid(alpha=0.3)
         ax_f.grid(alpha=0.3)
         ax_r.legend(fontsize=7, loc="lower left")
-    fig.suptitle("Phase 2.4 — threshold calibration sweep "
-                 "(red noise + Gaussian QP packet)", fontsize=12)
+    fig.suptitle(
+        "Phase 2.4 — threshold calibration sweep (red noise + Gaussian QP packet)",
+        fontsize=12,
+    )
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=120, bbox_inches="tight")
@@ -330,8 +369,10 @@ def main() -> None:
     rows: list[CalibrationRow] = []
     t_start = time.time()
     for band_name, band in QP_BANDS.items():
-        print(f"  Calibrating {band_name} (period={band.period_centroid_minutes} min)...",
-              flush=True)
+        print(
+            f"  Calibrating {band_name} (period={band.period_centroid_minutes} min)...",
+            flush=True,
+        )
         rows.extend(
             run_band_calibration(
                 band_name=band_name,
@@ -349,8 +390,10 @@ def main() -> None:
         c = pick_best_sigma(rows, band)
         if c is not None:
             chosen[band] = c
-            print(f"  {band}: n_sigma={c[0]:.2f}, recall={c[1]:.2f}, "
-                  f"fpr={c[2]:.3f}  ({c[3]})")
+            print(
+                f"  {band}: n_sigma={c[0]:.2f}, recall={c[1]:.2f}, "
+                f"fpr={c[2]:.3f}  ({c[3]})"
+            )
 
     csv_path = out_dir / "threshold_calibration.csv"
     png_path = out_dir / "threshold_calibration.png"

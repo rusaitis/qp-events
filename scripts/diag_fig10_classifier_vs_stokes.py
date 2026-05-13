@@ -112,10 +112,10 @@ def _compute_all(df: pd.DataFrame) -> pd.DataFrame:
     legacy_pickle.register_stubs()
     log.info("loading MFA segment archive")
     arr = np.load(
-        qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy", allow_pickle=True,
+        qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy",
+        allow_pickle=True,
     )
-    log.info("processing %d events (this is O(N·W) per event, ~30 s total)",
-             len(df))
+    log.info("processing %d events (this is O(N·W) per event, ~30 s total)", len(df))
     f90 = np.full(len(df), np.nan)
     f180 = np.full(len(df), np.nan)
     n_valid = np.zeros(len(df), dtype=int)
@@ -173,15 +173,11 @@ def _plot(df: pd.DataFrame) -> None:
     ax = axes[1]
     # fig10 "circular" gate: frac_90 > frac_180 AND frac_90 > 0.3
     is_fig10_circular = (
-        (sub_all["fig10_frac_near_90"] > sub_all["fig10_frac_near_180"])
-        & (sub_all["fig10_frac_near_90"] > 0.3)
-    )
+        sub_all["fig10_frac_near_90"] > sub_all["fig10_frac_near_180"]
+    ) & (sub_all["fig10_frac_near_90"] > 0.3)
     is_fig10_linear = (
-        (sub_all["fig10_frac_near_180"] > sub_all["fig10_frac_near_90"])
-        & (sub_all["fig10_frac_near_180"] > 0.3)
-    )
-    is_stokes_circular = sub_all["ellipticity"].abs() > 0.5
-    is_stokes_linear = sub_all["ellipticity"].abs() < 0.2
+        sub_all["fig10_frac_near_180"] > sub_all["fig10_frac_near_90"]
+    ) & (sub_all["fig10_frac_near_180"] > 0.3)
 
     labels = ["fig10 circ.", "fig10 linear", "fig10 mixed"]
     fig10_groups = [
@@ -193,16 +189,13 @@ def _plot(df: pd.DataFrame) -> None:
     stokes_lin = [int((g["ellipticity"].abs() < 0.2).sum()) for g in fig10_groups]
     stokes_mid = [
         int(len(g)) - sc - sl
-        for g, sc, sl in zip(fig10_groups, stokes_circ, stokes_lin)
+        for g, sc, sl in zip(fig10_groups, stokes_circ, stokes_lin, strict=False)
     ]
     x = np.arange(len(labels))
     width = 0.27
-    ax.bar(x - width, stokes_circ, width, color="#dc267f",
-           label="Stokes |e|>0.5")
-    ax.bar(x, stokes_mid, width, color="#888888",
-           label="Stokes 0.2≤|e|≤0.5")
-    ax.bar(x + width, stokes_lin, width, color="#648fff",
-           label="Stokes |e|<0.2")
+    ax.bar(x - width, stokes_circ, width, color="#dc267f", label="Stokes |e|>0.5")
+    ax.bar(x, stokes_mid, width, color="#888888", label="Stokes 0.2≤|e|≤0.5")
+    ax.bar(x + width, stokes_lin, width, color="#648fff", label="Stokes |e|<0.2")
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel("events")
@@ -211,8 +204,12 @@ def _plot(df: pd.DataFrame) -> None:
     # Annotate counts on each fig10 group
     for i, g in enumerate(fig10_groups):
         ax.text(
-            i, max(stokes_circ[i], stokes_mid[i], stokes_lin[i]) * 1.04,
-            f"N={len(g)}", ha="center", color="white", fontsize=9,
+            i,
+            max(stokes_circ[i], stokes_mid[i], stokes_lin[i]) * 1.04,
+            f"N={len(g)}",
+            ha="center",
+            color="white",
+            fontsize=9,
         )
 
     # Panel C: frac_near_90 distribution
@@ -224,8 +221,12 @@ def _plot(df: pd.DataFrame) -> None:
             continue
         ax.hist(
             sub["fig10_frac_near_90"],
-            bins=bins, histtype="step", lw=1.4, density=True,
-            color=color, label=band,
+            bins=bins,
+            histtype="step",
+            lw=1.4,
+            density=True,
+            color=color,
+            label=band,
         )
     ax.axvline(0.3, ls=":", color="white", lw=0.6, alpha=0.6)
     ax.set_xlabel("fig10 frac near ±90°")
@@ -252,13 +253,19 @@ def main() -> None:
     df, attrs = read_events_parquet(qp.OUTPUT_DIR / "events_round8.parquet")
     log.info(
         "loaded %d events (schema=%s)",
-        len(df), attrs.get("schema_version", "<none>"),
+        len(df),
+        attrs.get("schema_version", "<none>"),
     )
     df = _compute_all(df)
     csv = qp.OUTPUT_DIR / "fig10_classifier_vs_stokes.csv"
     cols = [
-        "event_id", "band", "period_min", "ellipticity",
-        "fig10_frac_near_90", "fig10_frac_near_180", "fig10_n_valid_windows",
+        "event_id",
+        "band",
+        "period_min",
+        "ellipticity",
+        "fig10_frac_near_90",
+        "fig10_frac_near_180",
+        "fig10_n_valid_windows",
     ]
     df[cols].to_csv(csv, index=False)
     log.info("wrote %s", csv)

@@ -70,7 +70,10 @@ ignore = [
 "__init__.py" = ["F401", "F403"]
 "src/qp/fieldline/_numba_kernels.py" = ["E501", "E702"]
 "tests/*" = ["E501", "B011"]
-"scripts/*" = ["E501"]
+# Scripts are research/diagnostic code — looser hygiene on style nits and
+# math-context ambiguity (E741: short single-letter loop variables are
+# idiomatic in physics scripts).
+"scripts/*" = ["E501", "E741", "SIM102", "SIM105"]
 
 [tool.mypy]
 python_version = "3.13"

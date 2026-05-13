@@ -9,20 +9,32 @@ Referee: white dashed line at 50-min period.
 
 import sys
 import types
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-
 from pathlib import Path
+
+import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
 # Register stubs for legacy pickle.
 # DO NOT REMOVE: stub names match the module paths used when the legacy
 # DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-_stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list", "WaveSignal", "Wave"]
-_stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper", "cassinilib", "cassinilib.NewSignal"]
+_stub_classes = [
+    "SignalSnapshot",
+    "NewSignal",
+    "Interval",
+    "FFT_list",
+    "WaveSignal",
+    "Wave",
+]
+_stub_modules = [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+]
 for mod_path in _stub_modules:
     if mod_path not in sys.modules:
         sys.modules[mod_path] = types.ModuleType(mod_path)
@@ -31,12 +43,15 @@ for mod_path in _stub_modules:
 
 
 import qp
-from qp.signal.power_ratio import compute_power_ratios
 from qp.plotting.style import (
-    FIELD_COLORS_SPECTRA, use_paper_style, style_axes,
-    draw_period_lines, plot_segmented, BG_COLOR,
+    BG_COLOR,
+    FIELD_COLORS_SPECTRA,
+    draw_period_lines,
+    plot_segmented,
+    style_axes,
+    use_paper_style,
 )
-
+from qp.signal.power_ratio import compute_power_ratios
 
 # Local time quadrants: (center, half-width, label, panel_label)
 LT_QUADRANTS = [
@@ -50,9 +65,9 @@ LABELS = [r"$B_{\parallel}$", r"$B_{\perp 1}$", r"$B_{\perp 2}$", r"$B_{total}$"
 RATIO_KEYS = ["r_par", "r_perp1", "r_perp2", "r_total"]
 
 # Welch parameters matching the paper
-DT = 60.0           # 1-minute resolution
-NPERSEG = 12 * 60   # 12-hour window
-NOVERLAP = 6 * 60   # 6-hour overlap
+DT = 60.0  # 1-minute resolution
+NPERSEG = 12 * 60  # 12-hour window
+NOVERLAP = 6 * 60  # 6-hour overlap
 
 
 def in_lt_range(lt, center, half_width):
@@ -119,8 +134,14 @@ def compute_all_ratios(data):
 
         try:
             ratios = compute_power_ratios(
-                b_par[sl], b_perp1[sl], b_perp2[sl], b_tot[sl],
-                dt=DT, nperseg=NPERSEG, noverlap=NOVERLAP, window="hann",
+                b_par[sl],
+                b_perp1[sl],
+                b_perp2[sl],
+                b_tot[sl],
+                dt=DT,
+                nperseg=NPERSEG,
+                noverlap=NOVERLAP,
+                window="hann",
             )
         except Exception:
             n_skipped += 1
@@ -192,7 +213,9 @@ def draw_clock_icon(ax, center_lt, half_width):
     inset.text(0, -1.3, "0", ha="center", va="top", fontsize=6, color="white")
     inset.text(1.2, 0, "6", ha="left", va="center", fontsize=6, color="white")
     inset.text(-1.3, 0, "18", ha="right", va="center", fontsize=6, color="white")
-    inset.text(-0.2, -1.6, "Local\nTime", ha="center", va="top", fontsize=5, color="grey")
+    inset.text(
+        -0.2, -1.6, "Local\nTime", ha="center", va="top", fontsize=5, color="grey"
+    )
 
     inset.set_xlim(-1.8, 1.8)
     inset.set_ylim(-2.0, 1.6)
@@ -215,23 +238,27 @@ def main():
     use_paper_style()
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    fig.subplots_adjust(hspace=0.22, wspace=0.18, left=0.08, right=0.95,
-                        top=0.95, bottom=0.07)
+    fig.subplots_adjust(
+        hspace=0.22, wspace=0.18, left=0.08, right=0.95, top=0.95, bottom=0.07
+    )
 
     colors = FIELD_COLORS_SPECTRA
 
     for qi, ax in enumerate(axes.flat):
         s = stats[qi]
         if s is None:
-            ax.text(0.5, 0.5, "No data", transform=ax.transAxes,
-                    ha="center", color="white")
+            ax.text(
+                0.5, 0.5, "No data", transform=ax.transAxes, ha="center", color="white"
+            )
             continue
 
         freq = s["freq"]
-        n_seg = s["n_segments"]
+        s["n_segments"]
 
         # Plot each component: median line + quartile fill
-        for ki, (key, label, color) in enumerate(zip(RATIO_KEYS, LABELS, colors)):
+        for _ki, (key, label, color) in enumerate(
+            zip(RATIO_KEYS, LABELS, colors, strict=False)
+        ):
             median = s[f"{key}_median"]
             q1 = s[f"{key}_q1"]
             q3 = s[f"{key}_q3"]
@@ -241,8 +268,11 @@ def main():
 
             # Quartile shading (full range, no segmentation needed)
             ax.fill_between(
-                freq / 1e-3, q1, q3,
-                color=color, alpha=0.15,
+                freq / 1e-3,
+                q1,
+                q3,
+                color=color,
+                alpha=0.15,
             )
 
         # Unity line
@@ -253,8 +283,9 @@ def main():
         ax.axvline(f_50min / 1e-3, ls="--", lw=2, color="white", alpha=0.7)
 
         # Period annotations
-        draw_period_lines(ax, periods_min=[30, 60, 90, 120, 180],
-                          lw=1.5, alpha=0.3, fontsize=10)
+        draw_period_lines(
+            ax, periods_min=[30, 60, 90, 120, 180], lw=1.5, alpha=0.3, fontsize=10
+        )
 
         # Axes
         ax.set_xscale("log")
@@ -269,20 +300,40 @@ def main():
         # Title
         _, _, title, panel_label = LT_QUADRANTS[qi]
         ax.set_title(title, fontsize=14, color="orange")
-        ax.text(0.01, 0.97, panel_label, transform=ax.transAxes,
-                fontsize=18, fontweight="bold", va="top", color="white")
+        ax.text(
+            0.01,
+            0.97,
+            panel_label,
+            transform=ax.transAxes,
+            fontsize=18,
+            fontweight="bold",
+            va="top",
+            color="white",
+        )
 
         # Clock icon
         center_lt, hw = LT_QUADRANTS[qi][0], LT_QUADRANTS[qi][1]
         draw_clock_icon(ax, center_lt, hw)
 
     # Legend at bottom
-    handles = [mpatches.Patch(color=c, label=l) for c, l in zip(colors, LABELS)]
-    fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False,
-               fontsize=13, bbox_to_anchor=(0.5, 0.01))
+    handles = [
+        mpatches.Patch(color=c, label=l) for c, l in zip(colors, LABELS, strict=False)
+    ]
+    fig.legend(
+        handles=handles,
+        loc="lower center",
+        ncol=4,
+        frameon=False,
+        fontsize=13,
+        bbox_to_anchor=(0.5, 0.01),
+    )
 
-    plt.savefig("output/figure5.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    plt.savefig(
+        "output/figure5.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
     print("Saved output/figure5.png")
     plt.close()
 

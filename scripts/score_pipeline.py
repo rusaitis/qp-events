@@ -15,7 +15,7 @@ import csv
 import logging
 import subprocess
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCOREBOARD = Path("scoreboard.tsv")
@@ -23,23 +23,46 @@ SCOREBOARD_SHAPE = Path("scoreboard-shape.tsv")
 SCOREBOARD_MECHANISM = Path("scoreboard-mechanism.tsv")
 
 DETECTION_HEADER = [
-    "commit", "date", "score",
-    "f1", "precision", "recall", "band_acc",
-    "period_err_pct", "mean_iou", "decoy_rejection", "f1@0.5",
-    "tier1_recall", "tier2_recall", "tier3_recall", "tier4_recall",
-    "loc", "runtime_sec", "status", "notes",
+    "commit",
+    "date",
+    "score",
+    "f1",
+    "precision",
+    "recall",
+    "band_acc",
+    "period_err_pct",
+    "mean_iou",
+    "decoy_rejection",
+    "f1@0.5",
+    "tier1_recall",
+    "tier2_recall",
+    "tier3_recall",
+    "tier4_recall",
+    "loc",
+    "runtime_sec",
+    "status",
+    "notes",
 ]
 
 SHAPE_HEADER = [
-    "commit", "date", "score",
-    "envelope_err", "chirp_err", "harmonic_err",
-    "coherence_err", "asymmetry_err",
+    "commit",
+    "date",
+    "score",
+    "envelope_err",
+    "chirp_err",
+    "harmonic_err",
+    "coherence_err",
+    "asymmetry_err",
     "notes",
 ]
 
 MECHANISM_HEADER = [
-    "commit", "date", "score",
-    "mode_acc", "propagation_acc", "polarization_acc",
+    "commit",
+    "date",
+    "score",
+    "mode_acc",
+    "propagation_acc",
+    "polarization_acc",
     "transverse_ratio_err",
     "notes",
 ]
@@ -94,20 +117,27 @@ def main():
         description="Run benchmark and update scoreboards",
     )
     parser.add_argument(
-        "--notes", type=str, default="",
+        "--notes",
+        type=str,
+        default="",
         help="Notes for the scoreboard row",
     )
     parser.add_argument(
-        "--status", type=str, default="keep",
+        "--status",
+        type=str,
+        default="keep",
         choices=["keep", "discard", "crash"],
         help="Status of this run (default: keep)",
     )
     parser.add_argument(
-        "--tier", type=str, default=None,
+        "--tier",
+        type=str,
+        default=None,
         help="Run only one tier (tier1-tier4, decoy)",
     )
     parser.add_argument(
-        "--regenerate", action="store_true",
+        "--regenerate",
+        action="store_true",
         help="Regenerate canonical datasets (default: load from disk)",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -136,7 +166,7 @@ def main():
     score = composite_detection_score(suite)
 
     commit = _git_commit_short()
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
     loc = _count_python_loc()
 
     # Per-tier recalls
@@ -146,12 +176,11 @@ def main():
     t4 = suite.per_tier_recall.get("tier4", 0.0)
 
     # Mean period error across all matches
-    all_matches = [
-        m for s in suite.dataset_scores for m in s.matches
-    ]
+    all_matches = [m for s in suite.dataset_scores for m in s.matches]
     mean_period_err = (
         sum(m.period_error_pct for m in all_matches) / len(all_matches)
-        if all_matches else 0.0
+        if all_matches
+        else 0.0
     )
 
     # Mean IoU across datasets with matches
@@ -162,23 +191,30 @@ def main():
 
     # Append to detection scoreboard
     _ensure_header(SCOREBOARD, DETECTION_HEADER)
-    _append_row(SCOREBOARD, [
-        commit, date,
-        f"{score:.4f}",
-        f"{suite.overall_f1:.4f}",
-        f"{suite.overall_precision:.4f}",
-        f"{suite.overall_recall:.4f}",
-        f"{suite.band_accuracy:.4f}",
-        f"{mean_period_err:.2f}",
-        f"{mean_iou:.4f}",
-        f"{suite.decoy_rejection_rate:.4f}",
-        f"{f1_05:.4f}",
-        f"{t1:.4f}", f"{t2:.4f}", f"{t3:.4f}", f"{t4:.4f}",
-        str(loc),
-        f"{runtime_sec:.1f}",
-        args.status,
-        args.notes,
-    ])
+    _append_row(
+        SCOREBOARD,
+        [
+            commit,
+            date,
+            f"{score:.4f}",
+            f"{suite.overall_f1:.4f}",
+            f"{suite.overall_precision:.4f}",
+            f"{suite.overall_recall:.4f}",
+            f"{suite.band_accuracy:.4f}",
+            f"{mean_period_err:.2f}",
+            f"{mean_iou:.4f}",
+            f"{suite.decoy_rejection_rate:.4f}",
+            f"{f1_05:.4f}",
+            f"{t1:.4f}",
+            f"{t2:.4f}",
+            f"{t3:.4f}",
+            f"{t4:.4f}",
+            str(loc),
+            f"{runtime_sec:.1f}",
+            args.status,
+            args.notes,
+        ],
+    )
 
     # Ensure shape and mechanism scoreboards exist (headers only for now)
     _ensure_header(SCOREBOARD_SHAPE, SHAPE_HEADER)

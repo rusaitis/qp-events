@@ -24,8 +24,8 @@ def test_load_spacecraft_position_from_custom_dir(tmp_path: Path) -> None:
     for i in range(n):
         arr[i, 0] = t0 + datetime.timedelta(hours=i)
         arr[i, 1:5] = [1.0, 2.0, 3.0, np.sqrt(14.0)]  # B components, |B|
-        arr[i, 5:8] = [10.0 + i, 0.0, 0.0]            # x, y, z (R_S)
-        arr[i, 8:11] = [0, 1, 0]                      # location flags
+        arr[i, 5:8] = [10.0 + i, 0.0, 0.0]  # x, y, z (R_S)
+        arr[i, 8:11] = [0, 1, 0]  # location flags
     np.save(tmp_path / "CassiniLocation_KSM.npy", arr, allow_pickle=True)
 
     out = load_spacecraft_position(tmp_path)

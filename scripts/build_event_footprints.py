@@ -203,7 +203,7 @@ def main() -> None:
     # Build union mask over trajectory (event windows only) — same idea
     # as accumulate_kmag_event_grids.
     union = np.zeros(t_unix.size, dtype=bool)
-    for lo, hi in zip(sample_lo, sample_hi):
+    for lo, hi in zip(sample_lo, sample_hi, strict=False):
         union[int(lo) : int(hi)] = True
     n_event_min = int(union.sum())
     keep = np.flatnonzero(union)

@@ -8,15 +8,14 @@ Spacecraft ephemeris (KSM) at the bottom.
 Referee notes: dark background, ephemeris in caption.
 """
 
-import sys
 import datetime
-
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
-
-from pathlib import Path
+import sys
 import types
+from pathlib import Path
+
+import matplotlib.dates as mdates
+import matplotlib.pyplot as plt
+import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
@@ -26,8 +25,21 @@ _project_root = Path(__file__).resolve().parents[1]
 # importing the full (heavy, fragile) old codebase.
 # DO NOT REMOVE: stub names match the module paths used when the legacy
 # DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-_stub_classes = ["SignalSnapshot", "NewSignal", "Interval", "FFT_list", "WaveSignal", "Wave"]
-_stub_modules = ["__main__", "data_sweeper", "mag_fft_sweeper", "cassinilib", "cassinilib.NewSignal"]
+_stub_classes = [
+    "SignalSnapshot",
+    "NewSignal",
+    "Interval",
+    "FFT_list",
+    "WaveSignal",
+    "Wave",
+]
+_stub_modules = [
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+]
 
 for mod_path in _stub_modules:
     if mod_path not in sys.modules:
@@ -39,10 +51,13 @@ for mod_path in _stub_modules:
 
 import qp
 from qp.coords.mfa import to_mfa
-from qp.signal.timeseries import running_average
 from qp.plotting.style import (
-    FIELD_COLORS, use_paper_style, style_axes, BG_COLOR,
+    BG_COLOR,
+    FIELD_COLORS,
+    style_axes,
+    use_paper_style,
 )
+from qp.signal.timeseries import running_average
 
 
 def load_legacy_segments(name: str) -> np.ndarray:
@@ -90,9 +105,11 @@ def compute_mfa(perturbations, coords, fields, window_minutes=180, dt=60.0):
     bg_by = running_average(fields["By"], window)
     bg_bz = running_average(fields["Bz"], window)
 
-    N = len(perturbations["Bx"])
+    len(perturbations["Bx"])
     position = np.column_stack([coords["x"], coords["y"], coords["z"]])
-    field = np.column_stack([perturbations["Bx"], perturbations["By"], perturbations["Bz"]])
+    field = np.column_stack(
+        [perturbations["Bx"], perturbations["By"], perturbations["Bz"]]
+    )
     background = np.column_stack([bg_bx, bg_by, bg_bz])
 
     mfa = to_mfa(position, field, background, coords="KSM")
@@ -102,6 +119,7 @@ def compute_mfa(perturbations, coords, fields, window_minutes=180, dt=60.0):
 
 
 # --- Main ---
+
 
 def main():
     print("Loading KSM 36H data...")
@@ -131,47 +149,74 @@ def main():
     perturbations = detrend_fields(fields_24h)
 
     # MFA transform
-    b_par, b_perp1, b_perp2, b_tot = compute_mfa(
-        perturbations, coords_24h, fields_24h
-    )
+    b_par, b_perp1, b_perp2, b_tot = compute_mfa(perturbations, coords_24h, fields_24h)
 
     # --- Plot ---
     use_paper_style()
 
     fig, (ax_a, ax_b, ax_eph) = plt.subplots(
-        3, 1, figsize=(12, 10),
+        3,
+        1,
+        figsize=(12, 10),
         gridspec_kw={"height_ratios": [3, 3, 1]},
     )
     fig.subplots_adjust(hspace=0.08, left=0.08, right=0.95, top=0.93, bottom=0.05)
 
     # Panel (a): KSM perturbations
-    ksm_components = [perturbations["Bx"], perturbations["By"],
-                      perturbations["Bz"], perturbations["Btot"]]
+    ksm_components = [
+        perturbations["Bx"],
+        perturbations["By"],
+        perturbations["Bz"],
+        perturbations["Btot"],
+    ]
     ksm_labels = [r"$B_x$", r"$B_y$", r"$B_z$", r"$B_{total}$"]
 
-    for comp, label, color in zip(ksm_components, ksm_labels, FIELD_COLORS):
+    for comp, label, color in zip(
+        ksm_components, ksm_labels, FIELD_COLORS, strict=False
+    ):
         ax_a.plot(times_24h, comp, color=color, label=label, lw=1.5, alpha=0.8)
 
     ax_a.set_ylabel("Amplitude (nT)", fontsize=14)
     ax_a.axhline(0, ls="--", lw=1, color="grey", alpha=0.3)
     ax_a.legend(loc="upper left", frameon=False, fontsize=12, ncol=4)
     ax_a.set_title(f"QP60 Wave Activity ({target})", fontsize=18)
-    ax_a.text(0.01, 0.95, "a", transform=ax_a.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    ax_a.text(
+        0.01,
+        0.95,
+        "a",
+        transform=ax_a.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
     style_axes(ax_a)
 
     # Panel (b): MFA perturbations
     mfa_components = [b_par, b_perp1, b_perp2, b_tot]
-    mfa_labels = [r"$B_{\parallel}$", r"$B_{\perp 1}$", r"$B_{\perp 2}$", r"$B_{total}$"]
+    mfa_labels = [
+        r"$B_{\parallel}$",
+        r"$B_{\perp 1}$",
+        r"$B_{\perp 2}$",
+        r"$B_{total}$",
+    ]
 
-    for comp, label, color in zip(mfa_components, mfa_labels, FIELD_COLORS):
+    for comp, label, color in zip(
+        mfa_components, mfa_labels, FIELD_COLORS, strict=False
+    ):
         ax_b.plot(times_24h, comp, color=color, label=label, lw=1.5, alpha=0.8)
 
     ax_b.set_ylabel("Amplitude (nT)", fontsize=14)
     ax_b.axhline(0, ls="--", lw=1, color="grey", alpha=0.3)
     ax_b.legend(loc="upper left", frameon=False, fontsize=12, ncol=4)
-    ax_b.text(0.01, 0.95, "b", transform=ax_b.transAxes, fontsize=18,
-              fontweight="bold", va="top")
+    ax_b.text(
+        0.01,
+        0.95,
+        "b",
+        transform=ax_b.transAxes,
+        fontsize=18,
+        fontweight="bold",
+        va="top",
+    )
     style_axes(ax_b)
 
     # Mark Strong QP60 Activity intervals
@@ -185,8 +230,18 @@ def main():
         max(abs(np.min(perturbations[k])), abs(np.max(perturbations[k])))
         for k in ["Bx", "By", "Bz"]
     )
-    ymax = max(ymax, max(abs(b_perp1.min()), abs(b_perp1.max()),
-                          abs(b_perp2.min()), abs(b_perp2.max()))) * 1.15
+    ymax = (
+        max(
+            ymax,
+            max(
+                abs(b_perp1.min()),
+                abs(b_perp1.max()),
+                abs(b_perp2.min()),
+                abs(b_perp2.max()),
+            ),
+        )
+        * 1.15
+    )
     ax_a.set_ylim(-ymax, ymax)
     ax_b.set_ylim(-ymax, ymax)
 
@@ -195,25 +250,47 @@ def main():
             ax.axvspan(t0, t1, alpha=0.06, color="orange")
 
         # Activity labels at bottom of each panel
-        for t_center in [datetime.datetime(2008, 2, 29, 8, 0),
-                         datetime.datetime(2008, 2, 29, 19, 0)]:
+        for t_center in [
+            datetime.datetime(2008, 2, 29, 8, 0),
+            datetime.datetime(2008, 2, 29, 19, 0),
+        ]:
             ax.text(
-                t_center, -ymax * 0.78,
+                t_center,
+                -ymax * 0.78,
                 "Strong QP60\nActivity",
-                fontsize=10, color="orange", ha="center", va="bottom",
-                bbox=dict(boxstyle="round,pad=0.2", fc=BG_COLOR, ec="orange",
-                          alpha=0.8, lw=0.8),
+                fontsize=10,
+                color="orange",
+                ha="center",
+                va="bottom",
+                bbox=dict(
+                    boxstyle="round,pad=0.2",
+                    fc=BG_COLOR,
+                    ec="orange",
+                    alpha=0.8,
+                    lw=0.8,
+                ),
             )
 
     # ~11 hour separation annotation on panel (a)
     ax_a.annotate(
-        "", xy=(mdates.date2num(activity_intervals[1][0]), 0),
+        "",
+        xy=(mdates.date2num(activity_intervals[1][0]), 0),
         xytext=(mdates.date2num(activity_intervals[0][1]), 0),
         arrowprops=dict(arrowstyle="<->", color="orange", lw=2),
     )
-    mid_time = activity_intervals[0][1] + (activity_intervals[1][0] - activity_intervals[0][1]) / 2
-    ax_a.text(mid_time, 0.02, "~ 11 hours", fontsize=12, color="orange",
-              ha="center", va="bottom")
+    mid_time = (
+        activity_intervals[0][1]
+        + (activity_intervals[1][0] - activity_intervals[0][1]) / 2
+    )
+    ax_a.text(
+        mid_time,
+        0.02,
+        "~ 11 hours",
+        fontsize=12,
+        color="orange",
+        ha="center",
+        va="bottom",
+    )
 
     # Time axis formatting
     for ax in [ax_a, ax_b]:
@@ -241,8 +318,9 @@ def main():
         idx = min(int((t - t_start).total_seconds() / 60), len(times_24h) - 1)
         for row, name in enumerate(coord_order):
             val = coords_24h[name][idx]
-            ax_eph.text(t, row, f"{val:.2f}", ha="center", va="center",
-                        fontsize=9, color="grey")
+            ax_eph.text(
+                t, row, f"{val:.2f}", ha="center", va="center", fontsize=9, color="grey"
+            )
         t += delta
 
     ax_eph.set_ylim(-0.5, 2.5)
@@ -251,8 +329,12 @@ def main():
     ax_eph.tick_params(which="both", width=0, labelsize=10)
     ax_eph.grid(False)
 
-    plt.savefig("output/figure1.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
+    plt.savefig(
+        "output/figure1.png",
+        dpi=300,
+        bbox_inches="tight",
+        facecolor=fig.get_facecolor(),
+    )
     print("Saved output/figure1.png")
     plt.close()
 
