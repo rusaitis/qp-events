@@ -25,10 +25,12 @@ extending QP120 to 160 min: a 1-in-43-stride sensitivity sweep
 The same sweep recovered three candidates in the 10-20 min zone,
 motivating the new QP15 band.
 
-The :data:`SEARCH_BAND_EXTENDED` covers the diagnostic 5 min - 12 h
-range. The :data:`REJECT_BAND_HF` and :data:`REJECT_BAND_LF` constants
-mark the Nyquist guard (10 min for 1-min data, abutting QP15 cleanly)
-and the Welch-window upper bound (12 h) respectively.
+The :data:`REJECT_BAND_HF` and :data:`REJECT_BAND_LF` constants mark
+the Nyquist guard (10 min for 1-min data, abutting QP15 cleanly) and
+the Welch-window upper bound (12 h) respectively. The detector itself
+runs over :data:`QP_SEARCH_BAND` (10–160 min); QP15/30/60/120 are
+purely post-hoc classification labels assigned by
+:func:`classify_period`.
 """
 
 from __future__ import annotations
@@ -146,16 +148,8 @@ QP_BAND_COLORS: dict[str, str] = {
 
 
 # ----------------------------------------------------------------------
-# Diagnostic / guard bands
+# Guard bands
 # ----------------------------------------------------------------------
-
-#: Wide search band for diagnostic CWT plots and the wavelet noise model.
-SEARCH_BAND_EXTENDED: Band = Band(
-    name="SEARCH",
-    period_min_sec=5 * _MIN,
-    period_max_sec=12 * 3600.0,
-    period_centroid_sec=60 * _MIN,
-)
 
 #: High-frequency rejection band: anything below 10 min is < 5x Nyquist
 #: at 1-min cadence and is dominated by quantization / aliasing.

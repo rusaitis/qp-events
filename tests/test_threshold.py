@@ -9,7 +9,6 @@ import pytest
 
 from qp.events.bands import QP_BANDS
 from qp.events.catalog import WaveTemplate
-from qp.events.detector import detect_with_gate
 from qp.events.threshold import (
     GateConfig,
     MAD_TO_SIGMA,
@@ -42,9 +41,15 @@ def _red_noise(n: int, sigma: float = 0.1, seed: int = 1):
     return x
 
 
-def _qp_signal(period_min: float, amplitude: float, n: int, dt: float,
-                noise_sigma: float = 0.0, seed: int = 1,
-                add_red_noise: bool = False):
+def _qp_signal(
+    period_min: float,
+    amplitude: float,
+    n: int,
+    dt: float,
+    noise_sigma: float = 0.0,
+    seed: int = 1,
+    add_red_noise: bool = False,
+):
     """Gaussian-windowed QP packet on top of an optional red-noise background.
 
     The red-noise background mimics the f^-2 red spectrum of real
@@ -59,8 +64,11 @@ def _qp_signal(period_min: float, amplitude: float, n: int, dt: float,
         shift=18 * 3600.0,
     )
     _, sig = simulate_signal(
-        n_samples=n, dt=dt, waves=[wave],
-        noise_sigma=noise_sigma, seed=seed,
+        n_samples=n,
+        dt=dt,
+        waves=[wave],
+        noise_sigma=noise_sigma,
+        seed=seed,
     )
     if add_red_noise:
         sig = sig + _red_noise(n, sigma=0.05, seed=seed + 1000)
@@ -78,7 +86,8 @@ class TestFFTScreen:
         rng = np.random.default_rng(0)
         noise = rng.normal(0, 0.05, n)
         spec = analyze_segment(
-            noise, dt=dt,
+            noise,
+            dt=dt,
             detrend_window_sec=60.0,
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
@@ -89,10 +98,17 @@ class TestFFTScreen:
 
     def test_strong_qp60_triggers_qp60(self, time_axis):
         n, dt, _ = time_axis
-        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                          noise_sigma=0.05, add_red_noise=True)
+        sig = _qp_signal(
+            period_min=60,
+            amplitude=2.0,
+            n=n,
+            dt=dt,
+            noise_sigma=0.05,
+            add_red_noise=True,
+        )
         spec = analyze_segment(
-            sig, dt=dt,
+            sig,
+            dt=dt,
             detrend_window_sec=60.0,
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
@@ -103,10 +119,10 @@ class TestFFTScreen:
 
     def test_strong_qp60_does_not_trigger_qp120(self, time_axis):
         n, dt, _ = time_axis
-        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                          add_red_noise=True)
+        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt, add_red_noise=True)
         spec = analyze_segment(
-            sig, dt=dt,
+            sig,
+            dt=dt,
             detrend_window_sec=60.0,
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
@@ -118,16 +134,26 @@ class TestFFTScreen:
         n, dt, _ = time_axis
         # Use the same params as test_strong_qp60_triggers_qp60 so the
         # test stays in lock-step with the production-leaning one.
-        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                          noise_sigma=0.05, add_red_noise=True)
+        sig = _qp_signal(
+            period_min=60,
+            amplitude=2.0,
+            n=n,
+            dt=dt,
+            noise_sigma=0.05,
+            add_red_noise=True,
+        )
         spec = analyze_segment(
-            sig, dt=dt,
+            sig,
+            dt=dt,
             detrend_window_sec=60.0,
             welch_nperseg=12 * 60,
             welch_noverlap=6 * 60,
         )
         res = screen_segment_by_power_ratio(
-            spec.freq, spec.power_ratio, "QP60", ratio_threshold=2.5,
+            spec.freq,
+            spec.power_ratio,
+            "QP60",
+            ratio_threshold=2.5,
         )
         assert res.triggered
 
@@ -160,8 +186,7 @@ class TestSigmaMask:
 
     def test_signal_mask_covers_packet(self, time_axis):
         n, dt, _ = time_axis
-        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                          noise_sigma=0.05)
+        sig = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt, noise_sigma=0.05)
         freq, _, cwt = morlet_cwt(sig, dt=dt, n_freqs=200)
         power = np.abs(cwt)
         mask = wavelet_sigma_mask(power, freq, n_sigma=3.0)
@@ -170,8 +195,7 @@ class TestSigmaMask:
         periods = 1.0 / freq
         qp60 = QP_BANDS["QP60"]
         qp60_rows = np.flatnonzero(
-            (periods >= qp60.period_min_sec)
-            & (periods < qp60.period_max_sec)
+            (periods >= qp60.period_min_sec) & (periods < qp60.period_max_sec)
         )
         # In the QP60 band, near t=18h, mask should fire substantially
         center = int(18 * 3600 / dt)
@@ -194,54 +218,7 @@ class TestSigmaMask:
 # ----------------------------------------------------------------------
 
 
-class TestDetectWithGate:
-    def test_quiet_segment_few_packets(self, time_axis):
-        """Legacy detector should produce at most a handful of false positives
-        on pure white noise. Under the octave-tiled band scheme
-        (QP15/QP30/QP60/QP120 = [10,160) min), the σ-mask's out-of-band
-        noise pool is reduced to the [160 min, 12 h) band and the per-row
-        threshold becomes less stable for the shortest-period QP bands. The
-        canonical detector (round-8) uses a Bonferroni-corrected n_sigma on
-        a whitened CWT and is not affected; this is a legacy-gate-only
-        regression budget."""
-        n, dt, times = time_axis
-        rng = np.random.default_rng(0)
-        b_perp1 = rng.normal(0, 0.05, n)
-        b_perp2 = rng.normal(0, 0.05, n)
-        packets = detect_with_gate(
-            b_perp1, b_perp2, times, dt=dt,
-            gate=GateConfig(n_sigma=8.0),
-        )
-        assert len(packets) <= 5
-
-    def test_qp60_packet_recovered(self, time_axis):
-        n, dt, times = time_axis
-        b_perp1 = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                              noise_sigma=0.05, add_red_noise=True)
-        b_perp2 = _qp_signal(period_min=60, amplitude=1.5, n=n, dt=dt,
-                              noise_sigma=0.05, seed=2, add_red_noise=True)
-        packets = detect_with_gate(
-            b_perp1, b_perp2, times, dt=dt,
-            gate=GateConfig(fft_ratio_threshold=2.5, n_sigma=3.0),
-        )
-        qp60 = [p for p in packets if p.band == "QP60"]
-        assert len(qp60) >= 1
-
-    def test_strongest_packet_in_correct_band(self, time_axis):
-        n, dt, times = time_axis
-        b_perp1 = _qp_signal(period_min=60, amplitude=2.0, n=n, dt=dt,
-                              noise_sigma=0.05, add_red_noise=True)
-        b_perp2 = _qp_signal(period_min=60, amplitude=1.5, n=n, dt=dt,
-                              noise_sigma=0.05, seed=2, add_red_noise=True)
-        packets = detect_with_gate(
-            b_perp1, b_perp2, times, dt=dt,
-            gate=GateConfig(n_sigma=3.0),
-        )
-        if not packets:
-            pytest.skip("no packets detected")
-        strongest = max(packets, key=lambda p: p.prominence)
-        assert strongest.band == "QP60"
-
+class TestGateConfig:
     def test_gate_config_frozen(self):
         cfg = GateConfig()
         with pytest.raises((AttributeError, TypeError)):

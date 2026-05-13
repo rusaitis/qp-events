@@ -63,8 +63,7 @@ def occurrence_rate(
     dwell_grid = np.asarray(dwell_grid, dtype=float)
     if event_grid.shape != dwell_grid.shape:
         raise ValueError(
-            f"shape mismatch: event {event_grid.shape}, "
-            f"dwell {dwell_grid.shape}"
+            f"shape mismatch: event {event_grid.shape}, dwell {dwell_grid.shape}"
         )
     rate = np.full_like(event_grid, np.nan)
     valid = dwell_grid >= min_dwell_minutes
@@ -145,7 +144,8 @@ def weighted_occurrence_rate(
         Same shape as inputs. NaN where dwell is below the floor.
     """
     return occurrence_rate(
-        weighted_event_grid, dwell_grid,
+        weighted_event_grid,
+        dwell_grid,
         min_dwell_minutes=min_dwell_minutes,
         clip_max=clip_max,
     )

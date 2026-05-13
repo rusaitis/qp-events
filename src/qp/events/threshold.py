@@ -36,8 +36,7 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 from qp.events.bands import (
-    QP_BANDS,
-    REJECT_BAND_HF,
+    QP_SEARCH_BAND,
     REJECT_BAND_LF,
     Band,
     freq_to_period,
@@ -91,10 +90,7 @@ def screen_segment_by_power_ratio(
     power_ratio = np.asarray(power_ratio, dtype=float)
     band_obj = get_band(band)
 
-    in_band = (
-        (freq >= band_obj.freq_min_hz)
-        & (freq < band_obj.freq_max_hz)
-    )
+    in_band = (freq >= band_obj.freq_min_hz) & (freq < band_obj.freq_max_hz)
     if not in_band.any():
         return FFTScreenResult(
             band=band_obj.name,
@@ -158,22 +154,24 @@ _NOISE_POOL_PERIOD_MIN_SEC: float = 5 * 60.0
 def _background_row_indices(cwt_freq: NDArray[np.floating]) -> NDArray[np.intp]:
     """Indices of CWT rows that anchor the σ-mask noise model.
 
-    The pool is rows in ``[5 min, 12 h)`` that fall outside every QP
-    band. Rows below 5 min (in the wavelet's aliasing zone) and above
-    12 h (the Welch-window edge) are excluded.
+    The pool is rows in ``[5 min, 12 h)`` that fall outside the QP
+    detection search volume (:data:`qp.events.bands.QP_SEARCH_BAND`,
+    10–160 min). Rows below 5 min (in the wavelet's aliasing zone) and
+    above 12 h (the Welch-window edge) are excluded as a separate guard.
     """
     periods_sec = freq_to_period(cwt_freq)
-    keep = np.ones_like(cwt_freq, dtype=bool)
-    # exclude QP bands (signal would inflate self-row median+MAD)
-    for band in QP_BANDS.values():
-        in_band = (
-            (periods_sec >= band.period_min_sec)
-            & (periods_sec < band.period_max_sec)
-        )
-        keep &= ~in_band
-    # period bounds for the noise pool
-    keep &= periods_sec >= _NOISE_POOL_PERIOD_MIN_SEC
-    keep &= periods_sec < REJECT_BAND_LF.period_min_sec
+    in_search = (periods_sec >= QP_SEARCH_BAND.period_min_sec) & (
+        periods_sec < QP_SEARCH_BAND.period_max_sec
+    )
+    # The noise pool is anything inside the diagnostic window but
+    # outside where the signal lives. The two end anchors at 5 min
+    # and 12 h prevent the in-band log-period interpolation from
+    # extrapolating off the end of the bg coverage.
+    keep = (
+        ~in_search
+        & (periods_sec >= _NOISE_POOL_PERIOD_MIN_SEC)
+        & (periods_sec < REJECT_BAND_LF.period_min_sec)
+    )
     return np.flatnonzero(keep)
 
 
@@ -187,13 +185,13 @@ def wavelet_sigma_mask(
     Noise model
     -----------
     Per-row median and MAD are computed only on rows that fall
-    **outside** every QP band (and outside the high/low rejection
-    guards). For rows *inside* a QP band — where the signal lives —
-    the noise threshold is interpolated from the surrounding
-    background rows in log-period space. This decouples the noise
-    estimate from the signal we're trying to detect: a strong QP60
-    packet would otherwise inflate its own row's MAD and gate itself
-    out.
+    **outside** :data:`qp.events.bands.QP_SEARCH_BAND` (10–160 min),
+    and outside the high/low rejection guards. For rows *inside* the
+    search band — where the signal lives — the noise threshold is
+    interpolated from the surrounding background rows in log-period
+    space. This decouples the noise estimate from the signal we're
+    trying to detect: a strong QP60 packet would otherwise inflate
+    its own row's MAD and gate itself out.
 
     Parameters
     ----------
@@ -232,10 +230,10 @@ def wavelet_sigma_mask(
     # Interpolate the threshold to every row of the CWT in log-period
     # space. Periods are monotonically *decreasing* with frequency,
     # so interp wants strictly increasing x — work in log10(period).
-    # Under the octave-tiled QP scheme, bg coverage sits at [5, 10) min
-    # and [160 min, 12 h); _background_row_indices is configured to
-    # anchor both ends so QP-band rows fall inside the bg log-period
-    # range and the interpolation is well-defined (no extrapolation).
+    # Background coverage sits at [5, 10) min and [160 min, 12 h);
+    # _background_row_indices anchors both ends so rows *inside*
+    # QP_SEARCH_BAND fall inside the bg log-period range and the
+    # interpolation is well-defined (no extrapolation).
     periods_sec = freq_to_period(cwt_freq)
     log_p_bg = np.log10(periods_sec[bg_rows])
     log_p_all = np.log10(periods_sec)

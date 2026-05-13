@@ -54,7 +54,9 @@ class WaveEvent:
     b_perp1_amp: float | None = None  # peak |b_perp1| in window (nT)
     b_perp2_amp: float | None = None  # peak |b_perp2| in window (nT)
     b_par_amp: float | None = None  # peak |b_par| in window (nT)
-    region: str | None = None  # 'magnetosphere', 'magnetosheath', 'solar_wind', 'unknown'
+    region: str | None = (
+        None  # 'magnetosphere', 'magnetosheath', 'solar_wind', 'unknown'
+    )
     polarization: str | None = None  # 'circular', 'linear', or 'mixed'
     phase_deg: float | None = None  # b_perp1<->b_perp2 phase shift in deg
     ppo_phase_n_deg: float | None = None  # SLS5N at peak time

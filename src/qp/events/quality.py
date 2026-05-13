@@ -33,6 +33,7 @@ class QualityConfig:
     where $x_{50}$ and $k$ are derived from the ``p10`` and ``p90``
     values: the 10th percentile maps to ~0.1, the 90th to ~0.9.
     """
+
     # (p10, p90) anchors — calibrated on v2 mission catalog (1636 events)
     wavelet_sigma: tuple[float, float] = (0.5, 9.0)
     fft_ratio: tuple[float, float] = (0.1, 2.0)
@@ -90,14 +91,13 @@ def compute_quality(
     if coherence is not None:
         parts.append(_sigmoid_normalize(coherence, *config.coherence))
     if n_oscillations is not None:
-        parts.append(_sigmoid_normalize(n_oscillations,
-                                         *config.n_oscillations))
+        parts.append(_sigmoid_normalize(n_oscillations, *config.n_oscillations))
     if transverse_ratio is not None:
-        parts.append(_sigmoid_normalize(transverse_ratio,
-                                         *config.transverse_ratio))
+        parts.append(_sigmoid_normalize(transverse_ratio, *config.transverse_ratio))
     if polarization_fraction is not None:
-        parts.append(_sigmoid_normalize(polarization_fraction,
-                                         *config.polarization_fraction))
+        parts.append(
+            _sigmoid_normalize(polarization_fraction, *config.polarization_fraction)
+        )
 
     if not parts:
         return 0.0

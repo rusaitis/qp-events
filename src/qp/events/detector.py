@@ -1,36 +1,30 @@
 """Wave event detection from CWT power.
 
-Two flavours:
+Two layers:
 
-1. **Legacy single-band detector** (``detect_wave_packets``,
-   ``compute_event_measure``, ``collect_wave_events``) — peak-finding
-   on a normalized CWT event measure inside a fixed period band. Kept
-   for back-compat with the existing tests and the QP60-only Fig 9
-   pipeline.
+1. :func:`detect_wave_packets_multi` — band-agnostic ridge extraction
+   over :data:`qp.events.bands.QP_SEARCH_BAND` (10–160 min). Returns
+   :class:`WavePacketPeak` instances with bands assigned post-hoc by
+   :func:`qp.events.bands.classify_period`. This is what the
+   round-8 mission sweep calls for every transverse component.
 
-2. **Multi-band detector** (``detect_wave_packets_multi``) — runs
-   :func:`qp.events.ridge.extract_ridges` over each canonical QP band
-   and turns each ridge into a :class:`WavePacketPeak`. Optionally
-   uses an externally supplied σ-mask from
-   :mod:`qp.events.threshold`. This is the path used by the
-   mission-wide sweep in Phase 3.
-
-The legacy API stays untouched so existing scripts and tests continue
-to work; new code should call ``detect_wave_packets_multi``.
+2. :func:`detect_round8` — wraps the multi-detector with the
+   round-8 amplitude / Q-factor / MVA / Stokes gates and the
+   per-segment dedup. Public entry point for the production sweep
+   (``scripts/sweep_events_round8.py``).
 """
 
 from __future__ import annotations
 
 import datetime
 import math
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from scipy.signal import find_peaks
 
-from qp.events.bands import QP_SEARCH_BAND, Band, classify_period
-from qp.events.catalog import WaveEvent, WavePacketPeak
+from qp.events.bands import QP_SEARCH_BAND, classify_period
+from qp.events.catalog import WavePacketPeak
 from qp.events.ridge import Ridge, extract_ridges
 from qp.signal.wavelet import morlet_cwt
 
@@ -60,244 +54,10 @@ ThresholdMethod = Literal["mad_row", "tc_chi2", "fdr_chi2", "pooled"]
 #   the functions that use it for clarity.
 
 
-def _cwt_event_measure(
-    cwt_power: np.ndarray,
-    freq: np.ndarray,
-    period_band: tuple[float, float],
-    n_period_bins: int,
-) -> np.ndarray:
-    """Compute event measure by extracting CWT power at target periods.
-
-    Returns the L2 norm across period bins at each time step.
-    """
-    target_freqs = 1.0 / np.linspace(period_band[0], period_band[1], n_period_bins)
-    idx = np.array([np.argmin(np.abs(freq - f)) for f in target_freqs])
-    return np.linalg.norm(cwt_power[idx, :], axis=0)
-
-
-# ----------------------------------------------------------------------
-# Legacy single-band detector (back-compat)
-# ----------------------------------------------------------------------
-
-
-def detect_wave_packets(
-    data: ArrayLike,
-    times: list[datetime.datetime],
-    dt: float = 60.0,
-    period_band: tuple[float, float] = (50 * 60, 70 * 60),
-    n_period_bins: int = 5,
-    min_prominence: float = 0.05,
-    min_peak_distance: int = 60,
-    min_peak_width: int = 100,
-    min_duration_hours: float = 2.0,
-    dedup_window_hours: float = 3.0,
-    previous_peak_time: datetime.datetime | None = None,
-) -> list[WavePacketPeak]:
-    """Detect wave packets in a time series using CWT (legacy QP60 path).
-
-    Parameters
-    ----------
-    data : array_like
-        Field component time series (e.g., b_perp1).
-    times : list of datetime
-        Corresponding timestamps.
-    dt : float
-        Sampling interval in seconds.
-    period_band : tuple
-        (min_period, max_period) in seconds to target.
-        Default (3000, 4200) = 50-70 min for QP60.
-    n_period_bins : int
-        Number of period bins within the band.
-    min_prominence : float
-        Minimum peak prominence in normalized CWT power.
-    min_peak_distance : int
-        Minimum separation between peaks in samples.
-    min_peak_width : int
-        Minimum peak width in samples.
-    min_duration_hours : float
-        Minimum wave packet duration to accept.
-    dedup_window_hours : float
-        Suppress duplicate detections within this window.
-    previous_peak_time : datetime, optional
-        Last peak from previous segment (for cross-segment dedup).
-
-    Returns
-    -------
-    packets : list of WavePacketPeak
-    """
-    data = np.asarray(data, dtype=float)
-    N = len(data)
-    times = list(times)
-
-    # Compute CWT
-    freq, _, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=300)
-
-    # Normalize CWT power
-    cwt_power = np.abs(cwt_matrix)
-    max_power = np.max(cwt_power)
-    if max_power > 0:
-        cwt_power /= max_power
-
-    event_measure = _cwt_event_measure(cwt_power, freq, period_band, n_period_bins)
-
-    # Find peaks
-    peaks, properties = find_peaks(
-        event_measure,
-        height=min_prominence,
-        distance=min_peak_distance,
-        prominence=min_prominence,
-        width=min_peak_width,
-    )
-
-    # Build WavePacketPeak objects
-    packets: list[WavePacketPeak] = []
-    dedup_sec = dedup_window_hours * 3600
-
-    for peak, prom, l_ips, r_ips in zip(
-        peaks,
-        properties["prominences"],
-        properties["left_ips"],
-        properties["right_ips"],
-    ):
-        i_left = int(np.clip(np.round(l_ips), 0, N - 1))
-        i_right = int(np.clip(np.round(r_ips), 0, N - 1))
-
-        t_peak = times[peak]
-        t_from = times[i_left]
-        t_to = times[i_right]
-        duration_h = (t_to - t_from).total_seconds() / 3600
-
-        if duration_h < min_duration_hours:
-            continue
-
-        # De-duplicate against previous detections
-        if previous_peak_time is not None:
-            sep = abs((t_peak - previous_peak_time).total_seconds())
-            if sep < dedup_sec:
-                continue
-        if packets:
-            sep = abs((t_peak - packets[-1].peak_time).total_seconds())
-            if sep < dedup_sec:
-                continue
-
-        packets.append(
-            WavePacketPeak(
-                peak_time=t_peak,
-                prominence=float(prom),
-                date_from=t_from,
-                date_to=t_to,
-            )
-        )
-
-    return packets
-
-
-def compute_event_measure(
-    data: ArrayLike,
-    dt: float = 60.0,
-    period_band: tuple[float, float] = (50 * 60, 70 * 60),
-    n_period_bins: int = 5,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Compute the CWT-based event measure for a time series.
-
-    Returns (time_seconds, event_measure) for plotting/diagnostics.
-    """
-    data = np.asarray(data, dtype=float)
-    freq, time_sec, cwt_matrix = morlet_cwt(data, dt=dt, n_freqs=300)
-
-    cwt_power = np.abs(cwt_matrix)
-    max_power = np.max(cwt_power)
-    if max_power > 0:
-        cwt_power /= max_power
-
-    event_measure = _cwt_event_measure(cwt_power, freq, period_band, n_period_bins)
-    return time_sec, event_measure
-
-
-def collect_wave_events(
-    field_data: ArrayLike,
-    time_unix: ArrayLike,
-    dt: float = 60.0,
-    period_band: tuple[float, float] = (50 * 60, 70 * 60),
-    min_snr: float = 3.0,
-    min_duration_hours: float = 4.0,
-    coords_krtp: np.ndarray | None = None,
-    local_time: np.ndarray | None = None,
-    sls5_phases: dict[str, np.ndarray] | None = None,
-) -> list[WaveEvent]:
-    r"""Detect wave events with full metadata (legacy single-band).
-
-    See :func:`detect_wave_packets_multi` for the multi-band Phase 1+
-    replacement.
-    """
-    field_data = np.asarray(field_data, dtype=float)
-    time_unix = np.asarray(time_unix, dtype=float)
-
-    # Build datetime list from POSIX timestamps
-    _epoch = datetime.datetime(1970, 1, 1)
-    times = [_epoch + datetime.timedelta(seconds=float(ts)) for ts in time_unix]
-
-    # Detect packets using CWT
-    packets = detect_wave_packets(
-        field_data,
-        times,
-        dt=dt,
-        period_band=period_band,
-        min_prominence=min_snr,
-        min_duration_hours=min_duration_hours,
-    )
-
-    # Enrich with metadata
-    events: list[WaveEvent] = []
-    for pkt in packets:
-        peak_idx = _nearest_index(time_unix, _dt_to_unix(pkt.peak_time))
-        from_idx = _nearest_index(time_unix, _dt_to_unix(pkt.date_from))
-        to_idx = _nearest_index(time_unix, _dt_to_unix(pkt.date_to))
-
-        # Amplitude: max |field| in the packet window
-        amplitude = float(np.max(np.abs(field_data[from_idx : to_idx + 1])))
-
-        # Coordinates at peak time
-        r_dist = None
-        mag_lat = None
-        coord_krtp_val = None
-        if coords_krtp is not None:
-            r_dist = float(coords_krtp[peak_idx, 0])
-            theta = float(coords_krtp[peak_idx, 1])
-            mag_lat = 90.0 - np.degrees(theta)
-            r, th, ph = (float(v) for v in coords_krtp[peak_idx])
-            coord_krtp_val = (r, th, ph)
-
-        lt = None
-        if local_time is not None:
-            lt = float(local_time[peak_idx])
-
-        events.append(
-            WaveEvent(
-                date_from=pkt.date_from,
-                date_to=pkt.date_to,
-                amplitude=amplitude,
-                snr=pkt.prominence,
-                local_time=lt,
-                mag_lat=mag_lat,
-                r_distance=r_dist,
-                coord_krtp=coord_krtp_val,
-            )
-        )
-
-    return events
-
-
-# ----------------------------------------------------------------------
-# Multi-band detector (Phase 1+)
-# ----------------------------------------------------------------------
-
-
 def detect_wave_packets_multi(
     data: ArrayLike,
     times: list[datetime.datetime] | NDArray[np.floating],
     dt: float = 60.0,
-    bands: Iterable[str | Band] | None = None,
     *,
     cwt_freq: ArrayLike | None = None,
     cwt_power: ArrayLike | None = None,
@@ -313,18 +73,14 @@ def detect_wave_packets_multi(
     --------
     1. Compute the CWT once (or accept a precomputed scalogram so the
        caller can reuse it across components).
-    2. Run :func:`qp.events.ridge.extract_ridges` **once** over the
-       full :data:`qp.events.bands.QP_SEARCH_BAND` window (10–160 min)
-       so a ridge straddling an octave boundary (20, 40, 80 min) is
-       one packet, not two amputated halves.
+    2. Run :func:`qp.events.ridge.extract_ridges` once over
+       :data:`qp.events.bands.QP_SEARCH_BAND` (10–160 min) so a ridge
+       straddling an octave boundary (20, 40, 80 min) is one packet,
+       not two amputated halves.
     3. Convert each ridge to a :class:`WavePacketPeak` and assign the
        canonical QP band post-hoc via :func:`classify_period` on the
        interpolated peak period. Bands are a *labelling* concept here,
        not a detection axis.
-
-    The legacy per-band loop is preserved when an explicit ``bands``
-    iterable is passed (e.g. for the QP60-only single-band tests),
-    but the default and production path is single-pass.
 
     Parameters
     ----------
@@ -335,12 +91,6 @@ def detect_wave_packets_multi(
         be POSIX seconds.
     dt : float
         Sampling interval in seconds (default 60 s).
-    bands : iterable of str or Band, optional
-        Legacy back-compat. ``None`` (the default) runs a single ridge
-        extraction over the full QP search range and labels each peak
-        post-hoc. A non-``None`` iterable falls back to the old
-        per-band loop and is only kept for tests that need band-scoped
-        detection.
     cwt_freq, cwt_power : array_like, optional
         Precomputed CWT frequency axis and ``|cwt|`` power matrix. If
         either is None, the CWT is computed internally with
@@ -395,36 +145,21 @@ def detect_wave_packets_multi(
 
     min_duration_sec = min_duration_hours * 3600.0
 
-    # Default (production) path: one ridge extraction over the full
-    # QP_SEARCH_BAND; bands re-enter post-hoc via classify_period.
-    # Caller can still pass an explicit `bands` iterable to recover
-    # the legacy per-band loop for single-band tests.
-    search_bands: list[str | Band]
-    if bands is None:
-        search_bands = [QP_SEARCH_BAND]
-    else:
-        search_bands = list(bands)
+    ridges = extract_ridges(
+        cwt_power,
+        freq,
+        band=QP_SEARCH_BAND,
+        threshold_mask=threshold_mask,
+        dt=dt,
+        min_duration_sec=min_duration_sec,
+        min_pixels=min_pixels,
+        coi_factor=coi_factor,
+    )
+    packets = [_ridge_to_packet(ridge, times_list, n_time) for ridge in ridges]
 
-    packets: list[WavePacketPeak] = []
-    for b in search_bands:
-        ridges = extract_ridges(
-            cwt_power,
-            freq,
-            band=b,
-            threshold_mask=threshold_mask,
-            dt=dt,
-            min_duration_sec=min_duration_sec,
-            min_pixels=min_pixels,
-            coi_factor=coi_factor,
-        )
-        for ridge in ridges:
-            packets.append(_ridge_to_packet(ridge, times_list, n_time))
-
-    # Post-hoc band labelling. When the ridge came from QP_SEARCH_BAND
-    # the ridge's own .band field is "QP_SEARCH" — overwrite it with
-    # classify_period(period_sec). For the legacy per-band path the
-    # ridge already carries the right label and classify_period returns
-    # the same name, so this is a no-op in that case.
+    # Post-hoc band labelling. Ridges from QP_SEARCH_BAND carry no
+    # canonical band; classify_period maps each peak's interpolated
+    # period to QP15/30/60/120 (or None outside the search range).
     for p in packets:
         if p.period_sec is not None and p.period_sec > 0:
             p.band = classify_period(p.period_sec)
@@ -447,182 +182,12 @@ def _ridge_to_packet(
         prominence=float(ridge.peak_power),
         date_from=t_start,
         date_to=t_end,
-        band=ridge.band,
         period_sec=float(ridge.peak_period_sec),
         period_fwhm_sec=float(ridge.period_fwhm_sec),
     )
 
 
-# ----------------------------------------------------------------------
-# Phase 2: full gate combining FFT screen + σ mask + ridge extraction
-# ----------------------------------------------------------------------
-
-
-def detect_with_gate(
-    b_perp1: ArrayLike,
-    b_perp2: ArrayLike,
-    times: list[datetime.datetime] | NDArray[np.floating],
-    *,
-    dt: float = 60.0,
-    bands: Iterable[str | Band] | None = None,
-    spectral_result_perp1=None,
-    spectral_result_perp2=None,
-    gate=None,
-    cwt_n_freqs: int = 300,
-) -> list[WavePacketPeak]:
-    r"""Run the full Phase 2 detection gate on a single MFA segment.
-
-    Pipeline
-    --------
-    1. Run :func:`screen_segment_by_power_ratio` on both ``b_perp1``
-       and ``b_perp2`` Welch PSDs over the full
-       :data:`qp.events.bands.QP_SEARCH_BAND` window (10–160 min).
-       The whole segment is rejected only if neither component shows
-       *any* in-band enhancement; no per-band trigger budget is
-       imposed. (Caller may pass precomputed :class:`SpectralResult`
-       objects to skip the ``analyze_segment`` step.)
-    2. Compute the CWT of ``b_perp1`` (the dominant transverse
-       component in the published paper).
-    3. Build a :func:`wavelet_sigma_mask` from that CWT.
-    4. Hand the (CWT, mask) pair to :func:`detect_wave_packets_multi`,
-       which runs ridge extraction over QP_SEARCH_BAND in one pass
-       and labels each peak post-hoc.
-
-    Returns the list of :class:`WavePacketPeak` accepted by every
-    stage. Polarization, coordinate, and PPO enrichment is the
-    sweep script's job (see ``scripts/sweep_events_round8.py``).
-
-    The ``bands`` parameter is kept as legacy escape hatch: passing a
-    non-``None`` iterable restores the old per-band FFT screen and
-    per-band ridge loop.
-    """
-    # Lazy imports to keep module-level deps minimal
-    from qp.events.threshold import (
-        DEFAULT_GATE,
-        screen_spectral_result,
-        wavelet_sigma_mask,
-    )
-    from qp.signal.pipeline import analyze_segment
-
-    if gate is None:
-        gate = DEFAULT_GATE
-
-    b_perp1 = np.asarray(b_perp1, dtype=float)
-    b_perp2 = np.asarray(b_perp2, dtype=float)
-
-    # Stage 1: Welch PSDs (compute lazily if not provided).
-    if spectral_result_perp1 is None:
-        spectral_result_perp1 = analyze_segment(
-            b_perp1,
-            dt=dt,
-            detrend_window_sec=60.0,  # tiny — segments are pre-detrended
-            welch_nperseg=12 * 60,
-            welch_noverlap=6 * 60,
-        )
-    if spectral_result_perp2 is None:
-        spectral_result_perp2 = analyze_segment(
-            b_perp2,
-            dt=dt,
-            detrend_window_sec=60.0,
-            welch_nperseg=12 * 60,
-            welch_noverlap=6 * 60,
-        )
-
-    # Band-agnostic FFT screen: one pass over the full 10–160 min
-    # search window. The legacy per-band screen is recovered by passing
-    # an explicit `bands` iterable (kept for back-compat tests).
-    if bands is None:
-        screen_targets: list[str | Band] = [QP_SEARCH_BAND]
-    else:
-        screen_targets = list(bands)
-
-    if gate.enable_fft_screen:
-        triggered_bands: list[str | Band] = []
-        for b in screen_targets:
-            s1 = screen_spectral_result(
-                spectral_result_perp1,
-                b,
-                ratio_threshold=gate.fft_ratio_threshold,
-            )
-            s2 = screen_spectral_result(
-                spectral_result_perp2,
-                b,
-                ratio_threshold=gate.fft_ratio_threshold,
-            )
-            if s1.triggered or s2.triggered:
-                triggered_bands.append(b)
-        if not triggered_bands:
-            return []
-    else:
-        triggered_bands = list(screen_targets)
-
-    # Stage 2: CWT on both transverse components and combine via the
-    # coincidence rule from Phase 6.3 (`require_both_perp`).
-    #
-    # We CWT both perp components and require σ-mask agreement in the
-    # same (period, time) cell. This eliminates compressional or
-    # single-axis contamination — a real Alfvén wave packet will fire
-    # both transverse components together.
-    freq, _, cwt_matrix1 = morlet_cwt(b_perp1, dt=dt, n_freqs=cwt_n_freqs)
-    cwt_power1 = np.abs(cwt_matrix1)
-    if gate.require_both_perp:
-        _, _, cwt_matrix2 = morlet_cwt(b_perp2, dt=dt, n_freqs=cwt_n_freqs)
-        cwt_power2 = np.abs(cwt_matrix2)
-        mask1 = wavelet_sigma_mask(cwt_power1, freq, n_sigma=gate.n_sigma)
-        mask2 = wavelet_sigma_mask(cwt_power2, freq, n_sigma=gate.n_sigma)
-        mask = mask1 & mask2
-        cwt_power = (cwt_power1 + cwt_power2) / 2.0
-    else:
-        cwt_power = cwt_power1
-        mask = wavelet_sigma_mask(cwt_power, freq, n_sigma=gate.n_sigma)
-
-    # Stage 4: ridge extraction. In band-agnostic mode (`bands is None`)
-    # we hand a single QP_SEARCH_BAND through; otherwise we forward the
-    # legacy band list. When `bands is None` we pass `bands=None` down,
-    # so the post-hoc classify_period labelling in
-    # detect_wave_packets_multi runs.
-    packets = detect_wave_packets_multi(
-        b_perp1,
-        times,
-        dt=dt,
-        bands=None if bands is None else triggered_bands,
-        cwt_freq=freq,
-        cwt_power=cwt_power,
-        threshold_mask=mask,
-        min_duration_hours=gate.min_duration_hours,
-        min_pixels=gate.min_pixels,
-        coi_factor=gate.coi_factor,
-    )
-
-    # Stage 5: physical sanity — require at least N oscillations of
-    # the peak period inside the packet window. A "wave packet" with
-    # fewer than two oscillations is just a glitch.
-    if gate.min_oscillations > 0:
-        kept: list[WavePacketPeak] = []
-        for p in packets:
-            if p.period_sec is None or p.period_sec <= 0:
-                continue
-            duration_sec = (p.date_to - p.date_from).total_seconds()
-            n_osc = duration_sec / p.period_sec
-            if n_osc >= gate.min_oscillations:
-                kept.append(p)
-        packets = kept
-
-    return packets
-
-
-def _dt_to_unix(dt_obj: datetime.datetime) -> float:
-    """Convert a naive datetime to POSIX timestamp (assuming UTC)."""
-    epoch = datetime.datetime(1970, 1, 1)
-    return (dt_obj - epoch).total_seconds()
-
-
-def _nearest_index(arr: np.ndarray, value: float) -> int:
-    """Find the index of the nearest value in a sorted array."""
-    return int(np.argmin(np.abs(arr - value)))
-
-
-def dedup_peaks_by_band(
+def dedup_peaks_by_period(
     peaks: list[WavePacketPeak],
     dt_sec: float = 7200.0,
     *,
@@ -634,7 +199,7 @@ def dedup_peaks_by_band(
     the same physical wave train twice. We collapse those near-duplicates
     while preserving genuinely close peaks at different periods (e.g.
     co-existing QP30 + QP60 harmonics, or a sequence of distinct wave
-    packets within the same band).
+    packets in the same band).
 
     Two peaks are duplicates when
 
@@ -647,11 +212,6 @@ def dedup_peaks_by_band(
     union of (b_perp1, b_perp2) peaks; the parquet-level cross-segment
     pass in :mod:`qp.events.dedup` repeats the same idea on the
     assembled catalogue.
-
-    Compared with the prior band-keyed implementation, this version
-    works whether peaks have been labelled (post-hoc) into one of the
-    QP bands or not, because the duplicate condition is on the actual
-    period instead of the band string.
 
     Parameters
     ----------
@@ -673,20 +233,20 @@ def dedup_peaks_by_band(
     """
     merged: list[WavePacketPeak] = []
     for peak in peaks:
+        p_cur = peak.period_sec
+        if p_cur is None or p_cur <= 0:
+            # Round-8 detections always populate period_sec; a missing
+            # period means a malformed peak — keep it as-is rather than
+            # silently dropping or merging on a band string.
+            merged.append(peak)
+            continue
         is_dup = False
         for prev in reversed(merged):
             sep = abs((peak.peak_time - prev.peak_time).total_seconds())
             if sep >= dt_sec:
                 break  # merged is time-sorted; earlier entries are farther
-            p_cur = peak.period_sec
             p_prev = prev.period_sec
-            if p_cur is None or p_prev is None or p_cur <= 0 or p_prev <= 0:
-                # No period info → fall back to band-string equality so
-                # callers using the legacy per-band loop still see the
-                # original same-band dedup behaviour.
-                if peak.band is not None and peak.band == prev.band:
-                    is_dup = True
-                    break
+            if p_prev is None or p_prev <= 0:
                 continue
             if abs(math.log2(p_cur / p_prev)) < period_log2_tol:
                 is_dup = True
@@ -991,7 +551,7 @@ def detect_round8(
         all_peaks.extend(peaks)
 
     all_peaks.sort(key=lambda p: p.peak_time)
-    merged = dedup_peaks_by_band(all_peaks, dt_sec=7200.0)
+    merged = dedup_peaks_by_period(all_peaks, dt_sec=7200.0)
 
     # Per-detection physical gates.
     n_time = cwt1.shape[1]
@@ -1071,3 +631,26 @@ def detect_round8(
             )
         )
     return kept
+
+
+def dedup_peaks_by_band(
+    peaks: list[WavePacketPeak],
+    dt_sec: float = 7200.0,
+    *,
+    period_log2_tol: float = 0.5,
+) -> list[WavePacketPeak]:
+    """Deprecated alias for :func:`dedup_peaks_by_period`.
+
+    .. deprecated:: post-round-8
+       The dedup is band-agnostic and keys on log-period proximity, so
+       the name no longer reflects the behaviour. Call
+       :func:`dedup_peaks_by_period` directly.
+    """
+    import warnings
+
+    warnings.warn(
+        "dedup_peaks_by_band is deprecated; use dedup_peaks_by_period instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return dedup_peaks_by_period(peaks, dt_sec=dt_sec, period_log2_tol=period_log2_tol)

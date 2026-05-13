@@ -12,7 +12,7 @@ from scipy import signal as sig
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 
-from qp.events.bands import QP_BANDS
+from qp.events.bands import QP_SEARCH_BAND
 
 
 def welch_psd(
@@ -222,8 +222,9 @@ def estimate_background_powerlaw(
     freq : array_like
         Frequency array (Hz).
     exclude_bands : bool
-        If True, exclude QP band frequencies from the fit so the
-        background is estimated purely from noise.
+        If True, exclude the QP detection search volume
+        (:data:`qp.events.bands.QP_SEARCH_BAND`, 10–160 min) from the
+        fit so the background is estimated purely from noise.
 
     Returns
     -------
@@ -233,13 +234,12 @@ def estimate_background_powerlaw(
     psd = np.asarray(psd, dtype=float)
     freq = np.asarray(freq, dtype=float)
 
-    # Mask: positive freq and PSD, plus optional QP-band exclusion
+    # Mask: positive freq and PSD, plus optional QP-band exclusion.
     valid = (freq > 0) & (psd > 0)
     if exclude_bands:
-        for band in QP_BANDS.values():
-            valid &= ~(
-                (freq >= band.freq_min_hz) & (freq < band.freq_max_hz)
-            )
+        valid &= ~(
+            (freq >= QP_SEARCH_BAND.freq_min_hz) & (freq < QP_SEARCH_BAND.freq_max_hz)
+        )
 
     if valid.sum() < 2:
         # Degenerate — return flat background

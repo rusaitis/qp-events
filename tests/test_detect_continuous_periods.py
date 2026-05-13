@@ -17,7 +17,7 @@ import pytest
 
 from qp.events.bands import classify_period
 from qp.events.catalog import WaveTemplate, WavePacketPeak
-from qp.events.detector import dedup_peaks_by_band, detect_wave_packets_multi
+from qp.events.detector import dedup_peaks_by_period, detect_wave_packets_multi
 from qp.signal.synthetic import simulate_signal
 
 
@@ -172,7 +172,7 @@ class TestPeriodHistogramIsSmooth:
 
 
 class TestDedupByPeriodProximity:
-    """``dedup_peaks_by_band`` now compares periods in log2 space, not
+    """``dedup_peaks_by_period`` compares periods in log2 space, not
     band-string equality. Distinct-period peaks within the same 2-h
     window survive; near-period peaks collapse.
     """
@@ -198,7 +198,7 @@ class TestDedupByPeriodProximity:
             self._peak(0, 25),
             self._peak(60, 65),  # 1 h later
         ]
-        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        kept = dedup_peaks_by_period(peaks, dt_sec=7200.0)
         assert len(kept) == 2
 
     def test_near_periods_within_window_collapsed(self):
@@ -207,7 +207,7 @@ class TestDedupByPeriodProximity:
             self._peak(0, 60),
             self._peak(30, 61),
         ]
-        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        kept = dedup_peaks_by_period(peaks, dt_sec=7200.0)
         assert len(kept) == 1
 
     def test_same_band_far_apart_in_time_both_kept(self):
@@ -216,7 +216,7 @@ class TestDedupByPeriodProximity:
             self._peak(0, 60),
             self._peak(180, 60),
         ]
-        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        kept = dedup_peaks_by_period(peaks, dt_sec=7200.0)
         assert len(kept) == 2
 
     def test_cross_band_close_period_still_collapses(self):
@@ -227,5 +227,5 @@ class TestDedupByPeriodProximity:
             self._peak(0, 39),
             self._peak(30, 41),
         ]
-        kept = dedup_peaks_by_band(peaks, dt_sec=7200.0)
+        kept = dedup_peaks_by_period(peaks, dt_sec=7200.0)
         assert len(kept) == 1

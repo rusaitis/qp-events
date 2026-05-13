@@ -57,11 +57,7 @@ def tag_co_bands(df: "pd.DataFrame") -> "pd.DataFrame":
     date_to = pd.to_datetime(out["date_to"]).astype("datetime64[ns]")
     seg = out["segment_idx"].to_numpy()
     band = out["band"].to_numpy()
-    is_dup = (
-        out["is_duplicate"].to_numpy()
-        if "is_duplicate" in out.columns
-        else None
-    )
+    is_dup = out["is_duplicate"].to_numpy() if "is_duplicate" in out.columns else None
     t_from = date_from.astype("int64").to_numpy()
     t_to = date_to.astype("int64").to_numpy()
 

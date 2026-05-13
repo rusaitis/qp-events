@@ -107,10 +107,13 @@ DEFAULT_COI_FACTOR: float = 1.0
 class Ridge:
     r"""A connected (time, period) region of elevated CWT power.
 
+    The QP band is *not* recorded on the ridge: detection runs over a
+    single :data:`qp.events.bands.QP_SEARCH_BAND`, and band labels are
+    assigned post-hoc by :func:`qp.events.bands.classify_period`
+    against ``peak_period_sec``.
+
     Attributes
     ----------
-    band : str
-        The QP band this ridge sits in (e.g. ``"QP60"``).
     t_start_idx, t_end_idx : int
         Inclusive sample indices marking the time extent.
     p_min_idx, p_max_idx : int
@@ -129,7 +132,6 @@ class Ridge:
         Number of pixels in the connected blob.
     """
 
-    band: str
     t_start_idx: int
     t_end_idx: int
     p_min_idx: int
@@ -178,10 +180,7 @@ def _band_row_indices(
 ) -> NDArray[np.intp]:
     r"""Return the indices of CWT rows whose period lies inside ``band``."""
     periods_sec = freq_to_period(cwt_freq)
-    in_band = (
-        (periods_sec >= band.period_min_sec)
-        & (periods_sec < band.period_max_sec)
-    )
+    in_band = (periods_sec >= band.period_min_sec) & (periods_sec < band.period_max_sec)
     return np.flatnonzero(in_band)
 
 
@@ -306,7 +305,10 @@ def extract_ridges(
         # the discrete scale grid (~0.8% spacing for 300 freqs across
         # 15-180 min).
         peak_period_sec = _parabolic_interp_period(
-            cwt_power, periods_sec, peak_period_idx, peak_time_idx,
+            cwt_power,
+            periods_sec,
+            peak_period_idx,
+            peak_time_idx,
         )
 
         # FWHM of the period marginal at peak time
@@ -326,7 +328,6 @@ def extract_ridges(
 
         ridges.append(
             Ridge(
-                band=band_obj.name,
                 t_start_idx=t_start_idx,
                 t_end_idx=t_end_idx,
                 p_min_idx=p_min_idx,
@@ -400,12 +401,14 @@ def split_ridge_at_half_power(
             continue
         sub_envelope = envelope[local_start : local_end + 1]
         peak_local = int(np.argmax(sub_envelope))
-        sub_ridges.append(replace(
-            ridge,
-            t_start_idx=ridge.t_start_idx + local_start,
-            t_end_idx=ridge.t_start_idx + local_end,
-            peak_time_idx=ridge.t_start_idx + local_start + peak_local,
-            peak_power=float(sub_envelope[peak_local]),
-        ))
+        sub_ridges.append(
+            replace(
+                ridge,
+                t_start_idx=ridge.t_start_idx + local_start,
+                t_end_idx=ridge.t_start_idx + local_end,
+                peak_time_idx=ridge.t_start_idx + local_start + peak_local,
+                peak_power=float(sub_envelope[peak_local]),
+            )
+        )
 
     return sub_ridges if sub_ridges else [ridge]

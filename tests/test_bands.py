@@ -6,11 +6,11 @@ import math
 
 import pytest
 
-from qp.events.bands import (
+from qp.events.bands import (  # noqa: I001
+    QP_SEARCH_BAND,
     QP_BAND_COLORS,
     QP_BAND_NAMES,
     QP_BANDS,
-    SEARCH_BAND_EXTENDED,
     classify_period,
     get_band,
     is_in_band,
@@ -39,18 +39,14 @@ class TestBandConstants:
     def test_bands_are_octaves(self):
         """Each band's upper edge equals 2× its lower edge."""
         for band in QP_BANDS.values():
-            assert math.isclose(
-                band.period_max_sec, 2.0 * band.period_min_sec
-            ), f"{band.name} is not an octave"
+            assert math.isclose(band.period_max_sec, 2.0 * band.period_min_sec), (
+                f"{band.name} is not an octave"
+            )
 
     def test_band_freq_inversion(self):
         for band in QP_BANDS.values():
-            assert math.isclose(
-                band.freq_min_hz, 1.0 / band.period_max_sec
-            )
-            assert math.isclose(
-                band.freq_max_hz, 1.0 / band.period_min_sec
-            )
+            assert math.isclose(band.freq_min_hz, 1.0 / band.period_max_sec)
+            assert math.isclose(band.freq_max_hz, 1.0 / band.period_min_sec)
 
     def test_band_is_frozen(self):
         b = QP_BANDS["QP60"]
@@ -139,7 +135,10 @@ class TestClassifyPeriod:
 
 
 class TestSearchBand:
-    def test_search_band_covers_qp_bands(self):
+    def test_search_band_unions_qp_bands(self):
+        """``QP_SEARCH_BAND`` is exactly the union of the four QP bands."""
         for band in QP_BANDS.values():
-            assert SEARCH_BAND_EXTENDED.period_min_sec <= band.period_min_sec
-            assert SEARCH_BAND_EXTENDED.period_max_sec > band.period_max_sec
+            assert QP_SEARCH_BAND.period_min_sec <= band.period_min_sec
+            assert QP_SEARCH_BAND.period_max_sec >= band.period_max_sec
+        assert QP_SEARCH_BAND.period_min_sec == 10 * 60
+        assert QP_SEARCH_BAND.period_max_sec == 160 * 60

@@ -48,9 +48,18 @@ _REGION_CODE_TO_NAME = {
 }
 
 _INFO_KEYS_TO_KEEP = (
-    "median_LT", "median_BT", "median_coords", "location",
-    "locations", "flag_times",
-    "SLS5N", "SLS5S", "SLS5N2", "SLS5S2", "NaN_count", "gaps",
+    "median_LT",
+    "median_BT",
+    "median_coords",
+    "location",
+    "locations",
+    "flag_times",
+    "SLS5N",
+    "SLS5S",
+    "SLS5N2",
+    "SLS5S2",
+    "NaN_count",
+    "gaps",
 )
 
 
@@ -147,11 +156,7 @@ def segment_to_payload(seg_idx: int, seg: Any) -> SegmentPayload | None:
     b_par = np.asarray(seg.FIELDS[0].y, dtype=float)
     b_perp1 = np.asarray(seg.FIELDS[1].y, dtype=float)
     b_perp2 = np.asarray(seg.FIELDS[2].y, dtype=float)
-    if (
-        len(b_perp1) != n_samples
-        or np.isnan(b_perp1).all()
-        or np.isnan(b_perp2).all()
-    ):
+    if len(b_perp1) != n_samples or np.isnan(b_perp1).all() or np.isnan(b_perp2).all():
         return None
     coords = {c.name: np.asarray(c.y, dtype=float) for c in seg.COORDS}
     info = getattr(seg, "info", None) or {}
@@ -224,8 +229,10 @@ def ppo_at_peak_from_info(
 ) -> dict[str, float | None]:
     """Look up SLS5 N/S phases at a wave-packet peak time."""
     out: dict[str, float | None] = {
-        "sls5n": None, "sls5s": None,
-        "sls5n2": None, "sls5s2": None,
+        "sls5n": None,
+        "sls5s": None,
+        "sls5n2": None,
+        "sls5s2": None,
     }
     elapsed_min = (peak_time - seg_t0).total_seconds() / 60.0
     for key in ("SLS5N", "SLS5S", "SLS5N2", "SLS5S2"):
@@ -243,7 +250,8 @@ def ppo_at_peak_from_info(
 
 
 def region_at_peak_from_info(
-    info: dict, peak_time: datetime.datetime,
+    info: dict,
+    peak_time: datetime.datetime,
 ) -> str:
     """Translate ``seg.info['locations']`` into a region label at peak_time."""
     locations = info.get("locations")

@@ -1,11 +1,20 @@
-"""Phase 2.4 — calibrate the QP detection threshold via synthetic injection.
+"""LEGACY — Phase 2.4 pre-round-8 detection-threshold calibration.
+
+.. deprecated:: round-8
+   Production detection thresholds are now fixed by
+   :data:`qp.events.detector.SEGMENT_FWER_ALPHA` (Bonferroni FWER on
+   the whitened CWT) and the canonical Stokes / Q-factor / MVA gates
+   in :mod:`qp.events.detector`. This script is kept for archival
+   reference only; it depends on the deprecated band-loop gate path
+   (``detect_with_gate``). Do not run it as part of the round-8
+   pipeline.
 
 For each QP band and a grid of injection amplitudes:
 
 1. Build N synthetic 36-h segments (Gaussian-windowed packet on top of
    AR(1) red noise).
 2. Build N background-only segments (red noise alone).
-3. Run :func:`qp.events.detector.detect_with_gate` on both populations.
+3. Run ``detect_with_gate`` (legacy) on both populations.
 4. Record the recall (fraction of injected packets recovered in the
    right band) and the false-positive rate (fraction of background
    segments yielding a spurious packet in any band).
@@ -18,10 +27,6 @@ Outputs
 - ``Output/diagnostics/threshold_calibration.png`` — recall/FPR curves
 - ``Output/diagnostics/threshold_calibration.md`` — chosen n_sigma per
   band, with rationale
-
-This script is fast (~1 minute on a laptop) and is the canonical
-source for the production threshold values used by Phase 3's
-mission-wide sweep.
 """
 
 from __future__ import annotations
@@ -38,13 +43,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 from qp.events.bands import QP_BAND_NAMES, QP_BANDS
 from qp.events.catalog import WaveTemplate
-from qp.events.detector import detect_with_gate
 from qp.events.threshold import GateConfig
 from qp.signal.synthetic import simulate_signal
+
+
+def detect_with_gate(*_args, **_kwargs):  # type: ignore[no-redef]
+    """Stub for the deleted Phase-2 gate. See module docstring."""
+    raise NotImplementedError(
+        "detect_with_gate was removed alongside the round-8 simplification "
+        "(legacy band-loop gate path). To re-run this calibration, restore "
+        "detect_with_gate from git history or rewrite the script around "
+        "qp.events.detector.detect_round8."
+    )
 
 
 # ----------------------------------------------------------------------
