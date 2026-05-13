@@ -19,6 +19,8 @@ from qp.dwell.grid import DwellGridConfig
 from qp.events.binning import (
     SegmentPositionsExt,
     accumulate_full_mirror,
+    bin_events_walking,
+    build_band_masks,
     full_mirror_grids_to_xarray,
 )
 from qp.events.catalog import WaveEvent
@@ -160,26 +162,6 @@ class TestRegionSplits:
         # Other regions empty
         assert float(grids["QP60_magnetosheath"].sum()) == 0.0
         assert float(grids["QP60_solar_wind"].sum()) == 0.0
-
-
-class TestRebandWithCallable:
-    def test_band_for_period_min_overrides_event_band(self) -> None:
-        seg = _make_segment()
-        # Stored event band is QP60 but we map it to a custom "wide"
-        # band via the period-only callable. The event should land in
-        # "wide", not "QP60".
-        ev = _make_event(seg, band="QP60", duration_min=180)
-
-        def lookup(p: float) -> str | None:
-            return "wide" if 50.0 <= p < 200.0 else None
-
-        grids = accumulate_full_mirror(
-            [ev],
-            {0: seg},
-            bands=["wide"],
-            band_for_period_min=lookup,
-        )
-        assert float(grids["wide_total"].sum()) == pytest.approx(180.0, abs=1.0)
 
 
 class TestXarrayWrap:
@@ -325,3 +307,119 @@ class TestKmagEventGridsAccumulator:
         total_eq = float(grids["QP60_kmag_eq_r_total"].sum())
         total_inv = float(grids["QP60_kmag_inv_lat_total"].sum())
         assert (total_eq + total_inv) > 0.0
+
+
+class TestWalkingBinnerOverlap:
+    """Regression: same-band overlapping events must not double-count.
+
+    Before the Phase-2 fix in qp.events.binning.bin_events_walking, two
+    QP60 events that shared a minute on the same segment each added
+    their contribution to grids["QP60"], inflating the band total by
+    the overlap length. The union "total" was always correct, so this
+    test pins both invariants.
+    """
+
+    def test_same_band_overlap_band_grid_not_double_counted(self) -> None:
+        seg = _make_segment(n_minutes=600)
+        # Two QP60 events. date_to is the time of the **last included
+        # sample** (qp.events.detector._ridge_to_packet); _make_event
+        # uses times[start + duration - 1], so an event with
+        # duration_min=100 covers samples [start, start+99] inclusive
+        # = 100 sample-minutes. Events at start=100 and start=170 thus
+        # cover [100, 199] and [170, 269]; their union is [100, 269] =
+        # 170 sample-minutes (overlap = 30 min).
+        e1 = _make_event(seg, band="QP60", start_min=100, duration_min=100)
+        e2 = _make_event(seg, band="QP60", start_min=170, duration_min=100)
+        grids, _stats = bin_events_walking([e1, e2], {0: seg})
+
+        qp60_minutes = float(grids["QP60"].sum())
+        total_minutes = float(grids["total"].sum())
+
+        # Both per-band and union "total" should equal the OR-mask
+        # cardinality (170). Pre-fix the per-band grid was 200 = sum
+        # of individual durations, inflating by the 30-min overlap.
+        assert qp60_minutes == pytest.approx(170.0, abs=1.0)
+        assert total_minutes == pytest.approx(170.0, abs=1.0)
+
+    def test_cross_band_overlap_keeps_per_band_minutes(self) -> None:
+        seg = _make_segment(n_minutes=600)
+        # Different bands, 30-min overlap. Each per-band grid counts
+        # its event's 100 sample-minutes; the union counts each minute
+        # once (170 sample-minutes total).
+        e1 = _make_event(seg, band="QP60", start_min=100, duration_min=100)
+        e2 = _make_event(seg, band="QP30", start_min=170, duration_min=100)
+        grids, _stats = bin_events_walking([e1, e2], {0: seg})
+
+        assert float(grids["QP60"].sum()) == pytest.approx(100.0, abs=1.0)
+        assert float(grids["QP30"].sum()) == pytest.approx(100.0, abs=1.0)
+        assert float(grids["total"].sum()) == pytest.approx(170.0, abs=1.0)
+
+
+class TestBuildBandMasks:
+    """Vectorised band-mask builder (B2): one searchsorted per band +
+    +1/-1 cumsum trick. Must produce closed-interval masks matching the
+    detector's ``date_to = last included sample`` convention.
+    """
+
+    def _trajectory(self) -> tuple[np.ndarray, np.datetime64]:
+        epoch = np.datetime64("2008-01-01T00:00:00")
+        t = epoch + np.arange(1000) * np.timedelta64(60, "s")  # 1-min cadence
+        t_unix = (
+            t - np.datetime64("1970-01-01T00:00:00")
+        ).astype("timedelta64[s]").astype(np.int64).astype(float)
+        return t_unix, epoch
+
+    def test_closed_interval_60_samples(self) -> None:
+        t_unix, epoch = self._trajectory()
+        # Event from idx 100 to idx 159 inclusive → 60 samples
+        date_from = np.array([epoch + np.timedelta64(100 * 60, "s")])
+        date_to = np.array([epoch + np.timedelta64(159 * 60, "s")])
+        period_min = np.array([60.0])
+
+        def lookup(p: float) -> str | None:
+            return "QP60" if 40.0 <= p < 80.0 else None
+
+        masks, n_unmapped = build_band_masks(
+            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+        )
+        assert n_unmapped == 0
+        assert int(masks["QP60"].sum()) == 60
+        # Range correctness: first True at 100, last True at 159
+        idxs = np.flatnonzero(masks["QP60"])
+        assert idxs[0] == 100 and idxs[-1] == 159
+
+    def test_overlapping_events_collapse_to_union(self) -> None:
+        """Two QP60 events that share 30 minutes → 170 mask minutes."""
+        t_unix, epoch = self._trajectory()
+        date_from = np.array([
+            epoch + np.timedelta64(100 * 60, "s"),
+            epoch + np.timedelta64(170 * 60, "s"),
+        ])
+        date_to = np.array([
+            epoch + np.timedelta64(199 * 60, "s"),
+            epoch + np.timedelta64(269 * 60, "s"),
+        ])
+        period_min = np.array([60.0, 60.0])
+
+        def lookup(p: float) -> str | None:
+            return "QP60" if 40.0 <= p < 80.0 else None
+
+        masks, _ = build_band_masks(
+            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+        )
+        assert int(masks["QP60"].sum()) == 170  # 100 + 100 - 30 overlap
+
+    def test_unmapped_periods_counted(self) -> None:
+        t_unix, epoch = self._trajectory()
+        date_from = np.array([epoch + np.timedelta64(100 * 60, "s")])
+        date_to = np.array([epoch + np.timedelta64(199 * 60, "s")])
+        period_min = np.array([300.0])  # outside QP60 band
+
+        def lookup(p: float) -> str | None:
+            return "QP60" if 40.0 <= p < 80.0 else None
+
+        masks, n_unmapped = build_band_masks(
+            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+        )
+        assert n_unmapped == 1
+        assert int(masks["QP60"].sum()) == 0

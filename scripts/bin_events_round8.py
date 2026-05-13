@@ -54,13 +54,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 import qp  # noqa: E402
 from qp.dwell.grid import (  # noqa: E402
     DwellGridConfig,
-    accumulate_inv_lat_grid,
-    accumulate_weak_field_grid,
-    accumulate_with_regions,
+    accumulate_inv_lat_grid_cached,
+    accumulate_weak_field_grid_cached,
+    accumulate_with_regions_cached,
+    precompute_bins,
 )
 from qp.cli import add_verbosity_arg, add_workers_arg  # noqa: E402
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
-from qp.events.binning import full_mirror_grids_to_xarray  # noqa: E402
+from qp.events.binning import build_band_masks, full_mirror_grids_to_xarray  # noqa: E402
 from qp.io.trajectory import load_mission_trajectory, load_region_codes  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -120,31 +121,15 @@ def _build_band_masks(
     bands: list[str],
     band_lookup,
 ) -> dict[str, np.ndarray]:
-    """For each band, build a per-sample boolean mask.
-
-    A sample is True for band B if it falls inside any event whose
-    period maps to band B. The "total" band is the union across bands
-    (each minute counts once regardless of how many bands fired).
-    """
-    n = t_unix.size
-    masks: dict[str, np.ndarray] = {b: np.zeros(n, dtype=bool) for b in bands}
-    epoch = np.datetime64("1970-01-01T00:00:00")
-    n_unmapped = 0
-    for r in df.itertuples(index=False):
-        period_min = float(r.period_min)
-        band = band_lookup(period_min)
-        if band is None or band not in masks:
-            n_unmapped += 1
-            continue
-        t_from = float(
-            (np.datetime64(r.date_from) - epoch).astype("timedelta64[s]").astype(float),
-        )
-        t_to = float(
-            (np.datetime64(r.date_to) - epoch).astype("timedelta64[s]").astype(float),
-        )
-        i_lo = int(np.searchsorted(t_unix, t_from, side="left"))
-        i_hi = int(np.searchsorted(t_unix, t_to, side="right"))
-        masks[band][i_lo:i_hi] = True
+    """Thin script-side wrapper around ``qp.events.binning.build_band_masks``."""
+    masks, n_unmapped = build_band_masks(
+        df["date_from"].to_numpy(),
+        df["date_to"].to_numpy(),
+        df["period_min"].to_numpy(),
+        t_unix,
+        bands,
+        band_lookup,
+    )
     if n_unmapped:
         log.warning("%d events fell outside the band edges", n_unmapped)
     return masks
@@ -160,7 +145,13 @@ def _accumulate_per_band(
     config: DwellGridConfig,
     b_threshold_nT: float,
 ) -> dict[str, np.ndarray]:
-    """Run the dwell-grid accumulators on each per-band mask."""
+    """Run the dwell-grid accumulators on each per-band mask.
+
+    Computes bin indices once per trajectory via ``precompute_bins`` and
+    feeds the same cache to all band×schema accumulations. Saves the
+    repeated ``_compute_coords`` + ``_bin_index`` work that was the
+    binning hot spot.
+    """
     region_names = ("total", "magnetosphere", "magnetosheath", "solar_wind", "unknown")
     grids: dict[str, np.ndarray] = {}
     # union mask
@@ -170,50 +161,44 @@ def _accumulate_per_band(
         union |= m
     masks["total"] = union
 
+    cache = precompute_bins(x, y, z, config)
+
     for band, mask in masks.items():
         if not mask.any():
             for r in region_names:
-                grids[f"{band}_{r}"] = np.zeros(config.shape, dtype=np.float64)
+                grids[f"{band}_{r}"] = np.zeros(config.shape, dtype=np.float32)
                 grids[f"{band}_dipole_inv_lat_{r}"] = np.zeros(
                     (config.n_lat, config.n_lt),
-                    dtype=np.float64,
+                    dtype=np.float32,
                 )
                 grids[f"{band}_weak_field_{r}"] = np.zeros(
                     (config.n_lat, config.n_lt),
-                    dtype=np.float64,
+                    dtype=np.float32,
                 )
             continue
         log.info("band %s: %d minutes mapped", band, int(mask.sum()))
-        r3d = accumulate_with_regions(
-            x[mask],
-            y[mask],
-            z[mask],
-            region_codes[mask],
-            1.0,
-            config,
+        r3d = accumulate_with_regions_cached(
+            cache, region_codes, 1.0, mask=mask, config=config,
         )
-        r2d = accumulate_inv_lat_grid(
-            x[mask],
-            y[mask],
-            z[mask],
-            1.0,
-            region_codes[mask],
-            config,
+        r2d = accumulate_inv_lat_grid_cached(
+            cache, region_codes, 1.0, mask=mask, config=config,
         )
-        rwf = accumulate_weak_field_grid(
-            x[mask],
-            y[mask],
-            z[mask],
-            b_total_nT[mask],
+        rwf = accumulate_weak_field_grid_cached(
+            cache,
+            b_total_nT,
             1.0,
             b_threshold_nT,
-            region_codes[mask],
-            config,
+            region_codes=region_codes,
+            mask=mask,
+            config=config,
         )
+        # Accumulators already return float32 (see qp.dwell.grid
+        # _accumulate_grid contract). Keep storage at float32 to halve
+        # resident memory; the downstream zarr is already float32 too.
         for r in region_names:
-            grids[f"{band}_{r}"] = r3d[r].astype(np.float64)
-            grids[f"{band}_dipole_inv_lat_{r}"] = r2d[r].astype(np.float64)
-            grids[f"{band}_weak_field_{r}"] = rwf[r].astype(np.float64)
+            grids[f"{band}_{r}"] = r3d[r]
+            grids[f"{band}_dipole_inv_lat_{r}"] = r2d[r]
+            grids[f"{band}_weak_field_{r}"] = rwf[r]
     return grids
 
 
@@ -270,10 +255,14 @@ def main() -> None:
     parser.add_argument(
         "--trace-every",
         type=int,
-        default=10,
+        default=1,
         help=(
-            "Subsampling cadence for KMAG tracing (must match the "
-            "dwell grid; default 10)."
+            "Subsampling cadence for KMAG event tracing (default 1: "
+            "full cadence). Higher values speed up tracing but bias "
+            "sum(B_kmag_*) below sum(B_total) by silently dropping "
+            "short events that fall between traced positions. The "
+            "dwell-grid cadence is set separately in "
+            "scripts/compute_dwell_grid.py."
         ),
     )
     add_workers_arg(parser, default=8, flag="--trace-workers")
@@ -434,21 +423,52 @@ def main() -> None:
         shutil.rmtree(args.output)
     ds.to_zarr(args.output, mode="w", consolidated=False)
 
-    # Self-consistency: total mins in the union "total" 3D == sum of
-    # event durations (within the trajectory window).
+    # Self-consistency.
+    #
+    # The grid counts sample-minutes (closed-interval mask, inclusive of
+    # date_to). WaveEvent.duration_minutes counts the open interval
+    # date_to - date_from, which under-counts by one sample per event
+    # for 1-min data. The expected grid total is therefore
+    # sum(duration_minutes) + n_events_in_window.
     total_minutes_in_grid = float(ds["total_total"].sum())
-    total_minutes_in_events = float(df["duration_minutes"].sum())
-    log.info(
-        "total event minutes: in_grid=%.1f  in_events=%.1f  diff=%.1f",
+    sum_event_durations = float(df["duration_minutes"].sum())
+    expected_grid_total = sum_event_durations + len(df)
+    grid_minus_expected = total_minutes_in_grid - expected_grid_total
+    log_fn = log.warning if abs(grid_minus_expected) > 60.0 else log.info
+    log_fn(
+        "self-consistency  grid=%.1f  expected=%.1f  (events_dur=%.1f + n=%d)  "
+        "diff=%+.1f",
         total_minutes_in_grid,
-        total_minutes_in_events,
-        abs(total_minutes_in_grid - total_minutes_in_events),
+        expected_grid_total,
+        sum_event_durations,
+        len(df),
+        grid_minus_expected,
     )
+
+    # If KMAG-traced schemas were populated, surface any drift between
+    # the (r, lat, LT) and KMAG inv-lat totals — short events whose only
+    # sample-minutes fall between the trace_every_n subsampling steps
+    # are missed in the KMAG grid but counted in the 3D grid.
+    if "total_kmag_inv_lat_total" in ds:
+        kmag_total = float(ds["total_kmag_inv_lat_total"].sum())
+        loss_frac = (
+            (total_minutes_in_grid - kmag_total) / total_minutes_in_grid
+            if total_minutes_in_grid > 0
+            else 0.0
+        )
+        log.info(
+            "KMAG schema coverage: total_kmag_inv_lat=%.1f  total=%.1f  "
+            "missed=%.1f%% (trace_every=%d)",
+            kmag_total,
+            total_minutes_in_grid,
+            100.0 * loss_frac,
+            args.trace_every,
+        )
     print(
         f"Wrote {args.output}\n"
         f"  bands: {bands}\n"
         f"  total event minutes (grid): {total_minutes_in_grid:.0f}\n"
-        f"  total event minutes (events parquet): {total_minutes_in_events:.0f}"
+        f"  sum(duration_minutes) + n_events: {expected_grid_total:.0f}"
     )
 
 

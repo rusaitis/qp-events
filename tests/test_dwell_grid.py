@@ -11,9 +11,14 @@ import pytest
 from qp.dwell.grid import (
     DwellGridConfig,
     accumulate_dwell_time,
+    accumulate_inv_lat_grid,
+    accumulate_inv_lat_grid_cached,
     accumulate_traced_inv_lat_grid,
     accumulate_weak_field_grid,
+    accumulate_weak_field_grid_cached,
     accumulate_with_regions,
+    accumulate_with_regions_cached,
+    precompute_bins,
 )
 from qp.dwell.io import ZarrEncoding, load_zarr, save_zarr, to_xarray
 from qp.dwell.tracing import TracingConfig, TracingResult
@@ -211,6 +216,132 @@ class TestAccumulateWithRegions:
             [10.0], [0.0], [0.0], [0], dt_minutes=1.0, config=small_config,
         )
         assert set(grids.keys()) == {"total", "magnetosphere", "magnetosheath", "solar_wind", "unknown"}
+
+
+# ============================================================================
+# Cache-aware accumulators (B1)
+# ============================================================================
+
+
+class TestBinCacheEquivalence:
+    """precompute_bins + *_cached must produce identical grids to the
+    direct accumulators that re-derive coords each call.
+    """
+
+    @pytest.fixture
+    def synthetic_trajectory(self):
+        rng = np.random.default_rng(0)
+        n = 5000
+        # Spread samples over the magnetosphere, avoiding the singular
+        # origin (r<1 → NaN inv_lat). Mix region codes.
+        r = rng.uniform(3.0, 30.0, n)
+        theta = np.arccos(rng.uniform(-0.6, 0.6, n))
+        phi = rng.uniform(0.0, 2 * np.pi, n)
+        x = r * np.sin(theta) * np.cos(phi)
+        y = r * np.sin(theta) * np.sin(phi)
+        z = r * np.cos(theta)
+        codes = rng.choice([0, 1, 2, 9], size=n, p=[0.6, 0.2, 0.15, 0.05])
+        bt = rng.uniform(0.5, 10.0, n)  # nT
+        return x, y, z, codes.astype(int), bt
+
+    def test_with_regions_matches(self, synthetic_trajectory):
+        x, y, z, codes, _ = synthetic_trajectory
+        config = DwellGridConfig()
+        direct = accumulate_with_regions(x, y, z, codes, 1.0, config)
+        cache = precompute_bins(x, y, z, config)
+        cached = accumulate_with_regions_cached(cache, codes, 1.0, config=config)
+        for k in direct:
+            np.testing.assert_array_equal(direct[k], cached[k])
+
+    def test_inv_lat_matches(self, synthetic_trajectory):
+        x, y, z, codes, _ = synthetic_trajectory
+        config = DwellGridConfig()
+        direct = accumulate_inv_lat_grid(x, y, z, 1.0, codes, config)
+        cache = precompute_bins(x, y, z, config)
+        cached = accumulate_inv_lat_grid_cached(cache, codes, 1.0, config=config)
+        for k in direct:
+            np.testing.assert_array_equal(direct[k], cached[k])
+
+    def test_weak_field_matches(self, synthetic_trajectory):
+        x, y, z, codes, bt = synthetic_trajectory
+        config = DwellGridConfig()
+        direct = accumulate_weak_field_grid(x, y, z, bt, 1.0, 2.0, codes, config)
+        cache = precompute_bins(x, y, z, config)
+        cached = accumulate_weak_field_grid_cached(
+            cache, bt, 1.0, 2.0, region_codes=codes, config=config,
+        )
+        for k in direct:
+            np.testing.assert_array_equal(direct[k], cached[k])
+
+    def test_sample_mask_filters(self, synthetic_trajectory):
+        x, y, z, codes, _ = synthetic_trajectory
+        config = DwellGridConfig()
+        cache = precompute_bins(x, y, z, config)
+        # Masked accumulation = direct accumulation on the subset
+        sub = np.zeros(len(x), dtype=bool)
+        sub[: len(x) // 2] = True
+        masked = accumulate_with_regions_cached(
+            cache, codes, 1.0, mask=sub, config=config,
+        )
+        direct_sub = accumulate_with_regions(
+            x[sub], y[sub], z[sub], codes[sub], 1.0, config,
+        )
+        for k in direct_sub:
+            np.testing.assert_array_equal(direct_sub[k], masked[k])
+
+
+class TestAccumulatorDtype:
+    """B3: accumulators return float32 (int64 counts → float64 multiply →
+    float32 cast). Halves resident memory of the output dict while
+    matching the float32 dtype the downstream zarr already uses.
+    """
+
+    def test_with_regions_returns_float32(self) -> None:
+        rng = np.random.default_rng(1)
+        n = 200
+        x = rng.uniform(5.0, 25.0, n)
+        y = rng.uniform(-5.0, 5.0, n)
+        z = rng.uniform(-3.0, 3.0, n)
+        codes = np.zeros(n, dtype=int)
+        grids = accumulate_with_regions(x, y, z, codes, 1.0, DwellGridConfig())
+        for k, v in grids.items():
+            assert v.dtype == np.float32, f"{k}: got {v.dtype}"
+
+    def test_cached_variants_return_float32(self) -> None:
+        rng = np.random.default_rng(2)
+        n = 200
+        x = rng.uniform(5.0, 25.0, n)
+        y = rng.uniform(-5.0, 5.0, n)
+        z = rng.uniform(-3.0, 3.0, n)
+        codes = np.zeros(n, dtype=int)
+        bt = rng.uniform(0.5, 5.0, n)
+        config = DwellGridConfig()
+        cache = precompute_bins(x, y, z, config)
+
+        g3d = accumulate_with_regions_cached(cache, codes, 1.0, config=config)
+        g2d = accumulate_inv_lat_grid_cached(cache, codes, 1.0, config=config)
+        gwf = accumulate_weak_field_grid_cached(
+            cache, bt, 1.0, 2.0, region_codes=codes, config=config,
+        )
+        for grids in (g3d, g2d, gwf):
+            for k, v in grids.items():
+                assert v.dtype == np.float32, f"{k}: got {v.dtype}"
+
+    def test_totals_match_float64_reference(self) -> None:
+        """float32 output must preserve totals within atol=1 min vs a
+        float64 reference computed by summing counts × dt in float64."""
+        rng = np.random.default_rng(3)
+        n = 5000
+        x = rng.uniform(5.0, 25.0, n)
+        y = rng.uniform(-5.0, 5.0, n)
+        z = rng.uniform(-3.0, 3.0, n)
+        codes = np.zeros(n, dtype=int)
+        config = DwellGridConfig()
+        grids = accumulate_with_regions(x, y, z, codes, 1.0, config)
+        total = float(grids["total"].sum())
+        # 5000 in-range samples × 1 min — expect ~5000 min within
+        # 1 ULP at float32 (precision ~6.7 dec digits → ~5e-3 abs).
+        assert abs(total - 5000.0) < 1.0
 
 
 # ============================================================================

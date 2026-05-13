@@ -130,9 +130,24 @@ def _bin_index(
     Accepts a scalar or ndarray; the return is always an ndarray (0-d
     for scalar input), which indexes numpy arrays correctly.
 
-    NaN inputs produce platform-dependent garbage integer values, but
-    callers always mask them out via ``np.isfinite(value)`` before using
-    the indices, so the cast warning is suppressed here.
+    Caller contract
+    ---------------
+    ``value`` MUST be pre-masked. Callers are responsible for filtering
+    NaN and out-of-range entries (via ``np.isfinite()`` and range
+    comparisons, or via the ``in_range`` mask returned by
+    :func:`_compute_bins`) before using the returned indices. This
+    function does **not** detect or flag invalid inputs:
+
+    - NaN inputs produce platform-dependent garbage integer values,
+      which are then silently clipped into ``[0, n-1]``.
+    - Out-of-range finite values are silently clipped to bin 0 or
+      ``n-1`` rather than rejected.
+
+    Using the indices unmasked would corrupt the accumulated grid with
+    fictitious counts at the boundary bins. Prefer :func:`_compute_bins`
+    or :func:`precompute_bins` (the cache variant) when consuming
+    indices directly — both return an ``in_range`` mask alongside the
+    indices.
     """
     frac = (np.asarray(value, dtype=float) - vmin) / (vmax - vmin)
     with np.errstate(invalid="ignore"):
@@ -148,13 +163,20 @@ def _accumulate_grid(
     shape: tuple[int, int, int],
     dt_minutes: float,
 ) -> np.ndarray:
-    """Accumulate dwell time into a 3D grid using bincount."""
+    """Accumulate dwell time into a 3D grid using bincount.
+
+    Returns float32 minutes. Counts are accumulated as int64 (bincount
+    default), multiplied by ``dt_minutes`` in float64 to preserve
+    precision for large ``dt_minutes × count`` products, then cast to
+    float32. Halves resident memory of the output dict vs float64 with
+    no observable change in the downstream zarr (already float32).
+    """
     ir, ilat, ilt = i_r[mask], i_lat[mask], i_lt[mask]
     if len(ir) == 0:
-        return np.zeros(shape, dtype=float)
+        return np.zeros(shape, dtype=np.float32)
     flat = np.ravel_multi_index((ir, ilat, ilt), shape)
-    counts = np.bincount(flat, minlength=math.prod(shape))
-    return counts.reshape(shape).astype(float) * dt_minutes
+    counts = np.bincount(flat, minlength=math.prod(shape)).reshape(shape)
+    return (counts.astype(np.float64) * dt_minutes).astype(np.float32)
 
 
 def _accumulate_grid_2d(
@@ -164,13 +186,193 @@ def _accumulate_grid_2d(
     shape: tuple[int, int],
     dt_minutes: float,
 ) -> np.ndarray:
-    """Accumulate dwell time into a 2D (lat, LT) grid using bincount."""
+    """Accumulate dwell time into a 2D (lat, LT) grid using bincount.
+
+    See :func:`_accumulate_grid` for the int64-counts → float64-multiply
+    → float32-output precision/storage contract.
+    """
     il, ilt = i_lat[mask], i_lt[mask]
     if len(il) == 0:
-        return np.zeros(shape, dtype=float)
+        return np.zeros(shape, dtype=np.float32)
     flat = np.ravel_multi_index((il, ilt), shape)
-    counts = np.bincount(flat, minlength=math.prod(shape))
-    return counts.reshape(shape).astype(float) * dt_minutes
+    counts = np.bincount(flat, minlength=math.prod(shape)).reshape(shape)
+    return (counts.astype(np.float64) * dt_minutes).astype(np.float32)
+
+
+# ----------------------------------------------------------------------
+# Shared coord/bin cache — lets callers compute (r, mag_lat, LT, inv_lat)
+# once per trajectory and feed the same cache to multiple accumulators.
+# Without this, accumulate_with_regions, accumulate_inv_lat_grid, and
+# accumulate_weak_field_grid each re-derive coords + bin indices, which
+# dominates the binning cost for the full-mirror schema.
+# ----------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class BinCache:
+    """Pre-computed bin indices + in-range masks for a trajectory.
+
+    Holds the integer bin indices and the boolean in-range masks for
+    both the 3D ``(r, mag_lat, LT)`` schema (``in_range_3d``) and the
+    2D ``(dipole_inv_lat, LT)`` schema (``in_range_2d``, which also
+    excludes NaN inv_lat for L<1).
+
+    Use :func:`precompute_bins` to build, then pass to the
+    ``*_cached`` accumulator variants.
+    """
+
+    i_r: np.ndarray  # (N,) int
+    i_lat: np.ndarray  # (N,) int — offset-dipole magnetic latitude
+    i_lt: np.ndarray  # (N,) int
+    i_inv_lat: np.ndarray  # (N,) int — dipole invariant latitude
+    in_range_3d: np.ndarray  # (N,) bool
+    in_range_2d: np.ndarray  # (N,) bool (NaN inv_lat excluded)
+
+
+def precompute_bins(
+    x: ArrayLike,
+    y: ArrayLike,
+    z: ArrayLike,
+    config: DwellGridConfig | None = None,
+) -> BinCache:
+    """Compute bin indices once for a trajectory; reuse across schemas."""
+    if config is None:
+        config = DwellGridConfig()
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    z = np.asarray(z, dtype=float)
+
+    r, lat, lt = _compute_coords(x, y, z)
+    inv_lat = dipole_invariant_latitude(x, y, z)
+
+    i_r = _bin_index(r, *config.r_range, config.n_r)
+    i_lat = _bin_index(lat, *config.lat_range, config.n_lat)
+    i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
+    i_inv_lat = _bin_index(inv_lat, *config.lat_range, config.n_lat)
+
+    in_range_3d = (
+        (r >= config.r_range[0])
+        & (r < config.r_range[1])
+        & (lat >= config.lat_range[0])
+        & (lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
+    )
+    in_range_2d = (
+        np.isfinite(inv_lat)
+        & (inv_lat >= config.lat_range[0])
+        & (inv_lat < config.lat_range[1])
+        & (lt >= config.lt_range[0])
+        & (lt < config.lt_range[1])
+    )
+    return BinCache(i_r, i_lat, i_lt, i_inv_lat, in_range_3d, in_range_2d)
+
+
+def _region_masks(
+    region_codes: np.ndarray,
+    base: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Build per-region masks from a base (in-range) mask."""
+    out = {"total": base}
+    for code, name in REGION_CODES.items():
+        out[name] = base & (region_codes == code)
+    return out
+
+
+def accumulate_with_regions_cached(
+    cache: BinCache,
+    region_codes: ArrayLike,
+    dt_minutes: float = 1.0,
+    *,
+    mask: ArrayLike | None = None,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    """Cache-aware variant of :func:`accumulate_with_regions`."""
+    if config is None:
+        config = DwellGridConfig()
+    codes = np.asarray(region_codes, dtype=int)
+    base = cache.in_range_3d
+    if mask is not None:
+        base = base & np.asarray(mask, dtype=bool)
+    masks = _region_masks(codes, base)
+    return {
+        name: _accumulate_grid(
+            cache.i_r, cache.i_lat, cache.i_lt, m, config.shape, dt_minutes,
+        )
+        for name, m in masks.items()
+    }
+
+
+def accumulate_inv_lat_grid_cached(
+    cache: BinCache,
+    region_codes: ArrayLike | None = None,
+    dt_minutes: float = 1.0,
+    *,
+    mask: ArrayLike | None = None,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    """Cache-aware variant of :func:`accumulate_inv_lat_grid`."""
+    if config is None:
+        config = DwellGridConfig()
+    shape_2d = (config.n_lat, config.n_lt)
+    base = cache.in_range_2d
+    if mask is not None:
+        base = base & np.asarray(mask, dtype=bool)
+
+    result = {
+        "total": _accumulate_grid_2d(
+            cache.i_inv_lat, cache.i_lt, base, shape_2d, dt_minutes,
+        ),
+    }
+    if region_codes is not None:
+        codes = np.asarray(region_codes, dtype=int)
+        for code, name in REGION_CODES.items():
+            result[name] = _accumulate_grid_2d(
+                cache.i_inv_lat,
+                cache.i_lt,
+                base & (codes == code),
+                shape_2d,
+                dt_minutes,
+            )
+    return result
+
+
+def accumulate_weak_field_grid_cached(
+    cache: BinCache,
+    btotal: ArrayLike,
+    dt_minutes: float = 1.0,
+    b_threshold: float = 2.0,
+    region_codes: ArrayLike | None = None,
+    *,
+    mask: ArrayLike | None = None,
+    config: DwellGridConfig | None = None,
+) -> dict[str, np.ndarray]:
+    """Cache-aware variant of :func:`accumulate_weak_field_grid`."""
+    if config is None:
+        config = DwellGridConfig()
+    shape_2d = (config.n_lat, config.n_lt)
+    bt = np.asarray(btotal, dtype=float)
+    base = cache.in_range_2d & (bt < b_threshold)
+    if mask is not None:
+        base = base & np.asarray(mask, dtype=bool)
+
+    result = {
+        "total": _accumulate_grid_2d(
+            cache.i_inv_lat, cache.i_lt, base, shape_2d, dt_minutes,
+        ),
+    }
+    if region_codes is not None:
+        codes = np.asarray(region_codes, dtype=int)
+        for code, name in REGION_CODES.items():
+            result[name] = _accumulate_grid_2d(
+                cache.i_inv_lat,
+                cache.i_lt,
+                base & (codes == code),
+                shape_2d,
+                dt_minutes,
+            )
+    return result
 
 
 def accumulate_dwell_time(
@@ -435,7 +637,11 @@ def accumulate_traced_inv_lat_grid(
     lt = np.asarray(local_time, dtype=float)
     z_arr = np.asarray(z, dtype=float)
 
-    # Conjugate latitude: footpoint in spacecraft's hemisphere, signed
+    # Conjugate latitude: footpoint in **spacecraft's** hemisphere
+    # (sign of z), not the field-line's. So the inv_lat × LT map shows
+    # where Cassini was when the line was traced, mirrored to a single
+    # signed footpoint. North/south asymmetries in the resulting grid
+    # reflect orbital coverage, not intrinsic field-line asymmetry.
     conjugate_lat = np.where(z_arr >= 0, inv_n, inv_s)
 
     shape_2d = (config.n_lat, config.n_lt)

@@ -1,30 +1,28 @@
 r"""Bin cumulative QP event time onto the dwell-grid coordinates.
 
-Phase 4 of the plan. The output of this module is the **numerator**
-for the dwell-normalized occurrence-rate maps in Figs 7, 8 of the
-paper. The denominator (cumulative spacecraft dwell time per cell)
-already lives in ``Output/dwell_grid_cassini_saturn.zarr``; the bin
-edges here must match it exactly.
+The output of this module is the **numerator** for the
+dwell-normalized occurrence-rate maps in Figs 7, 8 of the paper. The
+denominator (cumulative spacecraft dwell time per cell) lives in
+``Output/dwell_grid_cassini_saturn.zarr``; the bin edges here must
+match it exactly.
 
-Two binning strategies are exposed:
+Production pipeline (``scripts/bin_events_round8.py``) uses:
 
-1. :func:`bin_events_peak_position` — fast, single-bin assignment.
-   Uses the event's stored peak ``(r, mag_lat, LT)`` and dumps the
-   entire event duration into that one cell. This is accurate when
-   the spacecraft moves slowly compared to the event duration
-   (typically true outside ~10 R_S where Cassini takes >> 4 h to
-   cross a 1° latitude × 1 R_S radial cell).
+- :func:`accumulate_full_mirror` — for each band, accumulate event
+  time on every dwell-grid schema derivable from the spacecraft
+  trajectory (3D r/mag_lat/LT with region splits, 2D dipole invariant
+  latitude, 2D plasma-sheet weak-field proxy).
+- :func:`accumulate_kmag_event_grids` — companion that traces the
+  union event-window minutes through the KMAG field and accumulates
+  on the (kmag_inv_lat, LT) and (kmag_eq_r, LT) axes.
+- :func:`full_mirror_grids_to_xarray` /
+  :func:`kmag_event_grids_to_xarray` — wrap the resulting dicts in
+  xarray datasets matching the canonical zarr layout.
 
-2. :func:`bin_events_walking` — slower, accurate. Loads the MFA
-   segments file, walks each event minute-by-minute through the
-   segment's pre-computed positions, and accumulates one minute per
-   matching cell. Used for the production grid where periapsis
-   passes matter.
-
-Both produce a dict of 3D ``numpy.ndarray`` of minutes, one per QP
-band plus a ``"total"`` field. The driver wraps this in an
-``xarray.Dataset`` and persists to
-``Output/event_time_grid_v1.zarr``.
+:func:`bin_events_walking` is retained as a tested reference
+implementation of per-minute walking binning (used by the test suite
+to pin the same-band overlap regression); it is not on the round-8
+critical path.
 """
 
 from __future__ import annotations
@@ -32,12 +30,12 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Iterable
+from typing import TYPE_CHECKING, Iterable
 
 import numpy as np
 
 from qp.constants import J2000_POSIX
-from qp.dwell.grid import DwellGridConfig, _bin_index
+from qp.dwell.grid import DwellGridConfig, _bin_index, _compute_bins
 from qp.events.bands import QP_BAND_NAMES
 from qp.events.catalog import WaveEvent
 
@@ -64,21 +62,91 @@ def _event_time_window(ev: WaveEvent) -> tuple[float, float]:
     )
 
 
-def _in_range(
-    r: float,
-    lat: float,
-    lt: float,
-    config: DwellGridConfig,
-) -> bool:
-    return (
-        config.r_range[0] <= r < config.r_range[1]
-        and config.lat_range[0] <= lat < config.lat_range[1]
-        and config.lt_range[0] <= lt < config.lt_range[1]
+# ----------------------------------------------------------------------
+# Per-band sample mask builder (round-8 driver)
+# ----------------------------------------------------------------------
+
+
+def build_band_masks(
+    date_from: np.ndarray,
+    date_to: np.ndarray,
+    period_min: np.ndarray,
+    t_unix: np.ndarray,
+    bands: list[str],
+    band_lookup,
+) -> tuple[dict[str, np.ndarray], int]:
+    """Build a per-sample boolean mask per band.
+
+    A sample is True for band B if it falls inside any event whose
+    period maps to band B. Per band, do one ``searchsorted`` of all
+    event endpoints, then build the mask via a +1/-1 cumulative-sum
+    trick (so N range-set operations collapse to O(N + M) work).
+
+    Detector stores ``date_to`` as the **time of the last included
+    sample** (``qp.events.detector._ridge_to_packet`` uses
+    ``times[t_end_idx]``), so the time window is the *closed* interval
+    ``[t_from, t_to]``: ``side="left"`` picks the first sample with
+    ``t_unix >= t_from``; ``side="right"`` picks one past the last
+    sample with ``t_unix == t_to``. A 60-sample (1-min) event therefore
+    contributes 60 mask minutes, while
+    ``WaveEvent.duration_minutes = t_to - t_from`` is one fewer —
+    callers should account for this in self-consistency checks.
+
+    Parameters
+    ----------
+    date_from, date_to : np.ndarray of np.datetime64
+        Event start/end times.
+    period_min : np.ndarray of float
+        Period in minutes for each event.
+    t_unix : np.ndarray of float
+        Trajectory timestamps in Unix epoch seconds.
+    bands : list[str]
+        Target band names.
+    band_lookup : callable
+        ``(period_min: float) -> str | None`` mapping a period to a
+        band name (or None to drop the event).
+
+    Returns
+    -------
+    masks : dict[str, np.ndarray]
+        Per-band boolean masks of shape ``t_unix.shape``.
+    n_unmapped : int
+        Number of events whose period did not map to any of ``bands``.
+    """
+    n = t_unix.size
+    epoch = np.datetime64("1970-01-01T00:00:00")
+
+    period_arr = np.asarray(period_min, dtype=float)
+    t_from_all = (
+        np.asarray(date_from, dtype="datetime64[s]") - epoch
+    ).astype("timedelta64[s]").astype(np.int64).astype(float)
+    t_to_all = (
+        np.asarray(date_to, dtype="datetime64[s]") - epoch
+    ).astype("timedelta64[s]").astype(np.int64).astype(float)
+    band_for_row = np.array(
+        [band_lookup(p) for p in period_arr],
+        dtype=object,
     )
+    n_unmapped = int(np.sum(band_for_row == None))  # noqa: E711
+
+    masks: dict[str, np.ndarray] = {}
+    for band in bands:
+        sel = band_for_row == band
+        if not sel.any():
+            masks[band] = np.zeros(n, dtype=bool)
+            continue
+        i_lo = np.searchsorted(t_unix, t_from_all[sel], side="left")
+        i_hi = np.searchsorted(t_unix, t_to_all[sel], side="right")
+        delta = np.zeros(n + 1, dtype=np.int32)
+        np.add.at(delta, i_lo, 1)
+        np.add.at(delta, i_hi, -1)
+        masks[band] = np.cumsum(delta[:-1]) > 0
+
+    return masks, n_unmapped
 
 
 # ----------------------------------------------------------------------
-# Strategy 1 — peak-position binning
+# Binning stats + walking binner (reference implementation; deprecated)
 # ----------------------------------------------------------------------
 
 
@@ -94,84 +162,6 @@ class BinningStats:
     @property
     def fraction_binned(self) -> float:
         return self.n_binned / max(self.n_total, 1)
-
-
-def bin_events_peak_position(
-    events: Iterable[WaveEvent],
-    config: DwellGridConfig | None = None,
-    *,
-    quality_weighted: bool = False,
-    quality_col: str = "quality",
-) -> tuple[dict[str, np.ndarray], BinningStats]:
-    r"""Single-bin event-time binning.
-
-    Each event's full duration is dumped into the cell containing its
-    stored ``(r_distance, mag_lat, local_time)`` peak position. The
-    units are **minutes**, matching the dwell zarr.
-
-    Parameters
-    ----------
-    quality_weighted : bool, default False
-        When True, each event contributes ``quality × duration_minutes``
-        instead of ``duration_minutes``. The resulting grids represent
-        :math:`\sum q_i \cdot \Delta t_i` per cell and must be
-        normalized by the same dwell grid as the unweighted case.
-    quality_col : str
-        Attribute name for the quality score on each event.
-
-    Returns
-    -------
-    grids : dict[str, np.ndarray]
-        Keys: ``"QP30"``, ``"QP60"``, ``"QP120"``, ``"total"``.
-        Each value is a 3D float array of shape
-        ``(n_r, n_lat, n_lt)`` from the supplied :class:`DwellGridConfig`.
-    stats : BinningStats
-    """
-    if config is None:
-        config = DwellGridConfig()
-
-    grids: dict[str, np.ndarray] = {
-        b: np.zeros(config.shape, dtype=np.float64) for b in QP_BAND_NAMES
-    }
-    grids["total"] = np.zeros(config.shape, dtype=np.float64)
-
-    stats = BinningStats()
-    for ev in events:
-        stats.n_total += 1
-        if (
-            ev.r_distance is None
-            or ev.mag_lat is None
-            or ev.local_time is None
-            or ev.band is None
-        ):
-            stats.n_missing_coords += 1
-            continue
-        r = float(ev.r_distance)
-        lat = float(ev.mag_lat)
-        lt = float(ev.local_time)
-        if not _in_range(r, lat, lt, config):
-            stats.n_out_of_range += 1
-            continue
-        i_r = _bin_index(r, *config.r_range, config.n_r)
-        i_lat = _bin_index(lat, *config.lat_range, config.n_lat)
-        i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
-        minutes = float(ev.duration_minutes)
-        if quality_weighted:
-            q = getattr(ev, quality_col, None)
-            weight = float(q) if q is not None and math.isfinite(q) else 0.0
-            weight = max(0.0, min(1.0, weight))
-            minutes = minutes * weight
-        if ev.band in grids:
-            grids[ev.band][i_r, i_lat, i_lt] += minutes
-        grids["total"][i_r, i_lat, i_lt] += minutes
-        stats.n_binned += 1
-
-    return grids, stats
-
-
-# ----------------------------------------------------------------------
-# Strategy 2 — walking binning (uses segment positions)
-# ----------------------------------------------------------------------
 
 
 @dataclass
@@ -198,7 +188,16 @@ def bin_events_walking(
     segment_positions: dict[int, SegmentPositions],
     config: DwellGridConfig | None = None,
 ) -> tuple[dict[str, np.ndarray], BinningStats]:
-    r"""Walking event-time binning.
+    r"""Walking event-time binning. *DEPRECATED — reference impl only.*
+
+    The production round-8 pipeline does not call this; see
+    :func:`accumulate_full_mirror` and ``scripts/bin_events_round8.py``.
+    Retained because the regression tests in
+    ``tests/test_event_gridding.py::TestWalkingBinnerOverlap`` pin its
+    same-band overlap behaviour, and it remains a useful reference for
+    per-minute walking binning against arbitrary per-segment trajectories.
+    Do not introduce new callers; extend :func:`accumulate_full_mirror`
+    instead.
 
     For each event, walks the matching segment's position arrays
     minute-by-minute between ``date_from`` and ``date_to`` and
@@ -206,10 +205,13 @@ def bin_events_walking(
     spacecraft motion within an event correctly, which matters near
     periapsis.
 
-    Per-band grids accumulate independently. The ``"total"`` grid is
-    the **union** of all band masks per segment — i.e. minutes during
-    which *any* QP band fired count once, not once per band. This
-    ensures ``event_time_total ≤ dwell`` per cell.
+    Both the per-band grids and the ``"total"`` grid are accumulated
+    from **OR-aggregated** per-segment masks (one accumulate call per
+    (segment, band) and one per (segment, union)). A minute that lies
+    inside two same-band events on the same segment counts once, not
+    twice. The ``"total"`` grid takes the union across bands so a
+    minute with *any* QP band firing also counts once. Together these
+    guarantee ``event_time ≤ dwell`` per cell.
 
     ``segment_positions`` is a dict keyed by ``segment_id``; events
     whose ``segment_id`` is missing fall back to the peak-position
@@ -254,8 +256,21 @@ def bin_events_walking(
             time_mask &= sp.central_mask
         seg_event_masks[seg_id][ev.band] |= time_mask
 
-    # Phase 2: accumulate per-band grids and the union total grid
-    # using the masks built above.
+    # Phase 2: accumulate per-band grids from the OR-aggregated masks
+    # (one accumulate call per (segment, band)). Accumulating per-event
+    # would double-count any minutes that two same-band events share.
+    # Stats are tallied here in a separate event-level pass.
+    for seg_id, band_masks in seg_event_masks.items():
+        sp = segment_positions[seg_id]
+        for band, mask in band_masks.items():
+            if band not in grids or not mask.any():
+                continue
+            contribution = _accumulate_mask(sp, mask, config, None)
+            if contribution is not None:
+                grids[band] += contribution
+
+    # Per-event stats + fallback peak-position binning for events whose
+    # segment is missing from segment_positions.
     for ev in events_list:
         stats.n_total += 1
         if ev.band is None:
@@ -264,19 +279,24 @@ def bin_events_walking(
 
         seg_id = ev.segment_id
         if seg_id is None or seg_id not in segment_positions:
-            # Fallback to peak position
+            # Fallback to peak position. Use the canonical _compute_bins
+            # (length-1 arrays) so the in-range / bin-index logic does
+            # not diverge from the dwell-grid pipeline.
             if ev.r_distance is None or ev.mag_lat is None or ev.local_time is None:
                 stats.n_missing_coords += 1
                 continue
-            r = float(ev.r_distance)
-            lat = float(ev.mag_lat)
-            lt = float(ev.local_time)
-            if not _in_range(r, lat, lt, config):
+            r_arr = np.array([float(ev.r_distance)])
+            lat_arr = np.array([float(ev.mag_lat)])
+            lt_arr = np.array([float(ev.local_time)])
+            i_r_arr, i_lat_arr, i_lt_arr, in_range = _compute_bins(
+                r_arr, lat_arr, lt_arr, config,
+            )
+            if not in_range[0]:
                 stats.n_out_of_range += 1
                 continue
-            i_r = _bin_index(r, *config.r_range, config.n_r)
-            i_lat = _bin_index(lat, *config.lat_range, config.n_lat)
-            i_lt = _bin_index(lt, *config.lt_range, config.n_lt)
+            i_r = int(i_r_arr[0])
+            i_lat = int(i_lat_arr[0])
+            i_lt = int(i_lt_arr[0])
             minutes = float(ev.duration_minutes)
             if ev.band in grids:
                 grids[ev.band][i_r, i_lat, i_lt] += minutes
@@ -284,6 +304,9 @@ def bin_events_walking(
             stats.n_binned += 1
             continue
 
+        # Already accumulated in the Phase-2 loop above; just check
+        # that the event's time window had finite coordinates so we
+        # can update the stats counters consistently with the old API.
         sp = segment_positions[seg_id]
         t_from, t_to = _event_time_window(ev)
         mask = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
@@ -292,12 +315,10 @@ def bin_events_walking(
         if not mask.any():
             stats.n_missing_coords += 1
             continue
-
-        contribution = _accumulate_mask(sp, mask, config, stats)
-        if contribution is None:
+        rs = sp.r[mask]
+        if not np.isfinite(rs).any():
+            stats.n_missing_coords += 1
             continue
-        if ev.band in grids:
-            grids[ev.band] += contribution
         stats.n_binned += 1
 
     # Phase 3: accumulate the union "total" grid from the per-segment
@@ -359,144 +380,6 @@ def _accumulate_mask(
 
 
 # ----------------------------------------------------------------------
-# Companion dwell grid built with the same approximations as the
-# event binner.
-#
-# Why this exists: the canonical dwell grid in
-# Output/dwell_grid_cassini_saturn.zarr was built from per-minute KSM
-# positions (offset-dipole magnetic latitude, KSM local time),
-# whereas the event binner here uses KRTP latitude and per-segment
-# median LT. The two coordinate conventions disagree by enough to
-# make the per-cell ratio event_time / dwell_time exceed 1 in some
-# cells, which is unphysical.
-#
-# Building a parallel "consistency" dwell grid with the same
-# approximations as the events guarantees event_time ≤ dwell_time
-# per cell by construction. It is what Phase 5 should divide by.
-# ----------------------------------------------------------------------
-
-
-def accumulate_segment_dwell(
-    segment_positions: dict[int, "SegmentPositions"],
-    config: DwellGridConfig | None = None,
-) -> np.ndarray:
-    r"""Accumulate per-minute dwell time using the **same** coordinates
-    as :func:`bin_events_walking`.
-
-    Walks every minute of every segment and adds 1.0 minute to the
-    matching ``(r, mag_lat, LT)`` cell. If a segment has a
-    ``central_mask`` set, only the central minutes contribute, which
-    is what guarantees event_time ≤ dwell per cell when the events
-    are also clipped to the central window.
-
-    Returns the 3D grid in minutes.
-    """
-    if config is None:
-        config = DwellGridConfig()
-    grid = np.zeros(config.shape, dtype=np.float64)
-    for sp in segment_positions.values():
-        rs, lats, lts = sp.r, sp.mag_lat, sp.local_time
-        if sp.central_mask is not None:
-            rs = rs[sp.central_mask]
-            lats = lats[sp.central_mask]
-            lts = lts[sp.central_mask]
-        finite = np.isfinite(rs) & np.isfinite(lats) & np.isfinite(lts)
-        rs, lats, lts = rs[finite], lats[finite], lts[finite]
-        in_r = (
-            (rs >= config.r_range[0])
-            & (rs < config.r_range[1])
-            & (lats >= config.lat_range[0])
-            & (lats < config.lat_range[1])
-            & (lts >= config.lt_range[0])
-            & (lts < config.lt_range[1])
-        )
-        rs, lats, lts = rs[in_r], lats[in_r], lts[in_r]
-        if rs.size == 0:
-            continue
-        i_r = _bin_index(rs, *config.r_range, config.n_r)
-        i_lat = _bin_index(lats, *config.lat_range, config.n_lat)
-        i_lt = _bin_index(lts, *config.lt_range, config.n_lt)
-        flat = np.ravel_multi_index(
-            (i_r, i_lat, i_lt),
-            config.shape,
-        )
-        counts = np.bincount(flat, minlength=math.prod(config.shape))
-        grid += counts.astype(np.float64).reshape(config.shape)
-    return grid
-
-
-# ----------------------------------------------------------------------
-# 2D pre-aggregation (LT × mag_lat) for fast plotting
-# ----------------------------------------------------------------------
-
-
-def aggregate_lt_mag_lat(grid_3d: np.ndarray) -> np.ndarray:
-    r"""Sum a 3D ``(r, mag_lat, LT)`` grid over the radial axis.
-
-    Returns shape ``(n_lat, n_lt)``.
-    """
-    return grid_3d.sum(axis=0)
-
-
-# ----------------------------------------------------------------------
-# xarray wrapper
-# ----------------------------------------------------------------------
-
-
-def grids_to_xarray(
-    grids: dict[str, np.ndarray],
-    config: DwellGridConfig,
-    *,
-    title: str = "QP event time grid",
-    description: str | None = None,
-    extra_attrs: dict | None = None,
-) -> "xarray.Dataset":  # noqa: F821
-    r"""Wrap a dict of 3D grids in an :class:`xarray.Dataset` matching
-    the dwell zarr layout.
-
-    The dataset uses the same dimension names as
-    ``Output/dwell_grid_cassini_saturn.zarr`` so the two files can be
-    sliced and divided side-by-side.
-    """
-    import xarray as xr
-
-    coords = {
-        "r": config.r_centers,
-        "magnetic_latitude": config.lat_centers,
-        "local_time": config.lt_centers,
-        "r_edges": config.r_edges,
-        "lat_edges": config.lat_edges,
-        "lt_edges": config.lt_edges,
-    }
-    data_vars: dict[str, tuple] = {}
-    for name, arr in grids.items():
-        data_vars[f"event_time_{name}"] = (
-            ("r", "magnetic_latitude", "local_time"),
-            arr.astype(np.float32),
-        )
-        # 2D pre-aggregation (LT × mag_lat) for Fig 8 fast path
-        agg = aggregate_lt_mag_lat(arr)
-        data_vars[f"event_time_{name}_lt_mag_lat"] = (
-            ("magnetic_latitude", "local_time"),
-            agg.astype(np.float32),
-        )
-
-    attrs = {
-        "title": title,
-        "units": "minutes",
-        "n_r": config.n_r,
-        "n_lat": config.n_lat,
-        "n_lt": config.n_lt,
-    }
-    if description:
-        attrs["description"] = description
-    if extra_attrs:
-        attrs.update(extra_attrs)
-
-    return xr.Dataset(data_vars=data_vars, coords=coords, attrs=attrs)
-
-
-# ----------------------------------------------------------------------
 # Full-mirror schema — for each period band, accumulate event time on
 # the same axes and region splits as the canonical dwell grid at
 # Output/dwell_grid_cassini_saturn.zarr. The variable names mirror the
@@ -538,7 +421,6 @@ def accumulate_full_mirror(
     segment_positions: dict[int, SegmentPositionsExt],
     *,
     bands: list[str] | None = None,
-    band_for_period_min: Callable[[float], str | None] | None = None,
     config: DwellGridConfig | None = None,
     b_threshold_nT: float = 2.0,
 ) -> dict[str, np.ndarray]:
@@ -560,25 +442,21 @@ def accumulate_full_mirror(
 
     All arrays are float64 minutes. The KMAG-traced invariant-latitude
     schemas are *not* produced here — they require per-sample
-    field-line tracing and are added by a follow-up that consumes a
-    sample-cache from :mod:`qp.fieldline.tracer`.
+    field-line tracing and are added by :func:`accumulate_kmag_event_grids`.
 
     Parameters
     ----------
     events : iterable of WaveEvent
-        Detections to bin.
+        Detections to bin. Each event's ``band`` attribute selects its
+        target grid; events with no band, or a band not in ``bands``,
+        are skipped. To re-bin into a different band scheme, set
+        ``ev.band`` upstream (see ``scripts/bin_events_round8.py`` for
+        the ``--bands`` CLI mechanism).
     segment_positions : dict[int, SegmentPositionsExt]
         Per-segment trajectory and region information. Events whose
-        segment id is missing are dropped (counted in :class:`BinningStats`
-        — but stats aren't returned here; use ``bin_events_walking``
-        for fallback peak-position binning).
+        segment id is missing are dropped silently.
     bands : list[str], optional
         Band names to populate. Defaults to ``QP_BAND_NAMES``.
-    band_for_period_min : callable, optional
-        Function ``(period_min: float) -> str | None`` mapping a
-        detected period to a band name. Defaults to using the event's
-        stored ``band`` attribute (so this argument lets a single
-        parquet be re-binned into different band schemes).
     config : DwellGridConfig, optional
         Same axes as the dwell grid. Defaults to
         ``DwellGridConfig()``.
@@ -586,9 +464,10 @@ def accumulate_full_mirror(
         Plasma-sheet proxy threshold (matches the dwell grid).
     """
     from qp.dwell.grid import (
-        accumulate_inv_lat_grid,
-        accumulate_weak_field_grid,
-        accumulate_with_regions,
+        accumulate_inv_lat_grid_cached,
+        accumulate_weak_field_grid_cached,
+        accumulate_with_regions_cached,
+        precompute_bins,
     )
 
     if config is None:
@@ -596,7 +475,6 @@ def accumulate_full_mirror(
     if bands is None:
         bands = list(QP_BAND_NAMES)
 
-    use_stored_band = band_for_period_min is None
     events_list = list(events)
 
     seg_masks: dict[int, dict[str, np.ndarray]] = {}
@@ -604,19 +482,9 @@ def accumulate_full_mirror(
         seg_id = ev.segment_id
         if seg_id is None or seg_id not in segment_positions:
             continue
-        if use_stored_band:
-            if ev.band is None or ev.band not in bands:
-                continue
-            band = ev.band
-        else:
-            period_min = ev.period_peak_min
-            if period_min is None and ev.period is not None:
-                period_min = ev.period / 60.0
-            if period_min is None:
-                continue
-            band = band_for_period_min(float(period_min))
-            if band is None or band not in bands:
-                continue
+        if ev.band is None or ev.band not in bands:
+            continue
+        band = ev.band
         sp = segment_positions[seg_id]
         n = sp.times_unix.size
         seg_masks.setdefault(seg_id, {b: np.zeros(n, dtype=bool) for b in bands})
@@ -624,6 +492,11 @@ def accumulate_full_mirror(
         m = (sp.times_unix >= t_from) & (sp.times_unix <= t_to)
         if sp.central_mask is not None:
             m &= sp.central_mask
+        # OR-aggregation is load-bearing: two same-band events that share
+        # any minute on the same segment must collapse to a single boolean
+        # mask. Replacing |= with += or accumulating per-event downstream
+        # would double-count overlap minutes and let event_time exceed
+        # dwell time per cell.
         seg_masks[seg_id][band] |= m
 
     grids: dict[str, np.ndarray] = {}
@@ -632,10 +505,15 @@ def accumulate_full_mirror(
     shape_2d = (config.n_lat, config.n_lt)
 
     def _zero_grids_for_band(b: str) -> None:
+        # float32 matches the dwell-grid accumulator output and the
+        # downstream zarr dtype — halves resident memory of the output
+        # dict. Per-segment += accumulation in float32 loses < 1 ULP
+        # per add (< 1 min total over the mission), well below the
+        # event-time granularity.
         for r in region_names:
-            grids[f"{b}_{r}"] = np.zeros(shape_3d, dtype=np.float64)
-            grids[f"{b}_dipole_inv_lat_{r}"] = np.zeros(shape_2d, dtype=np.float64)
-            grids[f"{b}_weak_field_{r}"] = np.zeros(shape_2d, dtype=np.float64)
+            grids[f"{b}_{r}"] = np.zeros(shape_3d, dtype=np.float32)
+            grids[f"{b}_dipole_inv_lat_{r}"] = np.zeros(shape_2d, dtype=np.float32)
+            grids[f"{b}_weak_field_{r}"] = np.zeros(shape_2d, dtype=np.float32)
 
     band_keys = list(bands) + ["total"]
     for b in band_keys:
@@ -654,63 +532,46 @@ def accumulate_full_mirror(
                 seg_id,
             )
             continue
-        # Per-band masks
+        # Compute bin indices + in-range masks once per segment. The
+        # four schemas (3D regions, 2D inv-lat, 2D weak-field) and N
+        # bands all reuse this cache rather than re-deriving coords.
+        cache = precompute_bins(sp.ksm_x, sp.ksm_y, sp.ksm_z, config)
+        codes = sp.region_codes
+        bt = sp.b_total_nT
+        any_mask = np.zeros_like(next(iter(band_to_mask.values())))
+
+        def _accumulate(prefix: str, sample_mask: np.ndarray) -> None:
+            r3d = accumulate_with_regions_cached(
+                cache, codes, 1.0, mask=sample_mask, config=config,
+            )
+            r2d = accumulate_inv_lat_grid_cached(
+                cache, codes, 1.0, mask=sample_mask, config=config,
+            )
+            for r in region_names:
+                grids[f"{prefix}_{r}"] += r3d[r]
+                grids[f"{prefix}_dipole_inv_lat_{r}"] += r2d[r]
+            if bt is not None:
+                rwf = accumulate_weak_field_grid_cached(
+                    cache,
+                    bt,
+                    1.0,
+                    b_threshold_nT,
+                    region_codes=codes,
+                    mask=sample_mask,
+                    config=config,
+                )
+                for r in region_names:
+                    grids[f"{prefix}_weak_field_{r}"] += rwf[r]
+
         for b in bands:
             mask = band_to_mask[b]
             if not mask.any():
                 continue
-            x = sp.ksm_x[mask]
-            y = sp.ksm_y[mask]
-            z = sp.ksm_z[mask]
-            codes = sp.region_codes[mask]
-            r3d = accumulate_with_regions(x, y, z, codes, 1.0, config)
-            r2d = accumulate_inv_lat_grid(x, y, z, 1.0, codes, config)
-            for r in region_names:
-                grids[f"{b}_{r}"] += r3d[r]
-                grids[f"{b}_dipole_inv_lat_{r}"] += r2d[r]
-            if sp.b_total_nT is not None:
-                bt = sp.b_total_nT[mask]
-                rwf = accumulate_weak_field_grid(
-                    x,
-                    y,
-                    z,
-                    bt,
-                    1.0,
-                    b_threshold_nT,
-                    codes,
-                    config,
-                )
-                for r in region_names:
-                    grids[f"{b}_weak_field_{r}"] += rwf[r]
-        # Band-union mask for the "total" band (no double-counting)
-        any_mask = np.zeros_like(next(iter(band_to_mask.values())))
-        for m in band_to_mask.values():
-            any_mask |= m
-        if not any_mask.any():
-            continue
-        x = sp.ksm_x[any_mask]
-        y = sp.ksm_y[any_mask]
-        z = sp.ksm_z[any_mask]
-        codes = sp.region_codes[any_mask]
-        r3d = accumulate_with_regions(x, y, z, codes, 1.0, config)
-        r2d = accumulate_inv_lat_grid(x, y, z, 1.0, codes, config)
-        for r in region_names:
-            grids[f"total_{r}"] += r3d[r]
-            grids[f"total_dipole_inv_lat_{r}"] += r2d[r]
-        if sp.b_total_nT is not None:
-            bt = sp.b_total_nT[any_mask]
-            rwf = accumulate_weak_field_grid(
-                x,
-                y,
-                z,
-                bt,
-                1.0,
-                b_threshold_nT,
-                codes,
-                config,
-            )
-            for r in region_names:
-                grids[f"total_weak_field_{r}"] += rwf[r]
+            any_mask |= mask
+            _accumulate(b, mask)
+
+        if any_mask.any():
+            _accumulate("total", any_mask)
 
     return grids
 
@@ -798,7 +659,7 @@ def accumulate_kmag_event_grids(
     t_unix_traj: np.ndarray,
     region_codes_traj: np.ndarray,
     *,
-    trace_every_n: int = 10,
+    trace_every_n: int = 1,
     config: DwellGridConfig | None = None,
     tracing_config=None,
     field_config=None,
@@ -824,12 +685,18 @@ def accumulate_kmag_event_grids(
         internally to J2000 seconds.
     region_codes_traj : ndarray of int
         Region code at every trajectory minute (0/1/2/9).
-    trace_every_n : int, default 10
-        Subsampling cadence for tracing — must match the dwell grid.
+    trace_every_n : int, default 1
+        Subsampling cadence for tracing. Defaults to **1** (no
+        subsampling) so every event-window minute contributes to the
+        KMAG grids; cadence-10 subsampling silently dropped short
+        events whose only minutes fell between traced positions,
+        biasing ``sum(B_kmag_*) < sum(B_total)``. The event union is
+        small (~5% of mission minutes), so the full-cadence cost is
+        bounded and worth the bias removal.
     config : DwellGridConfig, optional
     tracing_config, field_config : qp.dwell.tracing types, optional
         If None, default ``TracingConfig`` / ``SaturnFieldConfig`` are
-        used (same defaults as ``compute_dwell_grid.py``).
+        used.
 
     Returns
     -------
@@ -868,7 +735,7 @@ def accumulate_kmag_event_grids(
     log.info(
         "KMAG event tracing: %d event-minutes (~%d traces at every-%d cadence)",
         n_event_min,
-        n_event_min // trace_every_n,
+        max(1, n_event_min // trace_every_n),
         trace_every_n,
     )
 
@@ -926,9 +793,9 @@ def accumulate_kmag_event_grids(
         if not mask_sub.any():
             empty_inv = np.zeros(
                 (config.n_lat, config.n_lt),
-                dtype=np.float64,
+                dtype=np.float32,
             )
-            empty_eq = np.zeros((config.n_r, config.n_lt), dtype=np.float64)
+            empty_eq = np.zeros((config.n_r, config.n_lt), dtype=np.float32)
             for r in (
                 "total",
                 "magnetosphere",

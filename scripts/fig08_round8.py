@@ -49,13 +49,21 @@ SMOOTHING_SIGMA = 2.0
 
 
 def _smooth(arr: np.ndarray, sigma: float = SMOOTHING_SIGMA) -> np.ndarray:
-    """Gaussian-smooth a 2D array, ignoring NaN cells."""
+    """Gaussian-smooth a 2D ``(inv_lat, LT)`` array, ignoring NaN cells.
+
+    Axis 0 (inv_lat) uses ``mode="reflect"``; axis 1 (LT) uses
+    ``mode="wrap"`` because local time is physically periodic over
+    [0, 24). Without the wrap, the post-dusk QP30/QP60 peaks near
+    23-24 LT would not bleed into 0-1 LT, leaving an artificial seam
+    at the midnight boundary.
+    """
     from scipy.ndimage import gaussian_filter
 
     valid = np.isfinite(arr)
     filled = np.where(valid, arr, 0.0)
-    sm = gaussian_filter(filled, sigma=sigma)
-    wt = gaussian_filter(valid.astype(float), sigma=sigma)
+    mode = ("reflect", "wrap")
+    sm = gaussian_filter(filled, sigma=sigma, mode=mode)
+    wt = gaussian_filter(valid.astype(float), sigma=sigma, mode=mode)
     out = np.where(wt > 0, sm / wt, np.nan)
     out[~valid] = np.nan
     return out
@@ -79,6 +87,9 @@ def main() -> None:
 
     lt = ev["local_time"].values
     inv_lat = ev["kmag_inv_lat"].values
+    # Closed-MS denominator. inv_lat is signed by spacecraft hemisphere
+    # (see qp.dwell.grid.accumulate_traced_inv_lat_grid), so the N/S
+    # axis here mirrors orbital coverage, not intrinsic asymmetry.
     dw_kmag = dw["kmag_inv_lat_closed_magnetosphere"].values  # (inv_lat, LT)
 
     log.info("dwell coverage (closed MS): %.0f h",

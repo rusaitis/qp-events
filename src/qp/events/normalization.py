@@ -1,11 +1,13 @@
 r"""Dwell-normalized occurrence rate of QP wave events.
 
-Phase 5 of the plan. The numerator is the event-time grid produced
-by :mod:`qp.events.binning` (one zarr variable per QP band plus a
-``"total"`` union grid). The denominator is the **consistency dwell
-grid** built alongside the event grid, using the same coordinate
-approximations — see the design note in
-``src/qp/events/binning.py:accumulate_segment_dwell``.
+The numerator is the event-time grid produced by
+:mod:`qp.events.binning` (one zarr variable per QP band plus a
+``"total"`` union grid). The denominator is
+``Output/dwell_grid_cassini_saturn.zarr`` (canonical Cassini dwell
+grid; see ``scripts/compute_dwell_grid.py``). Both are built on the
+same bin edges and coordinate conventions (offset-dipole magnetic
+latitude, KSM-derived local time), so the per-cell ratio
+``event_time / dwell_time`` is bounded in [0, 1] by construction.
 
 The helpers here are pure: they take two ``numpy`` arrays and return
 a third. The figure scripts wrap these in matplotlib renderings.
