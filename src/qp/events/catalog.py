@@ -10,7 +10,7 @@ import datetime
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WaveEvent:
     """A detected quasi-periodic wave event in the magnetometer data.
 
@@ -100,7 +100,7 @@ class WaveEvent:
         return self.snr > snr_threshold
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WavePacketPeak:
     """A single peak in the wavelet power, representing one wave packet.
 
@@ -139,7 +139,7 @@ class WavePacketPeak:
         return self.period_sec / self.period_fwhm_sec
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class WaveTemplate:
     """Synthetic wave parameters for test signal generation.
 

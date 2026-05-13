@@ -23,10 +23,13 @@ Usage
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 import numpy as np
 from scipy.ndimage import gaussian_filter, zoom
+
+log = logging.getLogger(__name__)
 
 _project_root = Path(__file__).resolve().parent.parent
 
@@ -395,7 +398,7 @@ def main():
             pl.add_key_event("o", toggle_orbit_opacity)
 
         except FileNotFoundError:
-            print("  (orbit data not available, skipping)")
+            log.warning("orbit data not available, skipping")
 
     # 'm' toggles dawn-dusk meridian plane
     def toggle_meridian():

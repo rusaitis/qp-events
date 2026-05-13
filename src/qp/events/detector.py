@@ -16,6 +16,7 @@ Two layers:
 
 from __future__ import annotations
 
+import copy
 import datetime
 import math
 from typing import TYPE_CHECKING, Literal
@@ -160,9 +161,13 @@ def detect_wave_packets_multi(
     # Post-hoc band labelling. Ridges from QP_SEARCH_BAND carry no
     # canonical band; classify_period maps each peak's interpolated
     # period to QP15/30/60/120 (or None outside the search range).
-    for p in packets:
-        if p.period_sec is not None and p.period_sec > 0:
-            p.band = classify_period(p.period_sec)
+    # WavePacketPeak is frozen — use copy.replace for the relabel.
+    packets = [
+        copy.replace(p, band=classify_period(p.period_sec))
+        if p.period_sec is not None and p.period_sec > 0
+        else p
+        for p in packets
+    ]
 
     packets.sort(key=lambda p: p.peak_time)
     return packets
