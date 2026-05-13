@@ -152,7 +152,8 @@ def _in_band_snr(
 
 
 def _inject_noise_bursts(
-    bg: np.ndarray, t: np.ndarray,
+    bg: np.ndarray,
+    t: np.ndarray,
     bursts: list[NoiseBurstSpec],
 ) -> None:
     """Multiply background noise by localized Gaussian gain envelopes."""
@@ -166,8 +167,10 @@ def _inject_noise_bursts(
 
 
 def _inject_roll_artifact(
-    b_perp1: np.ndarray, b_perp2: np.ndarray,
-    t: np.ndarray, spec: RollArtifactSpec,
+    b_perp1: np.ndarray,
+    b_perp2: np.ndarray,
+    t: np.ndarray,
+    spec: RollArtifactSpec,
 ) -> None:
     """Inject a smooth spacecraft roll artifact into transverse components."""
     center = spec.center_hours * 3600.0
@@ -215,14 +218,16 @@ def generate_benchmark_dataset(
     # Background
     if scenario.background_trend:
         bg = magnetospheric_background(
-            n_samples, scenario.dt,
+            n_samples,
+            scenario.dt,
             seed=int(rng.integers(0, 2**31)),
             noise_alpha=scenario.noise_alpha,
             noise_sigma=scenario.noise_sigma,
         )
     else:
         bg = colored_noise_3component(
-            n_samples, scenario.dt,
+            n_samples,
+            scenario.dt,
             alpha=scenario.noise_alpha,
             sigma=scenario.noise_sigma,
             seed=int(rng.integers(0, 2**31)),
@@ -255,16 +260,22 @@ def generate_benchmark_dataset(
                 f_lo, f_hi = 0.5 * f0, 2.0 * f0
 
             burst1 = bandlimited_noise_burst(
-                n_samples, scenario.dt,
-                center_sec=center_sec, decay_sec=decay_sec,
-                freq_lo=f_lo, freq_hi=f_hi,
+                n_samples,
+                scenario.dt,
+                center_sec=center_sec,
+                decay_sec=decay_sec,
+                freq_lo=f_lo,
+                freq_hi=f_hi,
                 amplitude=spec.amplitude,
                 seed=int(rng.integers(0, 2**31)),
             )
             burst2 = bandlimited_noise_burst(
-                n_samples, scenario.dt,
-                center_sec=center_sec, decay_sec=decay_sec,
-                freq_lo=f_lo, freq_hi=f_hi,
+                n_samples,
+                scenario.dt,
+                center_sec=center_sec,
+                decay_sec=decay_sec,
+                freq_lo=f_lo,
+                freq_hi=f_hi,
                 amplitude=spec.amplitude * 0.7,
                 seed=int(rng.integers(0, 2**31)),
             )
@@ -285,7 +296,9 @@ def generate_benchmark_dataset(
             )
 
             _, wave_fields = simulate_wave_physics(
-                n_samples, scenario.dt, [wave],
+                n_samples,
+                scenario.dt,
+                [wave],
                 mode=spec.mode,
                 polarization=spec.polarization,
                 ellipticity=spec.ellipticity,
@@ -316,39 +329,45 @@ def generate_benchmark_dataset(
         # In-band SNR
         snr_bb = spec.amplitude / max(scenario.noise_sigma, 1e-30)
         snr_ib = _in_band_snr(
-            spec.amplitude, scenario.noise_sigma, scenario.noise_alpha,
-            period_sec, scenario.dt, band_label,
+            spec.amplitude,
+            scenario.noise_sigma,
+            scenario.noise_alpha,
+            period_sec,
+            scenario.dt,
+            band_label,
         )
 
-        injected_events.append(InjectedEvent(
-            event_id=f"{scenario.dataset_id}-{i:03d}",
-            dataset_id=scenario.dataset_id,
-            event_type=spec.event_type,
-            should_detect=spec.should_detect,
-            band=band_label,
-            period_sec=period_sec,
-            amplitude_nT=spec.amplitude,
-            start_sec=start_sec,
-            end_sec=end_sec,
-            center_sec=center_sec,
-            duration_sec=duration_sec,
-            n_oscillations=n_osc,
-            polarization=spec.polarization,
-            ellipticity=spec.ellipticity,
-            wave_mode=spec.mode,
-            propagation=spec.propagation,
-            chirp_rate=spec.chirp_rate,
-            waveform=spec.waveform,
-            sawtooth_width=spec.sawtooth_width,
-            envelope_asymmetry=spec.asymmetry,
-            amplitude_jitter=spec.amplitude_jitter,
-            harmonic_content=spec.harmonic_content,
-            snr_injected=snr_bb,
-            snr_in_band=snr_ib,
-            start_2sigma_sec=start_2s,
-            end_2sigma_sec=end_2s,
-            difficulty=spec.difficulty,
-        ))
+        injected_events.append(
+            InjectedEvent(
+                event_id=f"{scenario.dataset_id}-{i:03d}",
+                dataset_id=scenario.dataset_id,
+                event_type=spec.event_type,
+                should_detect=spec.should_detect,
+                band=band_label,
+                period_sec=period_sec,
+                amplitude_nT=spec.amplitude,
+                start_sec=start_sec,
+                end_sec=end_sec,
+                center_sec=center_sec,
+                duration_sec=duration_sec,
+                n_oscillations=n_osc,
+                polarization=spec.polarization,
+                ellipticity=spec.ellipticity,
+                wave_mode=spec.mode,
+                propagation=spec.propagation,
+                chirp_rate=spec.chirp_rate,
+                waveform=spec.waveform,
+                sawtooth_width=spec.sawtooth_width,
+                envelope_asymmetry=spec.asymmetry,
+                amplitude_jitter=spec.amplitude_jitter,
+                harmonic_content=spec.harmonic_content,
+                snr_injected=snr_bb,
+                snr_in_band=snr_ib,
+                start_2sigma_sec=start_2s,
+                end_2sigma_sec=end_2s,
+                difficulty=spec.difficulty,
+            )
+        )
 
     # Roll artifacts (decoy transverse perturbations)
     for roll in scenario.roll_artifacts:

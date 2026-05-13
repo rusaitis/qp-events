@@ -43,11 +43,11 @@ def _spectrum(fields: np.ndarray, dt: float = 60.0) -> dict[str, list[float]]:
     period_min = 1.0 / f / 60.0
     order = np.argsort(period_min)
     return {
-        "freq_hz":      f[order].tolist(),
-        "period_min":   period_min[order].tolist(),
-        "psd_par":      psd_par[keep][order].tolist(),
-        "psd_perp1":    psd_p1[keep][order].tolist(),
-        "psd_perp2":    psd_p2[keep][order].tolist(),
+        "freq_hz": f[order].tolist(),
+        "period_min": period_min[order].tolist(),
+        "psd_par": psd_par[keep][order].tolist(),
+        "psd_perp1": psd_p1[keep][order].tolist(),
+        "psd_perp2": psd_p2[keep][order].tolist(),
         "qp_periods_min": [_DEFAULT_PERIOD_MIN[b] for b in QP_BAND_NAMES],
     }
 
@@ -154,9 +154,7 @@ def benchmark(preset: str = "med_snr") -> dict[str, Any]:
                         peak = ev.peak
                         ev_band_name = peak.band
                         period_sec = peak.period_sec
-                        ev_period_min = (
-                            float(period_sec) / 60.0 if period_sec else None
-                        )
+                        ev_period_min = float(period_sec) / 60.0 if period_sec else None
                         in_target = (
                             ev_period_min is not None
                             and target.period_min_minutes
@@ -171,9 +169,12 @@ def benchmark(preset: str = "med_snr") -> dict[str, Any]:
                 except Exception as exc:  # noqa: BLE001
                     rows.append(
                         {
-                            "band": band, "amplitude_nT": amp, "seed": seed,
+                            "band": band,
+                            "amplitude_nT": amp,
+                            "seed": seed,
                             "noise_sigma_nT": cfg["noise"],
-                            "detected": False, "error": str(exc),
+                            "detected": False,
+                            "error": str(exc),
                         }
                     )
                     continue
@@ -214,7 +215,10 @@ def benchmark(preset: str = "med_snr") -> dict[str, Any]:
 
 
 def benchmark_event(
-    preset: str, band: str, amplitude: float, seed: int,
+    preset: str,
+    band: str,
+    amplitude: float,
+    seed: int,
 ) -> dict[str, Any]:
     """Re-render a specific benchmark event for plotting."""
     if preset not in _PRESETS:

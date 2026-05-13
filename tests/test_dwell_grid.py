@@ -66,14 +66,22 @@ class TestAccumulateDwellTime:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_single_point(self, small_config):
         """A single point at (10, 0, 0) KSM should land in the correct bin."""
         grid = accumulate_dwell_time(
-            x=[10.0], y=[0.0], z=[0.0], dt_minutes=1.0, config=small_config,
+            x=[10.0],
+            y=[0.0],
+            z=[0.0],
+            dt_minutes=1.0,
+            config=small_config,
         )
         assert grid.sum() == pytest.approx(1.0)
         # r=10 → bin 3 (0-3, 3-6, 6-9, 9-12), lat≈0 → middle, LT=12h (sunward)
@@ -98,15 +106,22 @@ class TestAccumulateDwellTime:
     def test_out_of_range_excluded(self, small_config):
         """Points outside the grid range should not contribute."""
         grid = accumulate_dwell_time(
-            x=[100.0], y=[0.0], z=[0.0],  # r=100, beyond r_range=(0,30)
-            dt_minutes=1.0, config=small_config,
+            x=[100.0],
+            y=[0.0],
+            z=[0.0],  # r=100, beyond r_range=(0,30)
+            dt_minutes=1.0,
+            config=small_config,
         )
         assert grid.sum() == pytest.approx(0.0)
 
     def test_equatorial_point_at_noon(self, small_config):
         """(x=15, y=0, z=0) → r=15, lat≈0, LT=12h."""
         grid = accumulate_dwell_time(
-            x=[15.0], y=[0.0], z=[0.0], dt_minutes=1.0, config=small_config,
+            x=[15.0],
+            y=[0.0],
+            z=[0.0],
+            dt_minutes=1.0,
+            config=small_config,
         )
         # Find the non-zero bin
         idx = np.argwhere(grid > 0)
@@ -122,7 +137,11 @@ class TestAccumulateDwellTime:
     def test_midnight_point(self, small_config):
         """(x=-15, y=0, z=0) → LT=0h (midnight)."""
         grid = accumulate_dwell_time(
-            x=[-15.0], y=[0.0], z=[0.0], dt_minutes=1.0, config=small_config,
+            x=[-15.0],
+            y=[0.0],
+            z=[0.0],
+            dt_minutes=1.0,
+            config=small_config,
         )
         idx = np.argwhere(grid > 0)
         assert len(idx) == 1
@@ -162,8 +181,8 @@ class TestAccumulateDwellTime:
 
         # Should be roughly symmetric about the equator
         n_lat = len(lat_profile)
-        north = lat_profile[n_lat // 2:]
-        south = lat_profile[:n_lat // 2][::-1]
+        north = lat_profile[n_lat // 2 :]
+        south = lat_profile[: n_lat // 2][::-1]
         np.testing.assert_allclose(north, south, rtol=0.15)
 
     def test_default_config(self):
@@ -182,8 +201,12 @@ class TestAccumulateWithRegions:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_region_separation(self, small_config):
@@ -193,10 +216,17 @@ class TestAccumulateWithRegions:
         z = np.array([0.0, 1.0, -1.0, 0.0])
         codes = np.array([0, 1, 2, 9])  # MS, SH, SW, unknown
 
-        grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
+        grids = accumulate_with_regions(
+            x, y, z, codes, dt_minutes=1.0, config=small_config
+        )
 
         total = grids["total"]
-        parts = grids["magnetosphere"] + grids["magnetosheath"] + grids["solar_wind"] + grids["unknown"]
+        parts = (
+            grids["magnetosphere"]
+            + grids["magnetosheath"]
+            + grids["solar_wind"]
+            + grids["unknown"]
+        )
         np.testing.assert_allclose(total, parts)
 
     def test_all_ms(self, small_config):
@@ -206,16 +236,29 @@ class TestAccumulateWithRegions:
         z = np.array([0.0, 1.0])
         codes = np.array([0, 0])
 
-        grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
+        grids = accumulate_with_regions(
+            x, y, z, codes, dt_minutes=1.0, config=small_config
+        )
         np.testing.assert_allclose(grids["magnetosphere"], grids["total"])
         assert grids["magnetosheath"].sum() == 0.0
         assert grids["solar_wind"].sum() == 0.0
 
     def test_returns_all_keys(self, small_config):
         grids = accumulate_with_regions(
-            [10.0], [0.0], [0.0], [0], dt_minutes=1.0, config=small_config,
+            [10.0],
+            [0.0],
+            [0.0],
+            [0],
+            dt_minutes=1.0,
+            config=small_config,
         )
-        assert set(grids.keys()) == {"total", "magnetosphere", "magnetosheath", "solar_wind", "unknown"}
+        assert set(grids.keys()) == {
+            "total",
+            "magnetosphere",
+            "magnetosheath",
+            "solar_wind",
+            "unknown",
+        }
 
 
 # ============================================================================
@@ -268,7 +311,12 @@ class TestBinCacheEquivalence:
         direct = accumulate_weak_field_grid(x, y, z, bt, 1.0, 2.0, codes, config)
         cache = precompute_bins(x, y, z, config)
         cached = accumulate_weak_field_grid_cached(
-            cache, bt, 1.0, 2.0, region_codes=codes, config=config,
+            cache,
+            bt,
+            1.0,
+            2.0,
+            region_codes=codes,
+            config=config,
         )
         for k in direct:
             np.testing.assert_array_equal(direct[k], cached[k])
@@ -281,10 +329,19 @@ class TestBinCacheEquivalence:
         sub = np.zeros(len(x), dtype=bool)
         sub[: len(x) // 2] = True
         masked = accumulate_with_regions_cached(
-            cache, codes, 1.0, mask=sub, config=config,
+            cache,
+            codes,
+            1.0,
+            mask=sub,
+            config=config,
         )
         direct_sub = accumulate_with_regions(
-            x[sub], y[sub], z[sub], codes[sub], 1.0, config,
+            x[sub],
+            y[sub],
+            z[sub],
+            codes[sub],
+            1.0,
+            config,
         )
         for k in direct_sub:
             np.testing.assert_array_equal(direct_sub[k], masked[k])
@@ -321,7 +378,12 @@ class TestAccumulatorDtype:
         g3d = accumulate_with_regions_cached(cache, codes, 1.0, config=config)
         g2d = accumulate_inv_lat_grid_cached(cache, codes, 1.0, config=config)
         gwf = accumulate_weak_field_grid_cached(
-            cache, bt, 1.0, 2.0, region_codes=codes, config=config,
+            cache,
+            bt,
+            1.0,
+            2.0,
+            region_codes=codes,
+            config=config,
         )
         for grids in (g3d, g2d, gwf):
             for k, v in grids.items():
@@ -354,11 +416,17 @@ class TestXarrayIO:
     def sample_dataset(self):
         cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
         grid = np.random.default_rng(42).uniform(0, 10, cfg.shape)
-        return to_xarray({"total": grid, "magnetosphere": grid * 0.7}, cfg, attrs={"source": "test"})
+        return to_xarray(
+            {"total": grid, "magnetosphere": grid * 0.7}, cfg, attrs={"source": "test"}
+        )
 
     def test_dimensions(self, sample_dataset):
         # Data dimensions (excludes non-dimension coords like bin edges)
-        assert set(sample_dataset["total"].dims) == {"r", "magnetic_latitude", "local_time"}
+        assert set(sample_dataset["total"].dims) == {
+            "r",
+            "magnetic_latitude",
+            "local_time",
+        }
 
     def test_coordinate_values(self, sample_dataset):
         assert len(sample_dataset.coords["r"]) == 5
@@ -380,16 +448,21 @@ class TestXarrayIO:
             save_zarr(sample_dataset, path)
             loaded = load_zarr(path)
             np.testing.assert_allclose(
-                sample_dataset["total"].values, loaded["total"].values,
+                sample_dataset["total"].values,
+                loaded["total"].values,
             )
             np.testing.assert_allclose(
-                sample_dataset["magnetosphere"].values, loaded["magnetosphere"].values,
+                sample_dataset["magnetosphere"].values,
+                loaded["magnetosphere"].values,
             )
             assert loaded.attrs["source"] == "test"
 
     def test_coordinate_metadata(self, sample_dataset):
         assert sample_dataset.coords["r"].attrs["units"] == "R_S"
-        assert "latitude" in sample_dataset.coords["magnetic_latitude"].attrs["long_name"].lower()
+        assert (
+            "latitude"
+            in sample_dataset.coords["magnetic_latitude"].attrs["long_name"].lower()
+        )
 
     def test_bin_edges_present(self, sample_dataset):
         """Bin edges should be stored as non-dimension coordinates."""
@@ -418,7 +491,11 @@ class TestEdgeCases:
         """Point at z=10, x=y=0 → lat≈90°, should land in highest lat bin."""
         cfg = DwellGridConfig(n_r=10, n_lat=18, n_lt=12, r_range=(0, 30))
         grid = accumulate_dwell_time(
-            x=[0.001], y=[0.0], z=[10.0], dt_minutes=1.0, config=cfg,
+            x=[0.001],
+            y=[0.0],
+            z=[10.0],
+            dt_minutes=1.0,
+            config=cfg,
         )
         idx = np.argwhere(grid > 0)
         assert len(idx) == 1
@@ -490,7 +567,9 @@ class TestZarrEncoding:
             loaded = load_zarr(path)
             # float32 round-trip has reduced precision
             np.testing.assert_allclose(
-                ds["total"].values, loaded["total"].values, rtol=1e-6,
+                ds["total"].values,
+                loaded["total"].values,
+                rtol=1e-6,
             )
 
     def test_roundtrip_blosc(self):
@@ -505,7 +584,8 @@ class TestZarrEncoding:
             save_zarr(ds, path, encoding=enc)
             loaded = load_zarr(path)
             np.testing.assert_allclose(
-                ds["total"].values, loaded["total"].values,
+                ds["total"].values,
+                loaded["total"].values,
             )
 
     def test_roundtrip_no_compression(self):
@@ -520,7 +600,8 @@ class TestZarrEncoding:
             save_zarr(ds, path, encoding=enc)
             loaded = load_zarr(path)
             np.testing.assert_allclose(
-                ds["total"].values, loaded["total"].values,
+                ds["total"].values,
+                loaded["total"].values,
             )
 
     def test_frozen(self):
@@ -537,7 +618,10 @@ class TestZarrEncoding:
 class TestStatsMode:
     def test_stats_returns_tuple(self):
         grid, info = accumulate_dwell_time(
-            x=[10.0], y=[0.0], z=[0.0], stats=True,
+            x=[10.0],
+            y=[0.0],
+            z=[0.0],
+            stats=True,
         )
         assert isinstance(grid, np.ndarray)
         assert isinstance(info, dict)
@@ -548,8 +632,11 @@ class TestStatsMode:
     def test_stats_counts_out_of_range(self):
         cfg = DwellGridConfig(n_r=10, n_lat=18, n_lt=12, r_range=(0, 30))
         grid, info = accumulate_dwell_time(
-            x=[10.0, 100.0], y=[0.0, 0.0], z=[0.0, 0.0],
-            config=cfg, stats=True,
+            x=[10.0, 100.0],
+            y=[0.0, 0.0],
+            z=[0.0, 0.0],
+            config=cfg,
+            stats=True,
         )
         assert info["n_total"] == 2
         assert info["n_in_range"] == 1
@@ -576,6 +663,7 @@ class TestStatsMode:
 class TestExtendedMetadata:
     def test_tracing_config_in_attrs(self):
         from qp.dwell.tracing import TracingConfig
+
         cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
         grid = np.ones(cfg.shape)
         tc = TracingConfig(step=0.05, max_radius=80.0)
@@ -585,6 +673,7 @@ class TestExtendedMetadata:
 
     def test_field_config_in_attrs(self):
         from qp.fieldline.kmag_model import SaturnFieldConfig
+
         cfg = DwellGridConfig(n_r=5, n_lat=9, n_lt=6, r_range=(0, 15))
         grid = np.ones(cfg.shape)
         fc = SaturnFieldConfig(dp=0.02, by_imf=-0.3, bz_imf=0.2)
@@ -610,8 +699,12 @@ class TestRegionCodes:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_unknown_code_in_total(self, small_config):
@@ -621,19 +714,25 @@ class TestRegionCodes:
         z = np.array([0.0, 1.0])
         codes = np.array([0, 5])  # 0=MS, 5=unrecognized
 
-        grids = accumulate_with_regions(x, y, z, codes, dt_minutes=1.0, config=small_config)
+        grids = accumulate_with_regions(
+            x, y, z, codes, dt_minutes=1.0, config=small_config
+        )
         # Total should include both points
         assert grids["total"].sum() == pytest.approx(2.0)
         # Magnetosphere should include only code 0
         assert grids["magnetosphere"].sum() == pytest.approx(1.0)
         # No per-region grid for code 5
-        region_sum = sum(grids[k].sum() for k in ["magnetosphere", "magnetosheath", "solar_wind", "unknown"])
+        region_sum = sum(
+            grids[k].sum()
+            for k in ["magnetosphere", "magnetosheath", "solar_wind", "unknown"]
+        )
         assert region_sum == pytest.approx(1.0)  # only the code=0 point
 
     def test_region_names_match_crossings(self):
         """REGION_CODES in grid.py should use the same code values as crossings.py."""
         from qp.dwell.grid import REGION_CODES
         from qp.io.crossings import MS, SH, SW, UNKNOWN
+
         assert MS in REGION_CODES
         assert SH in REGION_CODES
         assert SW in REGION_CODES
@@ -642,6 +741,7 @@ class TestRegionCodes:
     def test_region_names_are_descriptive(self):
         """Region names should be human-readable, not abbreviations."""
         from qp.dwell.grid import REGION_CODES
+
         abbreviations = {"ms", "sh", "sw", "unk"}
         for name in REGION_CODES.values():
             assert name not in abbreviations, f"Expected descriptive name, got '{name}'"
@@ -656,6 +756,7 @@ class TestDipoleInvariantLatitude:
     def test_equatorial_point(self):
         """Equatorial point at r=10 → L=10, inv_lat ≈ 71.57°."""
         from qp.coords.ksm import dipole_invariant_latitude
+
         inv = dipole_invariant_latitude(10.0, 0.0, 0.037)  # at dipole equator
         expected = np.degrees(np.arccos(1 / np.sqrt(10)))
         assert inv == pytest.approx(expected, abs=0.5)
@@ -663,12 +764,14 @@ class TestDipoleInvariantLatitude:
     def test_inside_planet(self):
         """Point inside planet (L < 1) should return NaN."""
         from qp.coords.ksm import dipole_invariant_latitude
+
         inv = dipole_invariant_latitude(0.5, 0.0, 0.037)
         assert np.isnan(inv)
 
     def test_sign_matches_hemisphere(self):
         """Northern point → positive inv lat, southern → negative."""
         from qp.coords.ksm import dipole_invariant_latitude
+
         north = dipole_invariant_latitude(10.0, 0.0, 5.0)
         south = dipole_invariant_latitude(10.0, 0.0, -5.0)
         assert north > 0
@@ -677,6 +780,7 @@ class TestDipoleInvariantLatitude:
     def test_vectorized(self):
         """Should handle arrays."""
         from qp.coords.ksm import dipole_invariant_latitude
+
         x = np.array([10.0, 20.0, 0.5])
         y = np.zeros(3)
         z = np.full(3, 0.037)
@@ -689,6 +793,7 @@ class TestDipoleInvariantLatitude:
     def test_higher_r_gives_higher_inv_lat(self):
         """At equator, larger r → larger L → larger inv_lat."""
         from qp.coords.ksm import dipole_invariant_latitude
+
         inv_5 = dipole_invariant_latitude(5.0, 0.0, 0.037)
         inv_20 = dipole_invariant_latitude(20.0, 0.0, 0.037)
         assert inv_20 > inv_5
@@ -703,14 +808,23 @@ class TestAccumulateInvLatGrid:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_returns_total(self, small_config):
         from qp.dwell.grid import accumulate_inv_lat_grid
+
         result = accumulate_inv_lat_grid(
-            [10.0], [0.0], [0.0], dt_minutes=1.0, config=small_config,
+            [10.0],
+            [0.0],
+            [0.0],
+            dt_minutes=1.0,
+            config=small_config,
         )
         assert "total" in result
         assert result["total"].shape == (18, 12)
@@ -718,6 +832,7 @@ class TestAccumulateInvLatGrid:
     def test_time_conservation(self, small_config):
         """Total accumulated time should be close to n_points × dt for valid points."""
         from qp.dwell.grid import accumulate_inv_lat_grid
+
         # Points at r=10, equator → all have L=10 > 1, all valid
         n = 100
         rng = np.random.default_rng(42)
@@ -730,9 +845,13 @@ class TestAccumulateInvLatGrid:
 
     def test_with_region_codes(self, small_config):
         from qp.dwell.grid import accumulate_inv_lat_grid
+
         result = accumulate_inv_lat_grid(
-            [10.0, 15.0], [0.0, 0.0], [0.0, 0.0],
-            region_codes=[0, 1], config=small_config,
+            [10.0, 15.0],
+            [0.0, 0.0],
+            [0.0, 0.0],
+            region_codes=[0, 1],
+            config=small_config,
         )
         assert "magnetosphere" in result
         assert "magnetosheath" in result
@@ -781,8 +900,12 @@ class TestAccumulateTracedInvLatGrid:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_basic_accumulation(self, small_config):
@@ -845,14 +968,23 @@ class TestAccumulateTracedInvLatGrid:
         closed = np.array([True, True, False, False, True])
 
         all_result = accumulate_traced_inv_lat_grid(
-            inv_n, inv_s, closed,
-            local_time=np.full(n, 12.0), z=np.full(n, 5.0),
-            dt_minutes=60.0, config=small_config,
+            inv_n,
+            inv_s,
+            closed,
+            local_time=np.full(n, 12.0),
+            z=np.full(n, 5.0),
+            dt_minutes=60.0,
+            config=small_config,
         )
         closed_result = accumulate_traced_inv_lat_grid(
-            inv_n, inv_s, closed,
-            local_time=np.full(n, 12.0), z=np.full(n, 5.0),
-            dt_minutes=60.0, closed_only=True, config=small_config,
+            inv_n,
+            inv_s,
+            closed,
+            local_time=np.full(n, 12.0),
+            z=np.full(n, 5.0),
+            dt_minutes=60.0,
+            closed_only=True,
+            config=small_config,
         )
         # Open lines have NaN inv_lat, excluded from both. Same result.
         np.testing.assert_allclose(all_result["total"], closed_result["total"])
@@ -886,7 +1018,12 @@ class TestAccumulateTracedInvLatGrid:
             config=small_config,
         )
         assert "magnetosphere" in result
-        parts = result["magnetosphere"] + result["magnetosheath"] + result["solar_wind"] + result["unknown"]
+        parts = (
+            result["magnetosphere"]
+            + result["magnetosheath"]
+            + result["solar_wind"]
+            + result["unknown"]
+        )
         np.testing.assert_allclose(result["total"], parts)
 
     def test_dt_minutes_scales(self, small_config):
@@ -925,8 +1062,12 @@ class TestAccumulateWeakFieldGrid:
     @pytest.fixture
     def small_config(self):
         return DwellGridConfig(
-            n_r=10, n_lat=18, n_lt=12,
-            r_range=(0, 30), lat_range=(-90, 90), lt_range=(0, 24),
+            n_r=10,
+            n_lat=18,
+            n_lt=12,
+            r_range=(0, 30),
+            lat_range=(-90, 90),
+            lt_range=(0, 24),
         )
 
     def test_weak_field_filter(self, small_config):
@@ -937,7 +1078,13 @@ class TestAccumulateWeakFieldGrid:
         btotal = np.array([1.0, 3.0, 0.5])
 
         result = accumulate_weak_field_grid(
-            x, y, z, btotal, dt_minutes=1.0, b_threshold=2.0, config=small_config,
+            x,
+            y,
+            z,
+            btotal,
+            dt_minutes=1.0,
+            b_threshold=2.0,
+            config=small_config,
         )
         # 2 of 3 points pass the threshold
         assert result["total"].sum() == pytest.approx(2.0)
@@ -945,16 +1092,27 @@ class TestAccumulateWeakFieldGrid:
     def test_all_pass_with_high_threshold(self, small_config):
         """With b_threshold=1000, all points pass."""
         from qp.dwell.grid import accumulate_inv_lat_grid
+
         x = np.array([10.0, 15.0])
         y = np.zeros(2)
         z = np.full(2, 0.037)
         btotal = np.array([5.0, 10.0])
 
         wf = accumulate_weak_field_grid(
-            x, y, z, btotal, dt_minutes=1.0, b_threshold=1000.0, config=small_config,
+            x,
+            y,
+            z,
+            btotal,
+            dt_minutes=1.0,
+            b_threshold=1000.0,
+            config=small_config,
         )
         ref = accumulate_inv_lat_grid(
-            x, y, z, dt_minutes=1.0, config=small_config,
+            x,
+            y,
+            z,
+            dt_minutes=1.0,
+            config=small_config,
         )
         np.testing.assert_allclose(wf["total"], ref["total"])
 
@@ -966,7 +1124,12 @@ class TestAccumulateWeakFieldGrid:
         codes = np.array([0, 1])
 
         result = accumulate_weak_field_grid(
-            x, y, z, btotal, region_codes=codes, config=small_config,
+            x,
+            y,
+            z,
+            btotal,
+            region_codes=codes,
+            config=small_config,
         )
         assert "magnetosphere" in result
         assert result["magnetosphere"].sum() == pytest.approx(1.0)
@@ -974,7 +1137,11 @@ class TestAccumulateWeakFieldGrid:
 
     def test_empty_input(self, small_config):
         result = accumulate_weak_field_grid(
-            [], [], [], [], config=small_config,
+            [],
+            [],
+            [],
+            [],
+            config=small_config,
         )
         assert result["total"].sum() == 0.0
         assert result["total"].shape == (18, 12)
@@ -993,7 +1160,8 @@ class TestKmagInvLatIO:
         kmag_2d = np.ones((9, 6)) * 3.0
 
         ds = to_xarray(
-            {"total": grid_3d}, cfg,
+            {"total": grid_3d},
+            cfg,
             inv_lat_grids={"dipole_inv_lat_total": inv_2d},
             kmag_inv_lat_grids={"kmag_inv_lat_total": kmag_2d},
         )
@@ -1010,7 +1178,8 @@ class TestKmagInvLatIO:
         kmag_2d = np.ones((9, 6)) * 5.0
 
         ds = to_xarray(
-            {"total": grid_3d}, cfg,
+            {"total": grid_3d},
+            cfg,
             kmag_inv_lat_grids={"kmag_inv_lat_total": kmag_2d},
         )
 
@@ -1019,7 +1188,8 @@ class TestKmagInvLatIO:
             save_zarr(ds, path)
             loaded = load_zarr(path)
             np.testing.assert_allclose(
-                loaded["kmag_inv_lat_total"].values, 5.0,
+                loaded["kmag_inv_lat_total"].values,
+                5.0,
             )
             assert "kmag_inv_lat" in loaded.dims
 
@@ -1053,15 +1223,24 @@ class TestComputeInvariantLatitudesParallel:
     def test_region_filter_skips_non_ms(self, synthetic_inputs):
         """Region filter to MS leaves non-MS slots as NaN/False."""
         from qp.dwell.tracing import (
-            TracingConfig, compute_invariant_latitudes,
+            TracingConfig,
+            compute_invariant_latitudes,
         )
+
         x, y, z, t, codes = synthetic_inputs
         cfg = TracingConfig(
-            trace_every_n=1, max_steps=5000, log_interval=100,
+            trace_every_n=1,
+            max_steps=5000,
+            log_interval=100,
             region_filter=(0,),
         )
         result = compute_invariant_latitudes(
-            x, y, z, t, config=cfg, region_codes=codes,
+            x,
+            y,
+            z,
+            t,
+            config=cfg,
+            region_codes=codes,
         )
         # Slots where region != 0 must all be NaN / False
         non_ms = codes != 0
@@ -1072,22 +1251,37 @@ class TestComputeInvariantLatitudesParallel:
     def test_region_filter_none_traces_all(self, synthetic_inputs):
         """region_filter=None ignores region_codes and traces everything."""
         from qp.dwell.tracing import (
-            TracingConfig, compute_invariant_latitudes,
+            TracingConfig,
+            compute_invariant_latitudes,
         )
+
         x, y, z, t, codes = synthetic_inputs
         cfg_none = TracingConfig(
-            trace_every_n=1, max_steps=5000, log_interval=100,
+            trace_every_n=1,
+            max_steps=5000,
+            log_interval=100,
             region_filter=None,
         )
         r_codes = compute_invariant_latitudes(
-            x, y, z, t, config=cfg_none, region_codes=codes,
+            x,
+            y,
+            z,
+            t,
+            config=cfg_none,
+            region_codes=codes,
         )
         r_no_codes = compute_invariant_latitudes(
-            x, y, z, t, config=cfg_none,
+            x,
+            y,
+            z,
+            t,
+            config=cfg_none,
         )
         np.testing.assert_array_equal(r_codes.is_closed, r_no_codes.is_closed)
         np.testing.assert_allclose(
-            r_codes.inv_lat_north, r_no_codes.inv_lat_north, equal_nan=True,
+            r_codes.inv_lat_north,
+            r_no_codes.inv_lat_north,
+            equal_nan=True,
         )
 
     def test_parallel_matches_serial_no_filter(self, synthetic_inputs):
@@ -1097,24 +1291,38 @@ class TestComputeInvariantLatitudesParallel:
             compute_invariant_latitudes,
             compute_invariant_latitudes_parallel,
         )
+
         x, y, z, t, _ = synthetic_inputs
         cfg = TracingConfig(
-            trace_every_n=1, max_steps=5000, log_interval=100,
+            trace_every_n=1,
+            max_steps=5000,
+            log_interval=100,
             region_filter=None,
         )
         r_serial = compute_invariant_latitudes(x, y, z, t, config=cfg)
         r_parallel = compute_invariant_latitudes_parallel(
-            x, y, z, t, config=cfg, n_workers=2,
+            x,
+            y,
+            z,
+            t,
+            config=cfg,
+            n_workers=2,
         )
         np.testing.assert_array_equal(r_serial.is_closed, r_parallel.is_closed)
         np.testing.assert_allclose(
-            r_serial.inv_lat_north, r_parallel.inv_lat_north, equal_nan=True,
+            r_serial.inv_lat_north,
+            r_parallel.inv_lat_north,
+            equal_nan=True,
         )
         np.testing.assert_allclose(
-            r_serial.inv_lat_south, r_parallel.inv_lat_south, equal_nan=True,
+            r_serial.inv_lat_south,
+            r_parallel.inv_lat_south,
+            equal_nan=True,
         )
         np.testing.assert_allclose(
-            r_serial.l_equatorial, r_parallel.l_equatorial, equal_nan=True,
+            r_serial.l_equatorial,
+            r_parallel.l_equatorial,
+            equal_nan=True,
         )
         assert r_serial.n_traces == r_parallel.n_traces
         assert r_serial.n_closed == r_parallel.n_closed
@@ -1126,23 +1334,41 @@ class TestComputeInvariantLatitudesParallel:
             compute_invariant_latitudes,
             compute_invariant_latitudes_parallel,
         )
+
         x, y, z, t, codes = synthetic_inputs
         cfg = TracingConfig(
-            trace_every_n=1, max_steps=5000, log_interval=100,
+            trace_every_n=1,
+            max_steps=5000,
+            log_interval=100,
             region_filter=(0,),
         )
         r_s = compute_invariant_latitudes(
-            x, y, z, t, config=cfg, region_codes=codes,
+            x,
+            y,
+            z,
+            t,
+            config=cfg,
+            region_codes=codes,
         )
         r_p = compute_invariant_latitudes_parallel(
-            x, y, z, t, config=cfg, region_codes=codes, n_workers=2,
+            x,
+            y,
+            z,
+            t,
+            config=cfg,
+            region_codes=codes,
+            n_workers=2,
         )
         np.testing.assert_array_equal(r_s.is_closed, r_p.is_closed)
         np.testing.assert_allclose(
-            r_s.inv_lat_north, r_p.inv_lat_north, equal_nan=True,
+            r_s.inv_lat_north,
+            r_p.inv_lat_north,
+            equal_nan=True,
         )
         np.testing.assert_allclose(
-            r_s.l_equatorial, r_p.l_equatorial, equal_nan=True,
+            r_s.l_equatorial,
+            r_p.l_equatorial,
+            equal_nan=True,
         )
 
     def test_parallel_n_workers_1_falls_back_to_serial(self, synthetic_inputs):
@@ -1152,18 +1378,28 @@ class TestComputeInvariantLatitudesParallel:
             compute_invariant_latitudes,
             compute_invariant_latitudes_parallel,
         )
+
         x, y, z, t, _ = synthetic_inputs
         cfg = TracingConfig(
-            trace_every_n=1, max_steps=5000, log_interval=100,
+            trace_every_n=1,
+            max_steps=5000,
+            log_interval=100,
             region_filter=None,
         )
         r_s = compute_invariant_latitudes(x, y, z, t, config=cfg)
         r_p = compute_invariant_latitudes_parallel(
-            x, y, z, t, config=cfg, n_workers=1,
+            x,
+            y,
+            z,
+            t,
+            config=cfg,
+            n_workers=1,
         )
         np.testing.assert_array_equal(r_s.is_closed, r_p.is_closed)
         np.testing.assert_allclose(
-            r_s.inv_lat_north, r_p.inv_lat_north, equal_nan=True,
+            r_s.inv_lat_north,
+            r_p.inv_lat_north,
+            equal_nan=True,
         )
 
     def test_round_robin_chunks_partition_active_slots(self):

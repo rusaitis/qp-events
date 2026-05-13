@@ -9,9 +9,7 @@ from qp.signal.cross_correlation import ellipticity_inclination_tapered
 
 def _make_wave(**kwargs) -> WaveTemplate:
     """Convenience: QP60 sine with 4h Gaussian envelope centered at 12h."""
-    defaults = dict(
-        period=3600.0, amplitude=2.0, shift=12 * 3600, decay_width=4 * 3600
-    )
+    defaults = dict(period=3600.0, amplitude=2.0, shift=12 * 3600, decay_width=4 * 3600)
     defaults.update(kwargs)
     return WaveTemplate(**defaults)
 
@@ -88,8 +86,12 @@ class TestPolarization:
     def test_elliptical_intermediate(self):
         wave = _make_wave()
         _, fields = simulate_wave_physics(
-            2160, 60.0, [wave],
-            polarization="elliptical", ellipticity=0.5, seed=42,
+            2160,
+            60.0,
+            [wave],
+            polarization="elliptical",
+            ellipticity=0.5,
+            seed=42,
         )
         p1, p2 = self._event_window(fields)
         e, _, _ = ellipticity_inclination_tapered(p1, p2)
@@ -122,7 +124,9 @@ class TestWaveformShapes:
     def test_sawtooth_has_harmonics(self):
         # width=1.0 is a pure ascending sawtooth (rich in even harmonics)
         wave = WaveTemplate(
-            period=3600.0, amplitude=2.0, waveform="sawtooth",
+            period=3600.0,
+            amplitude=2.0,
+            waveform="sawtooth",
             sawtooth_width=1.0,
         )
         _, fields = simulate_wave_physics(
@@ -154,7 +158,7 @@ class TestAsymmetricEnvelope:
         )
         from qp.signal.morphology import band_envelope, envelope_rise_fall
 
-        env = band_envelope(fields[:, 1], dt=60.0, low_hz=1/4800, high_hz=1/2400)
+        env = band_envelope(fields[:, 1], dt=60.0, low_hz=1 / 4800, high_hz=1 / 2400)
         result = envelope_rise_fall(env, dt=60.0)
         if result is not None:
             rise, fall, ratio = result
@@ -167,7 +171,7 @@ class TestAsymmetricEnvelope:
         )
         from qp.signal.morphology import band_envelope, envelope_rise_fall
 
-        env = band_envelope(fields[:, 1], dt=60.0, low_hz=1/4800, high_hz=1/2400)
+        env = band_envelope(fields[:, 1], dt=60.0, low_hz=1 / 4800, high_hz=1 / 2400)
         result = envelope_rise_fall(env, dt=60.0)
         if result is not None:
             rise, fall, ratio = result

@@ -51,7 +51,8 @@ def _make_compressor(encoding: ZarrEncoding):
             return ZstdCodec(level=encoding.compression_level)
         case "blosc":
             return BloscCodec(
-                cname="lz4", clevel=encoding.compression_level,
+                cname="lz4",
+                clevel=encoding.compression_level,
                 typesize=4 if encoding.dtype == "float32" else 8,
             )
         case "none":
@@ -110,11 +111,18 @@ def to_xarray(
     """
     coords = {
         # Dimension coordinates (bin centers)
-        "r": ("r", config.r_centers, {"units": "R_S", "long_name": "Radial distance (bin center)"}),
+        "r": (
+            "r",
+            config.r_centers,
+            {"units": "R_S", "long_name": "Radial distance (bin center)"},
+        ),
         "magnetic_latitude": (
             "magnetic_latitude",
             config.lat_centers,
-            {"units": "degrees", "long_name": "Magnetic latitude, KSM offset dipole (bin center)"},
+            {
+                "units": "degrees",
+                "long_name": "Magnetic latitude, KSM offset dipole (bin center)",
+            },
         ),
         "local_time": (
             "local_time",
@@ -122,9 +130,21 @@ def to_xarray(
             {"units": "h", "long_name": "Local time (bin center)"},
         ),
         # Non-dimension coordinates (bin edges, for exact reconstruction)
-        "r_edges": ("r_edge", config.r_edges, {"units": "R_S", "long_name": "Radial bin edges"}),
-        "lat_edges": ("lat_edge", config.lat_edges, {"units": "degrees", "long_name": "Latitude bin edges"}),
-        "lt_edges": ("lt_edge", config.lt_edges, {"units": "h", "long_name": "Local time bin edges"}),
+        "r_edges": (
+            "r_edge",
+            config.r_edges,
+            {"units": "R_S", "long_name": "Radial bin edges"},
+        ),
+        "lat_edges": (
+            "lat_edge",
+            config.lat_edges,
+            {"units": "degrees", "long_name": "Latitude bin edges"},
+        ),
+        "lt_edges": (
+            "lt_edge",
+            config.lt_edges,
+            {"units": "h", "long_name": "Local time bin edges"},
+        ),
     }
 
     dims = ("r", "magnetic_latitude", "local_time")
@@ -253,7 +273,9 @@ def save_zarr(
         ds.to_zarr(path, mode="w", encoding=enc)
         log.info(
             "Saved zarr store to %s (compressor=%s, dtype=%s)",
-            path, encoding.compressor, encoding.dtype,
+            path,
+            encoding.compressor,
+            encoding.dtype,
         )
     else:
         ds.to_zarr(path, mode="w")

@@ -881,5 +881,3 @@ def draw_reference_shells(
             lw=1.5,
             alpha=0.7,
         )
-
-

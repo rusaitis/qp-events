@@ -273,12 +273,24 @@ def make_kmag_field_func(
     dp = field.config.dp
 
     # Pre-extract rotation matrix elements as scalar locals
-    a00 = float(ksm_to_s3c[0, 0]); a01 = float(ksm_to_s3c[0, 1]); a02 = float(ksm_to_s3c[0, 2])
-    a10 = float(ksm_to_s3c[1, 0]); a11 = float(ksm_to_s3c[1, 1]); a12 = float(ksm_to_s3c[1, 2])
-    a20 = float(ksm_to_s3c[2, 0]); a21 = float(ksm_to_s3c[2, 1]); a22 = float(ksm_to_s3c[2, 2])
-    b00 = float(s3c_to_ksm[0, 0]); b01 = float(s3c_to_ksm[0, 1]); b02 = float(s3c_to_ksm[0, 2])
-    b10 = float(s3c_to_ksm[1, 0]); b11 = float(s3c_to_ksm[1, 1]); b12 = float(s3c_to_ksm[1, 2])
-    b20 = float(s3c_to_ksm[2, 0]); b21 = float(s3c_to_ksm[2, 1]); b22 = float(s3c_to_ksm[2, 2])
+    a00 = float(ksm_to_s3c[0, 0])
+    a01 = float(ksm_to_s3c[0, 1])
+    a02 = float(ksm_to_s3c[0, 2])
+    a10 = float(ksm_to_s3c[1, 0])
+    a11 = float(ksm_to_s3c[1, 1])
+    a12 = float(ksm_to_s3c[1, 2])
+    a20 = float(ksm_to_s3c[2, 0])
+    a21 = float(ksm_to_s3c[2, 1])
+    a22 = float(ksm_to_s3c[2, 2])
+    b00 = float(s3c_to_ksm[0, 0])
+    b01 = float(s3c_to_ksm[0, 1])
+    b02 = float(s3c_to_ksm[0, 2])
+    b10 = float(s3c_to_ksm[1, 0])
+    b11 = float(s3c_to_ksm[1, 1])
+    b12 = float(s3c_to_ksm[1, 2])
+    b20 = float(s3c_to_ksm[2, 0])
+    b21 = float(s3c_to_ksm[2, 1])
+    b22 = float(s3c_to_ksm[2, 2])
 
     def f(position: np.ndarray) -> np.ndarray:
         x = position[0]
@@ -295,13 +307,29 @@ def make_kmag_field_func(
         phi = math.atan2(y_s3c, x_s3c)
         # Field evaluation (jitted) with cached rotation matrices
         br, bt, bp = field_s3c_kernel(
-            r, theta, phi, g, h, rec, INTERNAL_NM, r0or, cs_thick,
-            dis_to_s3c, s3c_to_dis, ksm_to_s3c, s3c_to_ksm, si,
-            by_imf, bz_imf, dp,
+            r,
+            theta,
+            phi,
+            g,
+            h,
+            rec,
+            INTERNAL_NM,
+            r0or,
+            cs_thick,
+            dis_to_s3c,
+            s3c_to_dis,
+            ksm_to_s3c,
+            s3c_to_ksm,
+            si,
+            by_imf,
+            bz_imf,
+            dp,
         )
         # Spherical -> S3C cartesian (inlined sph2car_field)
-        st = math.sin(theta); ct = math.cos(theta)
-        sp = math.sin(phi); cp = math.cos(phi)
+        st = math.sin(theta)
+        ct = math.cos(theta)
+        sp = math.sin(phi)
+        cp = math.cos(phi)
         bx_s3c = br * st * cp + bt * ct * cp - bp * sp
         by_s3c = br * st * sp + bt * ct * sp + bp * cp
         bz_s3c = br * ct - bt * st

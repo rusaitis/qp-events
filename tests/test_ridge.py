@@ -17,13 +17,16 @@ def _cwt_for(signal: np.ndarray, dt: float = 60.0):
     return freq, np.abs(m)
 
 
-def _make_signal(period_min: float, amplitude: float = 1.5,
-                  decay_hours: float = 3.0,
-                  center_hours: float = 18.0,
-                  n_samples: int = 2160,
-                  dt: float = 60.0,
-                  noise_sigma: float = 0.0,
-                  seed: int = 1) -> np.ndarray:
+def _make_signal(
+    period_min: float,
+    amplitude: float = 1.5,
+    decay_hours: float = 3.0,
+    center_hours: float = 18.0,
+    n_samples: int = 2160,
+    dt: float = 60.0,
+    noise_sigma: float = 0.0,
+    seed: int = 1,
+) -> np.ndarray:
     """Synthetic Gaussian-windowed sinusoid for one band."""
     wave = WaveTemplate(
         period=period_min * 60.0,
@@ -50,7 +53,9 @@ class TestRidgeExtractionPerBand:
         signal = _make_signal(period_min=period_min, amplitude=2.0)
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band=band_name,
+            power,
+            freq,
+            band=band_name,
             min_duration_sec=1 * 3600,
             min_pixels=20,
         )
@@ -76,7 +81,9 @@ class TestRidgeExtractionPerBand:
         signal = _make_signal(period_min=period_min, amplitude=2.0)
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band=wrong_band,
+            power,
+            freq,
+            band=wrong_band,
             min_duration_sec=2 * 3600,
             min_pixels=80,
         )
@@ -91,11 +98,12 @@ class TestRidgeDuration:
     def test_duration_within_20_percent(self):
         # 4-hour decay → ~8h FWHM-equivalent footprint above threshold
         decay_hours = 4.0
-        signal = _make_signal(period_min=60, amplitude=2.0,
-                              decay_hours=decay_hours)
+        signal = _make_signal(period_min=60, amplitude=2.0, decay_hours=decay_hours)
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band="QP60",
+            power,
+            freq,
+            band="QP60",
             min_duration_sec=2 * 3600,
             min_pixels=20,
         )
@@ -118,12 +126,12 @@ class TestRidgeCOI:
             decay_width=2 * 3600,
             shift=0.5 * 3600,  # 30 min from edge
         )
-        _, signal = simulate_signal(
-            n_samples=2160, dt=60.0, waves=[wave]
-        )
+        _, signal = simulate_signal(n_samples=2160, dt=60.0, waves=[wave])
         freq, power = _cwt_for(signal)
         ridges = extract_ridges(
-            power, freq, band="QP60",
+            power,
+            freq,
+            band="QP60",
             min_duration_sec=2 * 3600,
             min_pixels=30,
             coi_factor=2.0,  # very strict

@@ -35,11 +35,14 @@ def _make_segment(n_minutes: int = 1440) -> SegmentPositionsExt:
     threshold so weak_field is empty).
     """
     epoch = datetime.datetime(2008, 6, 15)
-    times_unix = np.array([
-        (epoch + datetime.timedelta(minutes=i) - datetime.datetime(1970, 1, 1))
-        .total_seconds()
-        for i in range(n_minutes)
-    ])
+    times_unix = np.array(
+        [
+            (
+                epoch + datetime.timedelta(minutes=i) - datetime.datetime(1970, 1, 1)
+            ).total_seconds()
+            for i in range(n_minutes)
+        ]
+    )
     x = np.full(n_minutes, 15.0)
     y = np.zeros(n_minutes)
     z = np.full(n_minutes, 5.0)
@@ -125,10 +128,16 @@ class TestPerBandAccumulation:
     def test_total_band_is_band_union(self) -> None:
         seg = _make_segment()
         e1 = _make_event(
-            seg, band="QP60", start_min=60, duration_min=120,
+            seg,
+            band="QP60",
+            start_min=60,
+            duration_min=120,
         )
         e2 = _make_event(
-            seg, band="QP30", start_min=600, duration_min=120,
+            seg,
+            band="QP30",
+            start_min=600,
+            duration_min=120,
         )
         grids = accumulate_full_mirror([e1, e2], {0: seg})
         # Two non-overlapping events — total should equal sum of bands
@@ -155,9 +164,8 @@ class TestRegionSplits:
         ev = _make_event(seg, band="QP60", duration_min=300)
         grids = accumulate_full_mirror([ev], {0: seg})
         # All samples have region_code 0 → magnetosphere
-        assert (
-            float(grids["QP60_magnetosphere"].sum())
-            == pytest.approx(float(grids["QP60_total"].sum()), abs=0.1)
+        assert float(grids["QP60_magnetosphere"].sum()) == pytest.approx(
+            float(grids["QP60_total"].sum()), abs=0.1
         )
         # Other regions empty
         assert float(grids["QP60_magnetosheath"].sum()) == 0.0
@@ -170,7 +178,9 @@ class TestXarrayWrap:
         ev = _make_event(seg, band="QP60", duration_min=120)
         grids = accumulate_full_mirror([ev], {0: seg})
         ds = full_mirror_grids_to_xarray(
-            grids, DwellGridConfig(), bands=["QP30", "QP60", "QP120"],
+            grids,
+            DwellGridConfig(),
+            bands=["QP30", "QP60", "QP120"],
         )
         assert ds.attrs["schema"] == "full_mirror"
         assert ds.attrs["kmag_inv_lat_populated"] is False
@@ -178,7 +188,8 @@ class TestXarrayWrap:
         assert ds["QP60_total"].dims == ("r", "magnetic_latitude", "local_time")
         # The 2D dipole inv-lat variable exists
         assert ds["QP60_dipole_inv_lat_total"].dims == (
-            "dipole_inv_lat", "local_time",
+            "dipole_inv_lat",
+            "local_time",
         )
 
     def test_bin_edges_match_dwell_grid_default(self) -> None:
@@ -186,7 +197,9 @@ class TestXarrayWrap:
         ev = _make_event(seg, band="QP60", duration_min=60)
         grids = accumulate_full_mirror([ev], {0: seg})
         ds = full_mirror_grids_to_xarray(
-            grids, DwellGridConfig(), bands=["QP30", "QP60", "QP120"],
+            grids,
+            DwellGridConfig(),
+            bands=["QP30", "QP60", "QP120"],
         )
         # r edges: 0..100 with step 1.0
         assert ds["r_edges"].values[0] == pytest.approx(0.0)
@@ -207,7 +220,10 @@ class TestKmagEqRGrid:
         is_closed = np.array([True, True, True])
         lt = np.array([12.0, 12.0, 12.0])
         grids = accumulate_kmag_eq_r_grid(
-            l_eq, is_closed, lt, dt_minutes=10.0,
+            l_eq,
+            is_closed,
+            lt,
+            dt_minutes=10.0,
         )
         total = grids["total"]
         assert total.shape == (100, 96)
@@ -226,10 +242,18 @@ class TestKmagEqRGrid:
         is_closed = np.array([True, False])
         lt = np.array([12.0, 12.0])
         all_lines = accumulate_kmag_eq_r_grid(
-            l_eq, is_closed, lt, dt_minutes=10.0, closed_only=False,
+            l_eq,
+            is_closed,
+            lt,
+            dt_minutes=10.0,
+            closed_only=False,
         )
         closed = accumulate_kmag_eq_r_grid(
-            l_eq, is_closed, lt, dt_minutes=10.0, closed_only=True,
+            l_eq,
+            is_closed,
+            lt,
+            dt_minutes=10.0,
+            closed_only=True,
         )
         # all_lines: both closed AND open lines (apex finite) contribute
         # closed: only the closed line contributes
@@ -244,7 +268,10 @@ class TestKmagEqRGrid:
         is_closed = np.array([False, True, False])
         lt = np.array([0.0, 12.0, 18.0])
         grids = accumulate_kmag_eq_r_grid(
-            l_eq, is_closed, lt, dt_minutes=10.0,
+            l_eq,
+            is_closed,
+            lt,
+            dt_minutes=10.0,
         )
         assert float(grids["total"].sum()) == pytest.approx(10.0)
 
@@ -256,7 +283,11 @@ class TestKmagEqRGrid:
         lt = np.array([6.0, 12.0, 18.0])
         codes = np.array([0, 1, 0])  # MS, SH, MS
         grids = accumulate_kmag_eq_r_grid(
-            l_eq, is_closed, lt, dt_minutes=10.0, region_codes=codes,
+            l_eq,
+            is_closed,
+            lt,
+            dt_minutes=10.0,
+            region_codes=codes,
         )
         # total sums to 30; magnetosphere = 20; sheath = 10
         assert float(grids["total"].sum()) == pytest.approx(30.0)
@@ -291,13 +322,22 @@ class TestKmagEventGridsAccumulator:
         masks = {"QP60": mask_qp60}
 
         grids, stats = accumulate_kmag_event_grids(
-            masks, x, y, z, t_unix, codes,
+            masks,
+            x,
+            y,
+            z,
+            t_unix,
+            codes,
             trace_every_n=10,
         )
         assert stats["n_events_traced_min"] == 50
         # The grids dict should contain the four families per band:
-        for prefix in ("kmag_inv_lat", "kmag_inv_lat_closed",
-                       "kmag_eq_r", "kmag_eq_r_closed"):
+        for prefix in (
+            "kmag_inv_lat",
+            "kmag_inv_lat_closed",
+            "kmag_eq_r",
+            "kmag_eq_r_closed",
+        ):
             assert f"QP60_{prefix}_total" in grids
             assert f"total_{prefix}_total" in grids
         # Equatorial-r grid should have non-zero total if the trace
@@ -365,8 +405,11 @@ class TestBuildBandMasks:
         epoch = np.datetime64("2008-01-01T00:00:00")
         t = epoch + np.arange(1000) * np.timedelta64(60, "s")  # 1-min cadence
         t_unix = (
-            t - np.datetime64("1970-01-01T00:00:00")
-        ).astype("timedelta64[s]").astype(np.int64).astype(float)
+            (t - np.datetime64("1970-01-01T00:00:00"))
+            .astype("timedelta64[s]")
+            .astype(np.int64)
+            .astype(float)
+        )
         return t_unix, epoch
 
     def test_closed_interval_60_samples(self) -> None:
@@ -380,7 +423,12 @@ class TestBuildBandMasks:
             return "QP60" if 40.0 <= p < 80.0 else None
 
         masks, n_unmapped = build_band_masks(
-            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+            date_from,
+            date_to,
+            period_min,
+            t_unix,
+            ["QP60"],
+            lookup,
         )
         assert n_unmapped == 0
         assert int(masks["QP60"].sum()) == 60
@@ -391,21 +439,30 @@ class TestBuildBandMasks:
     def test_overlapping_events_collapse_to_union(self) -> None:
         """Two QP60 events that share 30 minutes → 170 mask minutes."""
         t_unix, epoch = self._trajectory()
-        date_from = np.array([
-            epoch + np.timedelta64(100 * 60, "s"),
-            epoch + np.timedelta64(170 * 60, "s"),
-        ])
-        date_to = np.array([
-            epoch + np.timedelta64(199 * 60, "s"),
-            epoch + np.timedelta64(269 * 60, "s"),
-        ])
+        date_from = np.array(
+            [
+                epoch + np.timedelta64(100 * 60, "s"),
+                epoch + np.timedelta64(170 * 60, "s"),
+            ]
+        )
+        date_to = np.array(
+            [
+                epoch + np.timedelta64(199 * 60, "s"),
+                epoch + np.timedelta64(269 * 60, "s"),
+            ]
+        )
         period_min = np.array([60.0, 60.0])
 
         def lookup(p: float) -> str | None:
             return "QP60" if 40.0 <= p < 80.0 else None
 
         masks, _ = build_band_masks(
-            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+            date_from,
+            date_to,
+            period_min,
+            t_unix,
+            ["QP60"],
+            lookup,
         )
         assert int(masks["QP60"].sum()) == 170  # 100 + 100 - 30 overlap
 
@@ -419,7 +476,12 @@ class TestBuildBandMasks:
             return "QP60" if 40.0 <= p < 80.0 else None
 
         masks, n_unmapped = build_band_masks(
-            date_from, date_to, period_min, t_unix, ["QP60"], lookup,
+            date_from,
+            date_to,
+            period_min,
+            t_unix,
+            ["QP60"],
+            lookup,
         )
         assert n_unmapped == 1
         assert int(masks["QP60"].sum()) == 0

@@ -62,6 +62,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -386,8 +387,8 @@ def load_bg_archive(path: str | os.PathLike[str]) -> BGArchive | None:
         Filesystem path to the zarr store
         (typically ``Output/bg_archive.zarr``).
     """
-    p = os.fspath(path)
-    if not os.path.exists(p):
+    p = Path(path)
+    if not p.exists():
         return None
     try:
         from typing import Any, cast

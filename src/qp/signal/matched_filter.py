@@ -89,8 +89,9 @@ def prewhiten(
     fft_freq = np.fft.rfftfreq(n, d=dt)
 
     # Interpolate the one-sided background to the FFT frequency grid
-    bg_interp = np.interp(fft_freq, freq, background, left=background[0],
-                          right=background[-1])
+    bg_interp = np.interp(
+        fft_freq, freq, background, left=background[0], right=background[-1]
+    )
     bg_interp = np.maximum(bg_interp, 1e-30)
 
     # Divide amplitude by sqrt(background) to flatten the noise floor
@@ -144,12 +145,12 @@ def matched_filter_snr(
     if template_len % 2 == 0:
         template_len += 1
 
-    template = _gaussian_windowed_sine(template_len, dt, period,
-                                        envelope_width)
+    template = _gaussian_windowed_sine(template_len, dt, period, envelope_width)
 
     # Correlate via FFT (scipy.signal.fftconvolve with reversed template)
     # matched filter output = cross-correlation with template
     from scipy.signal import fftconvolve
+
     corr = fftconvolve(data, template[::-1], mode="same")
 
     # Noise estimate: MAD-based robust σ of the data
@@ -195,8 +196,7 @@ def matched_filter_peak_snr(
     peak_snr : float
     """
     data = np.asarray(data, dtype=float)
-    snr = matched_filter_snr(data, dt, period,
-                              background=background, freq=freq)
+    snr = matched_filter_snr(data, dt, period, background=background, freq=freq)
     half = int(window_minutes * 60 / dt)
     lo = max(0, t_peak_idx - half)
     hi = min(len(snr), t_peak_idx + half + 1)

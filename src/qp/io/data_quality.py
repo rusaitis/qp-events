@@ -48,10 +48,10 @@ class QualityFlag:
 
 # DOY formats: "2007-213T05:16:11.386", "2007-213 05:16:11", "2007-213T05:16:11"
 _DOY_RE = re.compile(
-    r"(\d{4})-(\d{3})"       # year-doy
-    r"[T ]"                   # separator
+    r"(\d{4})-(\d{3})"  # year-doy
+    r"[T ]"  # separator
     r"(\d{2}):(\d{2}):(\d{2})"  # hh:mm:ss
-    r"(?:\.(\d+))?"           # optional fractional seconds
+    r"(?:\.(\d+))?"  # optional fractional seconds
 )
 
 
@@ -70,7 +70,8 @@ def _parse_doy(s: str) -> datetime.datetime | None:
 def _parse_iso(s: str) -> datetime.datetime | None:
     """Parse an ISO timestamp string, return None on failure."""
     m = re.search(
-        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?", s,
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?",
+        s,
     )
     if m is None:
         return None
@@ -104,12 +105,16 @@ def parse_timing_errors(path: Path | None = None) -> list[QualityFlag]:
         end = _parse_iso(parts[2])
         if start is None or end is None:
             continue
-        flags.append(QualityFlag(
-            start=start, end=end,
-            flag_type="timing_error", sensor="FGM",
-            severity="negligible",
-            description=f"backwards timing: {parts[3].strip()}",
-        ))
+        flags.append(
+            QualityFlag(
+                start=start,
+                end=end,
+                flag_type="timing_error",
+                sensor="FGM",
+                severity="negligible",
+                description=f"backwards timing: {parts[3].strip()}",
+            )
+        )
     return flags
 
 
@@ -141,13 +146,16 @@ def parse_range_changes(path: Path | None = None) -> list[QualityFlag]:
         range_match = re.search(r"range\s+(\d)", line, re.IGNORECASE)
         range_num = range_match.group(1) if range_match else "?"
         # Point event → flag ±60s (one 1-min bin)
-        flags.append(QualityFlag(
-            start=ts,
-            end=ts + datetime.timedelta(seconds=60),
-            flag_type="range_change", sensor=sensor,
-            severity="critical",
-            description=f"{sensor} to range {range_num}",
-        ))
+        flags.append(
+            QualityFlag(
+                start=ts,
+                end=ts + datetime.timedelta(seconds=60),
+                flag_type="range_change",
+                sensor=sensor,
+                severity="critical",
+                description=f"{sensor} to range {range_num}",
+            )
+        )
     return flags
 
 
@@ -197,51 +205,77 @@ def parse_mode_changes(path: Path | None = None) -> list[QualityFlag]:
             sensor = "ALL"
 
         # Classify severity and estimate duration
-        if any(kw in full_text for kw in ("turns off", "turns on", "sick",
-                                           "sleep", "muted", "unmuted",
-                                           "reset", "no data", "no science")):
+        if any(
+            kw in full_text
+            for kw in (
+                "turns off",
+                "turns on",
+                "sick",
+                "sleep",
+                "muted",
+                "unmuted",
+                "reset",
+                "no data",
+                "no science",
+            )
+        ):
             severity = "critical"
             # Check if there's a "to" date for an interval
             to_match = re.search(r"to\s+(\d{4}-\d{3})", block)
             if to_match:
                 end = _parse_doy(to_match.group(0).replace("to ", ""))
                 if end and end > ts:
-                    flags.append(QualityFlag(
-                        start=ts, end=end,
-                        flag_type="mode_change", sensor=sensor,
-                        severity=severity,
-                        description=_mode_desc(full_text),
-                    ))
+                    flags.append(
+                        QualityFlag(
+                            start=ts,
+                            end=end,
+                            flag_type="mode_change",
+                            sensor=sensor,
+                            severity=severity,
+                            description=_mode_desc(full_text),
+                        )
+                    )
                     continue
             # Point event → flag 10 min (conservative for instrument settling)
-            flags.append(QualityFlag(
-                start=ts,
-                end=ts + datetime.timedelta(minutes=10),
-                flag_type="mode_change", sensor=sensor,
-                severity=severity,
-                description=_mode_desc(full_text),
-            ))
+            flags.append(
+                QualityFlag(
+                    start=ts,
+                    end=ts + datetime.timedelta(minutes=10),
+                    flag_type="mode_change",
+                    sensor=sensor,
+                    severity=severity,
+                    description=_mode_desc(full_text),
+                )
+            )
         elif "scalar/vector" in full_text or "vector/vector" in full_text:
             # VHM/SHM mode switch — brief transient
-            flags.append(QualityFlag(
-                start=ts,
-                end=ts + datetime.timedelta(minutes=2),
-                flag_type="mode_change", sensor=sensor,
-                severity="high",
-                description="mode switch: " + (
-                    "scalar/vector" if "scalar/vector" in full_text
-                    else "vector/vector"
-                ),
-            ))
+            flags.append(
+                QualityFlag(
+                    start=ts,
+                    end=ts + datetime.timedelta(minutes=2),
+                    flag_type="mode_change",
+                    sensor=sensor,
+                    severity="high",
+                    description="mode switch: "
+                    + (
+                        "scalar/vector"
+                        if "scalar/vector" in full_text
+                        else "vector/vector"
+                    ),
+                )
+            )
         else:
             # Other mode change
-            flags.append(QualityFlag(
-                start=ts,
-                end=ts + datetime.timedelta(minutes=5),
-                flag_type="mode_change", sensor=sensor,
-                severity="high",
-                description=_mode_desc(full_text),
-            ))
+            flags.append(
+                QualityFlag(
+                    start=ts,
+                    end=ts + datetime.timedelta(minutes=5),
+                    flag_type="mode_change",
+                    sensor=sensor,
+                    severity="high",
+                    description=_mode_desc(full_text),
+                )
+            )
 
     return flags
 
@@ -305,34 +339,44 @@ def parse_scas_times(path: Path | None = None) -> list[QualityFlag]:
             if i + 1 < len(events) and "ceases" in events[i + 1][2]:
                 end_ts = events[i + 1][0]
                 desc = "SCAS activity" if "scas" in text_lower else "calibration"
-                flags.append(QualityFlag(
-                    start=ts, end=end_ts,
-                    flag_type="calibration", sensor=sensor,
-                    severity="high",
-                    description=desc,
-                ))
+                flags.append(
+                    QualityFlag(
+                        start=ts,
+                        end=end_ts,
+                        flag_type="calibration",
+                        sensor=sensor,
+                        severity="high",
+                        description=desc,
+                    )
+                )
                 i += 2
                 continue
             # No matching ceases — flag 1 hour
-            flags.append(QualityFlag(
-                start=ts,
-                end=ts + datetime.timedelta(hours=1),
-                flag_type="calibration", sensor=sensor,
-                severity="high",
-                description="calibration (no end time)",
-            ))
+            flags.append(
+                QualityFlag(
+                    start=ts,
+                    end=ts + datetime.timedelta(hours=1),
+                    flag_type="calibration",
+                    sensor=sensor,
+                    severity="high",
+                    description="calibration (no end time)",
+                )
+            )
         elif "ceases" in text_lower:
             # Orphaned ceases — skip
             pass
         else:
             # Other event
-            flags.append(QualityFlag(
-                start=ts,
-                end=ts + datetime.timedelta(minutes=5),
-                flag_type="calibration", sensor=sensor,
-                severity="high",
-                description="SCAS event",
-            ))
+            flags.append(
+                QualityFlag(
+                    start=ts,
+                    end=ts + datetime.timedelta(minutes=5),
+                    flag_type="calibration",
+                    sensor=sensor,
+                    severity="high",
+                    description="SCAS event",
+                )
+            )
         i += 1
 
     return flags
@@ -350,13 +394,16 @@ def parse_spurious_range_changes(path: Path | None = None) -> list[QualityFlag]:
         ts = _parse_doy(line.strip())
         if ts is None:
             continue
-        flags.append(QualityFlag(
-            start=ts,
-            end=ts + datetime.timedelta(seconds=60),
-            flag_type="spurious_range", sensor="FGM",
-            severity="low",
-            description="corrupted range vector",
-        ))
+        flags.append(
+            QualityFlag(
+                start=ts,
+                end=ts + datetime.timedelta(seconds=60),
+                flag_type="spurious_range",
+                sensor="FGM",
+                severity="low",
+                description="corrupted range vector",
+            )
+        )
     return flags
 
 
@@ -365,7 +412,12 @@ def parse_spurious_range_changes(path: Path | None = None) -> list[QualityFlag]:
 # ------------------------------------------------------------------
 
 _FLAG_CSV_FIELDS = [
-    "start_time", "end_time", "flag_type", "sensor", "severity", "description",
+    "start_time",
+    "end_time",
+    "flag_type",
+    "sensor",
+    "severity",
+    "description",
 ]
 
 
@@ -398,10 +450,7 @@ def load_all_quality_flags(
     # Filter to science window
     t_min = datetime.datetime(min_year, 1, 1)
     t_max = datetime.datetime(max_year + 1, 1, 1)
-    filtered = [
-        f for f in all_flags
-        if f.end >= t_min and f.start < t_max
-    ]
+    filtered = [f for f in all_flags if f.end >= t_min and f.start < t_max]
     filtered.sort(key=lambda f: f.start)
     return filtered
 
@@ -412,14 +461,16 @@ def flags_to_csv(flags: list[QualityFlag], path: Path) -> None:
         writer = csv.DictWriter(f, fieldnames=_FLAG_CSV_FIELDS)
         writer.writeheader()
         for flag in flags:
-            writer.writerow({
-                "start_time": flag.start.isoformat(),
-                "end_time": flag.end.isoformat(),
-                "flag_type": flag.flag_type,
-                "sensor": flag.sensor,
-                "severity": flag.severity,
-                "description": flag.description,
-            })
+            writer.writerow(
+                {
+                    "start_time": flag.start.isoformat(),
+                    "end_time": flag.end.isoformat(),
+                    "flag_type": flag.flag_type,
+                    "sensor": flag.sensor,
+                    "severity": flag.severity,
+                    "description": flag.description,
+                }
+            )
 
 
 def flags_from_csv(path: Path) -> list[QualityFlag]:
@@ -428,12 +479,14 @@ def flags_from_csv(path: Path) -> list[QualityFlag]:
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            flags.append(QualityFlag(
-                start=datetime.datetime.fromisoformat(row["start_time"]),
-                end=datetime.datetime.fromisoformat(row["end_time"]),
-                flag_type=row["flag_type"],
-                sensor=row["sensor"],
-                severity=row["severity"],
-                description=row["description"],
-            ))
+            flags.append(
+                QualityFlag(
+                    start=datetime.datetime.fromisoformat(row["start_time"]),
+                    end=datetime.datetime.fromisoformat(row["end_time"]),
+                    flag_type=row["flag_type"],
+                    sensor=row["sensor"],
+                    severity=row["severity"],
+                    description=row["description"],
+                )
+            )
     return flags

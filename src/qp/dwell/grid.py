@@ -298,7 +298,12 @@ def accumulate_with_regions_cached(
     masks = _region_masks(codes, base)
     return {
         name: _accumulate_grid(
-            cache.i_r, cache.i_lat, cache.i_lt, m, config.shape, dt_minutes,
+            cache.i_r,
+            cache.i_lat,
+            cache.i_lt,
+            m,
+            config.shape,
+            dt_minutes,
         )
         for name, m in masks.items()
     }
@@ -322,7 +327,11 @@ def accumulate_inv_lat_grid_cached(
 
     result = {
         "total": _accumulate_grid_2d(
-            cache.i_inv_lat, cache.i_lt, base, shape_2d, dt_minutes,
+            cache.i_inv_lat,
+            cache.i_lt,
+            base,
+            shape_2d,
+            dt_minutes,
         ),
     }
     if region_codes is not None:
@@ -359,7 +368,11 @@ def accumulate_weak_field_grid_cached(
 
     result = {
         "total": _accumulate_grid_2d(
-            cache.i_inv_lat, cache.i_lt, base, shape_2d, dt_minutes,
+            cache.i_inv_lat,
+            cache.i_lt,
+            base,
+            shape_2d,
+            dt_minutes,
         ),
     }
     if region_codes is not None:

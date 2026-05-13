@@ -105,7 +105,8 @@ class TracingConfig:
 def _interp_footpoint_lat(
     p_inner: np.ndarray, p_outer: np.ndarray, target_r: float = 1.0
 ) -> float:
-    """Linearly extrapolate from p_inner past the surface to find latitude at r=target_r.
+    """Linearly extrapolate from p_inner past the surface to find latitude at
+    r=target_r.
 
     The trace stops at p_inner (the last point above the surface) without taking
     the step that would have crossed it. p_outer is one step further from the
@@ -151,7 +152,9 @@ def _trace_one(
     field_func = make_kmag_field_func(field, time=t, coord="KSM")
     try:
         trace = trace_fieldline_bidirectional(
-            field_func, np.array([px, py, pz]), step=config.step,
+            field_func,
+            np.array([px, py, pz]),
+            step=config.step,
             max_radius=config.max_radius,
             min_radius=config.min_radius,
             max_steps=config.max_steps,
@@ -252,19 +255,31 @@ def compute_invariant_latitudes(
     log.info(
         "Tracing %d field lines (every %d samples from %d total, "
         "step=%.3f R_S, max_r=%.0f R_S, max_steps=%d) — %d active after region filter",
-        n_traces, config.trace_every_n, n_total,
-        config.step, config.max_radius, config.max_steps, len(active_slots),
+        n_traces,
+        config.trace_every_n,
+        n_total,
+        config.step,
+        config.max_radius,
+        config.max_steps,
+        len(active_slots),
     )
     if field_config:
         log.info(
             "  Field model: dp=%.4f nPa, By=%.2f nT, Bz=%.2f nT",
-            field_config.dp, field_config.by_imf, field_config.bz_imf,
+            field_config.dp,
+            field_config.by_imf,
+            field_config.bz_imf,
         )
 
     for count, slot in enumerate(active_slots):
         idx = indices[slot]
         inv_n, inv_s, closed, l_eq = _trace_one(
-            field, float(x[idx]), float(y[idx]), float(z[idx]), float(times[idx]), config,
+            field,
+            float(x[idx]),
+            float(y[idx]),
+            float(z[idx]),
+            float(times[idx]),
+            config,
         )
         inv_lat_north[slot] = inv_n
         inv_lat_south[slot] = inv_s
@@ -276,7 +291,10 @@ def compute_invariant_latitudes(
             n_cl = int(np.sum(is_closed))
             log.info(
                 "Progress: %d/%d (%.1f%%) — %d closed",
-                count + 1, len(active_slots), pct, n_cl,
+                count + 1,
+                len(active_slots),
+                pct,
+                n_cl,
             )
 
     n_closed = int(np.sum(is_closed))
@@ -314,7 +332,8 @@ def _trace_chunk(payload: tuple) -> dict:
     """Worker entry point. Trace a chunk of samples and return results.
 
     payload = (slots, x_chunk, y_chunk, z_chunk, t_chunk, config)
-    Returns dict with keys: slots, inv_lat_north, inv_lat_south, is_closed, l_equatorial.
+    Returns dict with keys:
+        slots, inv_lat_north, inv_lat_south, is_closed, l_equatorial.
     """
     slots, x_c, y_c, z_c, t_c, config = payload
     n = len(slots)
@@ -329,7 +348,12 @@ def _trace_chunk(payload: tuple) -> dict:
 
     for i in range(n):
         a, b, c, d = _trace_one(
-            field, float(x_c[i]), float(y_c[i]), float(z_c[i]), float(t_c[i]), config,
+            field,
+            float(x_c[i]),
+            float(y_c[i]),
+            float(z_c[i]),
+            float(t_c[i]),
+            config,
         )
         inv_n[i] = a
         inv_s[i] = b
@@ -381,8 +405,13 @@ def compute_invariant_latitudes_parallel(
     # Fallback to serial path
     if n_workers <= 1:
         return compute_invariant_latitudes(
-            x, y, z, times_unix,
-            config=config, field_config=field_config, region_codes=region_codes,
+            x,
+            y,
+            z,
+            times_unix,
+            config=config,
+            field_config=field_config,
+            region_codes=region_codes,
         )
 
     x = np.asarray(x, dtype=float)
@@ -436,13 +465,19 @@ def compute_invariant_latitudes_parallel(
     log.info(
         "Parallel tracing: %d active samples, %d workers, %d chunks "
         "(step=%.3f R_S, max_r=%.0f R_S, max_steps=%d)",
-        n_active, n_workers, n_chunks,
-        config.step, config.max_radius, config.max_steps,
+        n_active,
+        n_workers,
+        n_chunks,
+        config.step,
+        config.max_radius,
+        config.max_steps,
     )
     if field_config:
         log.info(
             "  Field model: dp=%.4f nPa, By=%.2f nT, Bz=%.2f nT",
-            field_config.dp, field_config.by_imf, field_config.bz_imf,
+            field_config.dp,
+            field_config.by_imf,
+            field_config.bz_imf,
         )
 
     # Build per-chunk payloads up front (small — just slot indices + arrays)
@@ -451,14 +486,16 @@ def compute_invariant_latitudes_parallel(
         if len(slots) == 0:
             continue
         pi = indices[slots]
-        payloads.append((
-            slots,
-            x[pi].copy(),
-            y[pi].copy(),
-            z[pi].copy(),
-            times[pi].copy(),
-            config,
-        ))
+        payloads.append(
+            (
+                slots,
+                x[pi].copy(),
+                y[pi].copy(),
+                z[pi].copy(),
+                times[pi].copy(),
+                config,
+            )
+        )
 
     ctx = mp.get_context("spawn")
     pool = ctx.Pool(n_workers, initializer=_worker_init, initargs=(field_config,))
@@ -472,12 +509,17 @@ def compute_invariant_latitudes_parallel(
             l_equatorial[slots] = result["l_equatorial"]
             n_done += len(slots)
             # Log roughly every config.log_interval samples
-            if (n_done // config.log_interval) > ((n_done - len(slots)) // config.log_interval):
+            if (n_done // config.log_interval) > (
+                (n_done - len(slots)) // config.log_interval
+            ):
                 pct = n_done / n_active * 100
                 n_cl = int(np.sum(is_closed))
                 log.info(
                     "Progress: %d/%d (%.1f%%) — %d closed",
-                    n_done, n_active, pct, n_cl,
+                    n_done,
+                    n_active,
+                    pct,
+                    n_cl,
                 )
     except KeyboardInterrupt:
         log.warning("KeyboardInterrupt — terminating worker pool")

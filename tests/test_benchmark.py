@@ -23,8 +23,10 @@ class TestGeneratorBasics:
     def test_output_shapes(self):
         scenario = ScenarioConfig(
             dataset_id="test_shapes",
-            duration_days=1.0, dt=60.0,
-            noise_alpha=0.0, noise_sigma=0.01,
+            duration_days=1.0,
+            dt=60.0,
+            noise_alpha=0.0,
+            noise_sigma=0.01,
             background_trend=False,
             event_specs=[
                 EventSpec(band="QP60", amplitude=1.0, center_hours=12.0),
@@ -50,13 +52,20 @@ class TestGeneratorBasics:
     def test_manifest_metadata(self):
         scenario = ScenarioConfig(
             dataset_id="test_meta",
-            duration_days=2.0, dt=60.0,
-            noise_alpha=1.0, noise_sigma=0.05,
+            duration_days=2.0,
+            dt=60.0,
+            noise_alpha=1.0,
+            noise_sigma=0.05,
             background_trend=False,
             event_specs=[
                 EventSpec(band="QP60", amplitude=1.0, center_hours=12.0),
-                EventSpec(band="QP30", amplitude=0.5, center_hours=36.0,
-                          should_detect=False, event_type="decoy_test"),
+                EventSpec(
+                    band="QP30",
+                    amplitude=0.5,
+                    center_hours=36.0,
+                    should_detect=False,
+                    event_type="decoy_test",
+                ),
             ],
         )
         _, _, manifest = generate_benchmark_dataset(scenario, seed=42)
@@ -72,26 +81,48 @@ class TestManifestIO:
 
     def _make_event(self) -> InjectedEvent:
         return InjectedEvent(
-            event_id="test-000", dataset_id="test",
-            event_type="qp_wave", should_detect=True,
-            band="QP60", period_sec=3600.0, amplitude_nT=1.0,
-            start_sec=0.0, end_sec=14400.0, center_sec=7200.0,
-            duration_sec=14400.0, n_oscillations=4.0,
-            polarization="circular", ellipticity=1.0,
-            wave_mode="alfvenic", propagation="standing",
-            chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
-            envelope_asymmetry=0.5, amplitude_jitter=0.0,
-            harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
-            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
+            event_id="test-000",
+            dataset_id="test",
+            event_type="qp_wave",
+            should_detect=True,
+            band="QP60",
+            period_sec=3600.0,
+            amplitude_nT=1.0,
+            start_sec=0.0,
+            end_sec=14400.0,
+            center_sec=7200.0,
+            duration_sec=14400.0,
+            n_oscillations=4.0,
+            polarization="circular",
+            ellipticity=1.0,
+            wave_mode="alfvenic",
+            propagation="standing",
+            chirp_rate=0.0,
+            waveform="sine",
+            sawtooth_width=0.8,
+            envelope_asymmetry=0.5,
+            amplitude_jitter=0.0,
+            harmonic_content=0.0,
+            snr_injected=20.0,
+            snr_in_band=20.0,
+            start_2sigma_sec=0.0,
+            end_2sigma_sec=14400.0,
+            difficulty="easy",
         )
 
     def test_json_roundtrip(self, tmp_path):
         event = self._make_event()
         manifest = DatasetManifest(
-            dataset_id="test", description="test dataset",
-            duration_days=1.0, dt=60.0, n_samples=1440,
-            seed=42, noise_alpha=1.0, noise_sigma=0.05,
-            difficulty_tier="tier1", events=[event],
+            dataset_id="test",
+            description="test dataset",
+            duration_days=1.0,
+            dt=60.0,
+            n_samples=1440,
+            seed=42,
+            noise_alpha=1.0,
+            noise_sigma=0.05,
+            difficulty_tier="tier1",
+            events=[event],
         )
         path = tmp_path / "manifest.json"
         manifest_to_json(manifest, path)
@@ -121,24 +152,47 @@ class TestScoringBasics:
 
         events = [
             InjectedEvent(
-                event_id=f"e{i}", dataset_id="test",
-                event_type="qp_wave", should_detect=True,
-                band="QP60", period_sec=3600.0, amplitude_nT=1.0,
-                start_sec=i * 50000, end_sec=i * 50000 + 20000,
-                center_sec=i * 50000 + 10000, duration_sec=20000,
-                n_oscillations=5.5, polarization="circular",
-                ellipticity=1.0, wave_mode="alfvenic", propagation="standing",
-                chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
-                envelope_asymmetry=0.5, amplitude_jitter=0.0,
-                harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
-            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
+                event_id=f"e{i}",
+                dataset_id="test",
+                event_type="qp_wave",
+                should_detect=True,
+                band="QP60",
+                period_sec=3600.0,
+                amplitude_nT=1.0,
+                start_sec=i * 50000,
+                end_sec=i * 50000 + 20000,
+                center_sec=i * 50000 + 10000,
+                duration_sec=20000,
+                n_oscillations=5.5,
+                polarization="circular",
+                ellipticity=1.0,
+                wave_mode="alfvenic",
+                propagation="standing",
+                chirp_rate=0.0,
+                waveform="sine",
+                sawtooth_width=0.8,
+                envelope_asymmetry=0.5,
+                amplitude_jitter=0.0,
+                harmonic_content=0.0,
+                snr_injected=20.0,
+                snr_in_band=20.0,
+                start_2sigma_sec=0.0,
+                end_2sigma_sec=14400.0,
+                difficulty="easy",
             )
             for i in range(3)
         ]
         manifest = DatasetManifest(
-            dataset_id="test_perfect", description="", duration_days=5,
-            dt=60.0, n_samples=7200, seed=1, noise_alpha=0, noise_sigma=0,
-            difficulty_tier="tier1", events=events,
+            dataset_id="test_perfect",
+            description="",
+            duration_days=5,
+            dt=60.0,
+            n_samples=7200,
+            seed=1,
+            noise_alpha=0,
+            noise_sigma=0,
+            difficulty_tier="tier1",
+            events=events,
         )
 
         epoch = datetime(2000, 1, 1)
@@ -148,7 +202,8 @@ class TestScoringBasics:
                 prominence=1.0,
                 date_from=epoch + timedelta(seconds=e.start_sec),
                 date_to=epoch + timedelta(seconds=e.end_sec),
-                band="QP60", period_sec=3600.0,
+                band="QP60",
+                period_sec=3600.0,
             )
             for e in events
         ]
@@ -162,23 +217,46 @@ class TestScoringBasics:
         """No detections → recall=0, precision=1 (vacuous)."""
         events = [
             InjectedEvent(
-                event_id="e0", dataset_id="test",
-                event_type="qp_wave", should_detect=True,
-                band="QP60", period_sec=3600.0, amplitude_nT=1.0,
-                start_sec=0, end_sec=10000, center_sec=5000,
-                duration_sec=10000, n_oscillations=2.8,
-                polarization="circular", ellipticity=1.0,
-                wave_mode="alfvenic", propagation="standing",
-                chirp_rate=0.0, waveform="sine", sawtooth_width=0.8,
-                envelope_asymmetry=0.5, amplitude_jitter=0.0,
-                harmonic_content=0.0, snr_injected=20.0, snr_in_band=20.0,
-            start_2sigma_sec=0.0, end_2sigma_sec=14400.0, difficulty="easy",
+                event_id="e0",
+                dataset_id="test",
+                event_type="qp_wave",
+                should_detect=True,
+                band="QP60",
+                period_sec=3600.0,
+                amplitude_nT=1.0,
+                start_sec=0,
+                end_sec=10000,
+                center_sec=5000,
+                duration_sec=10000,
+                n_oscillations=2.8,
+                polarization="circular",
+                ellipticity=1.0,
+                wave_mode="alfvenic",
+                propagation="standing",
+                chirp_rate=0.0,
+                waveform="sine",
+                sawtooth_width=0.8,
+                envelope_asymmetry=0.5,
+                amplitude_jitter=0.0,
+                harmonic_content=0.0,
+                snr_injected=20.0,
+                snr_in_band=20.0,
+                start_2sigma_sec=0.0,
+                end_2sigma_sec=14400.0,
+                difficulty="easy",
             )
         ]
         manifest = DatasetManifest(
-            dataset_id="test_empty", description="", duration_days=1,
-            dt=60.0, n_samples=1440, seed=1, noise_alpha=0, noise_sigma=0,
-            difficulty_tier="tier1", events=events,
+            dataset_id="test_empty",
+            description="",
+            duration_days=1,
+            dt=60.0,
+            n_samples=1440,
+            seed=1,
+            noise_alpha=0,
+            noise_sigma=0,
+            difficulty_tier="tier1",
+            events=events,
         )
         score = score_dataset(manifest, [])
         assert score.recall == 0.0
@@ -190,11 +268,22 @@ class TestScoringBasics:
 
         scores = [
             BenchmarkScore(
-                dataset_id="a", n_ground_truth=10, n_detectable=10,
-                n_detected=8, n_true_positives=7, n_false_positives=1,
-                n_false_negatives=3, precision=7 / 8, recall=7 / 10, f1=0.0,
-                band_accuracy=1.0, mean_period_error_pct=5.0, mean_iou=0.5,
-                recall_by_difficulty={}, n_decoy_events=0, n_decoy_detected=0,
+                dataset_id="a",
+                n_ground_truth=10,
+                n_detectable=10,
+                n_detected=8,
+                n_true_positives=7,
+                n_false_positives=1,
+                n_false_negatives=3,
+                precision=7 / 8,
+                recall=7 / 10,
+                f1=0.0,
+                band_accuracy=1.0,
+                mean_period_error_pct=5.0,
+                mean_iou=0.5,
+                recall_by_difficulty={},
+                n_decoy_events=0,
+                n_decoy_detected=0,
                 decoy_rejection_rate=1.0,
                 mean_detection_latency_sec=0.0,
                 median_period_error_pct=5.0,

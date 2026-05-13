@@ -65,7 +65,9 @@ class TestSegmentCentralWindow:
         """pad = (span - hop)/2 across alternative archive layouts."""
         t0 = datetime.datetime(2007, 1, 1)
         start, end = segment_central_window(
-            _times(t0, span_hours), span_hours, hop_hours,
+            _times(t0, span_hours),
+            span_hours,
+            hop_hours,
         )
         assert start == t0 + datetime.timedelta(hours=expected_pad)
         assert end - start == datetime.timedelta(hours=hop_hours)

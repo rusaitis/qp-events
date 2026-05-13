@@ -60,9 +60,12 @@ def compute_dwell_time_map(
 
     # Vectorized accumulation via np.add.at
     valid = (
-        (lat_idx >= 0) & (lat_idx < n_lat_bins)
-        & (lt_idx >= 0) & (lt_idx < n_lt_bins)
-        & (mlat_idx >= 0) & (mlat_idx < n_mlat_bins)
+        (lat_idx >= 0)
+        & (lat_idx < n_lat_bins)
+        & (lt_idx >= 0)
+        & (lt_idx < n_lt_bins)
+        & (mlat_idx >= 0)
+        & (mlat_idx < n_mlat_bins)
     )
     np.add.at(
         dwell_map,

@@ -62,12 +62,8 @@ def test_uncorrelated_noise_has_low_polarization():
     """Independent CN(0,1) samples in both components: d ~ 1/sqrt(N)."""
     rng = np.random.default_rng(42)
     n = 20000
-    z1 = (
-        rng.standard_normal(n) + 1j * rng.standard_normal(n)
-    ) / np.sqrt(2)
-    z2 = (
-        rng.standard_normal(n) + 1j * rng.standard_normal(n)
-    ) / np.sqrt(2)
+    z1 = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
+    z2 = (rng.standard_normal(n) + 1j * rng.standard_normal(n)) / np.sqrt(2)
     d = degree_of_polarization(z1, z2)
     assert d < 0.05, f"expected d << 1 for independent noise, got {d}"
 
@@ -165,11 +161,13 @@ def test_min_eig_linear_polarization_is_low():
     n = 1000
     rng = np.random.default_rng(0)
     t = np.linspace(0, 50 * np.pi, n)
-    field = np.column_stack([
-        0.01 * rng.standard_normal(n),
-        np.cos(t),  # only b_perp1 has the wave
-        0.01 * rng.standard_normal(n),
-    ])
+    field = np.column_stack(
+        [
+            0.01 * rng.standard_normal(n),
+            np.cos(t),  # only b_perp1 has the wave
+            0.01 * rng.standard_normal(n),
+        ]
+    )
     frac = mva_minimum_eigenvalue_fraction(field)
     assert frac < 0.01, f"linear pol should give ~0, got {frac}"
 
@@ -195,11 +193,13 @@ def test_min_eig_independent_3axis_perturbation_is_high():
     """
     rng = np.random.default_rng(42)
     n = 5000
-    field = np.column_stack([
-        rng.standard_normal(n),         # var ~ 1
-        0.7 * rng.standard_normal(n),   # var ~ 0.49
-        0.5 * rng.standard_normal(n),   # var ~ 0.25
-    ])
+    field = np.column_stack(
+        [
+            rng.standard_normal(n),  # var ~ 1
+            0.7 * rng.standard_normal(n),  # var ~ 0.49
+            0.5 * rng.standard_normal(n),  # var ~ 0.25
+        ]
+    )
     frac = mva_minimum_eigenvalue_fraction(field)
     assert 0.15 < frac < 0.4, f"anisotropic rank-3 should give ~0.25, got {frac}"
 
@@ -243,11 +243,13 @@ def test_major_axis_purely_compressional():
     n = 1000
     t = np.linspace(0, 50 * np.pi, n)
     rng = np.random.default_rng(0)
-    field = np.column_stack([
-        np.cos(t),
-        0.001 * rng.standard_normal(n),  # near-zero noise on b_perp1
-        0.001 * rng.standard_normal(n),
-    ])
+    field = np.column_stack(
+        [
+            np.cos(t),
+            0.001 * rng.standard_normal(n),  # near-zero noise on b_perp1
+            0.001 * rng.standard_normal(n),
+        ]
+    )
     frac = mva_major_axis_parallel_fraction(field)
     assert frac > 0.99, f"compressional wave should give ~1, got {frac}"
 
@@ -257,11 +259,13 @@ def test_major_axis_compressional_with_leakage():
     n = 1000
     t = np.linspace(0, 50 * np.pi, n)
     par_leakage = 0.05
-    field = np.column_stack([
-        np.cos(t),
-        par_leakage * np.cos(t),
-        par_leakage * np.sin(t),
-    ])
+    field = np.column_stack(
+        [
+            np.cos(t),
+            par_leakage * np.cos(t),
+            par_leakage * np.sin(t),
+        ]
+    )
     frac = mva_major_axis_parallel_fraction(field)
     # var(par)/(var(par)+var(perp1)) ~ 1/(1+0.05^2) ~ 0.9975 along (par,perp1) axis
     assert frac > 0.9, f"compressional with leakage should give >0.9, got {frac}"
@@ -280,13 +284,17 @@ def test_major_axis_choice_of_par_axis():
     n = 1000
     t = np.linspace(0, 50 * np.pi, n)
     # Put compressional signal on column 2
-    field = np.column_stack([
-        0.05 * np.cos(t),
-        0.05 * np.sin(t),
-        np.cos(t),
-    ])
+    field = np.column_stack(
+        [
+            0.05 * np.cos(t),
+            0.05 * np.sin(t),
+            np.cos(t),
+        ]
+    )
     frac = mva_major_axis_parallel_fraction(field, par_axis=2)
-    assert frac > 0.9, f"compressional on column 2 with par_axis=2 should give >0.9, got {frac}"
+    assert frac > 0.9, (
+        f"compressional on column 2 with par_axis=2 should give >0.9, got {frac}"
+    )
 
 
 def test_major_axis_short_input_returns_zero():

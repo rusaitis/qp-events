@@ -16,6 +16,7 @@ from scipy.signal import butter, hilbert, sosfiltfilt
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def bandpass(
     data: np.ndarray,
     low_hz: float,
@@ -57,6 +58,7 @@ _bandpass = bandpass
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def band_envelope(
     data: ArrayLike,
@@ -161,7 +163,7 @@ def envelope_rise_fall(
     hi_thresh = env_min + 0.90 * span
 
     # Rise: find 10 % → 90 % on the leading edge [0 .. peak_idx]
-    lead = env[:peak_idx + 1]
+    lead = env[: peak_idx + 1]
     crossings_lo = np.where(lead >= lo_thresh)[0]
     crossings_hi = np.where(lead >= hi_thresh)[0]
     if len(crossings_lo) == 0 or len(crossings_hi) == 0:
@@ -271,8 +273,8 @@ def amplitude_growth_rate(
     if n_cycles < 2:
         return 0.0
 
-    chunks = env[:n_cycles * spc].reshape(n_cycles, spc)
-    rms_all = np.sqrt(np.mean(chunks ** 2, axis=1))
+    chunks = env[: n_cycles * spc].reshape(n_cycles, spc)
+    rms_all = np.sqrt(np.mean(chunks**2, axis=1))
     rms_vals = rms_all[rms_all > 0]
 
     if len(rms_vals) < 2:
@@ -314,8 +316,8 @@ def inter_cycle_coherence(
     if n_cycles < 2:
         return 1.0
 
-    chunks = x[:n_cycles * spc].reshape(n_cycles, spc)
-    rms = np.sqrt(np.mean(chunks ** 2, axis=1, keepdims=True))
+    chunks = x[: n_cycles * spc].reshape(n_cycles, spc)
+    rms = np.sqrt(np.mean(chunks**2, axis=1, keepdims=True))
     valid = (rms > 0).ravel()
     if valid.sum() < 2:
         return 1.0

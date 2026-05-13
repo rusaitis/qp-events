@@ -129,7 +129,8 @@ def generate_canonical_datasets(
     events_to_csv(all_events, output_dir / "all_events.csv")
     log.info(
         "Generated %d canonical datasets in %s",
-        len(scenario_ids), output_dir,
+        len(scenario_ids),
+        output_dir,
     )
 
 
@@ -220,7 +221,8 @@ def run_benchmark(
         if use_canonical:
             log.info("Loading %s from disk...", scenario_id)
             t, fields, manifest = _load_canonical_dataset(
-                scenario_id, data_dir,
+                scenario_id,
+                data_dir,
             )
             dt = manifest.dt
         else:
@@ -239,7 +241,9 @@ def run_benchmark(
         detections = _detect_events_in_dataset(t, fields, dt)
         log.info(
             "  %d detections vs %d ground truth (%d detectable)",
-            len(detections), manifest.n_events, manifest.n_detectable,
+            len(detections),
+            manifest.n_events,
+            manifest.n_detectable,
         )
 
         # Score
@@ -248,7 +252,9 @@ def run_benchmark(
 
         log.info(
             "  precision=%.2f recall=%.2f f1=%.2f",
-            ds_score.precision, ds_score.recall, ds_score.f1,
+            ds_score.precision,
+            ds_score.recall,
+            ds_score.f1,
         )
 
     suite = score_suite(all_scores)
@@ -263,9 +269,7 @@ def run_benchmark(
             "summary_score": suite.summary_score,
             "per_tier_recall": suite.per_tier_recall,
         }
-        (output_dir / "suite_score.json").write_text(
-            json.dumps(summary, indent=2)
-        )
+        (output_dir / "suite_score.json").write_text(json.dumps(summary, indent=2))
 
     return suite
 
@@ -274,7 +278,5 @@ def run_tier(tier: str, **kwargs) -> SuiteScore:
     """Run all scenarios in a single tier."""
     ids = TIER_SCENARIOS.get(tier, [])
     if not ids:
-        raise ValueError(
-            f"Unknown tier: {tier!r}. Known: {sorted(TIER_SCENARIOS)}"
-        )
+        raise ValueError(f"Unknown tier: {tier!r}. Known: {sorted(TIER_SCENARIOS)}")
     return run_benchmark(scenario_ids=ids, **kwargs)

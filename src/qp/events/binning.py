@@ -118,11 +118,17 @@ def build_band_masks(
 
     period_arr = np.asarray(period_min, dtype=float)
     t_from_all = (
-        np.asarray(date_from, dtype="datetime64[s]") - epoch
-    ).astype("timedelta64[s]").astype(np.int64).astype(float)
+        (np.asarray(date_from, dtype="datetime64[s]") - epoch)
+        .astype("timedelta64[s]")
+        .astype(np.int64)
+        .astype(float)
+    )
     t_to_all = (
-        np.asarray(date_to, dtype="datetime64[s]") - epoch
-    ).astype("timedelta64[s]").astype(np.int64).astype(float)
+        (np.asarray(date_to, dtype="datetime64[s]") - epoch)
+        .astype("timedelta64[s]")
+        .astype(np.int64)
+        .astype(float)
+    )
     band_for_row = np.array(
         [band_lookup(p) for p in period_arr],
         dtype=object,
@@ -289,7 +295,10 @@ def bin_events_walking(
             lat_arr = np.array([float(ev.mag_lat)])
             lt_arr = np.array([float(ev.local_time)])
             i_r_arr, i_lat_arr, i_lt_arr, in_range = _compute_bins(
-                r_arr, lat_arr, lt_arr, config,
+                r_arr,
+                lat_arr,
+                lt_arr,
+                config,
             )
             if not in_range[0]:
                 stats.n_out_of_range += 1
@@ -542,10 +551,18 @@ def accumulate_full_mirror(
 
         def _accumulate(prefix: str, sample_mask: np.ndarray) -> None:
             r3d = accumulate_with_regions_cached(
-                cache, codes, 1.0, mask=sample_mask, config=config,
+                cache,
+                codes,
+                1.0,
+                mask=sample_mask,
+                config=config,
             )
             r2d = accumulate_inv_lat_grid_cached(
-                cache, codes, 1.0, mask=sample_mask, config=config,
+                cache,
+                codes,
+                1.0,
+                mask=sample_mask,
+                config=config,
             )
             for r in region_names:
                 grids[f"{prefix}_{r}"] += r3d[r]

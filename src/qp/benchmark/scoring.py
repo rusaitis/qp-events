@@ -71,8 +71,10 @@ class SuiteScore:
 
 
 def _time_iou(
-    gt_start: float, gt_end: float,
-    det_start: float, det_end: float,
+    gt_start: float,
+    gt_end: float,
+    det_start: float,
+    det_end: float,
 ) -> float:
     """Intersection over union of two time intervals."""
     inter_start = max(gt_start, det_start)
@@ -149,27 +151,24 @@ def score_dataset(
                 det_ev = detections[di]
                 det_period = det_ev.period_sec or 0.0
                 period_err = (
-                    abs(det_period - gt_ev.period_sec)
-                    / gt_ev.period_sec * 100
+                    abs(det_period - gt_ev.period_sec) / gt_ev.period_sec * 100
                     if gt_ev.period_sec > 0
                     else 0.0
                 )
-                band_ok = (
-                    det_ev.band == gt_ev.band if gt_ev.band else True
-                )
+                band_ok = det_ev.band == gt_ev.band if gt_ev.band else True
                 # Detection latency: peak_time − gt center
-                det_peak_sec = (
-                    det_ev.peak_time.timestamp() - t0_sec
-                )
+                det_peak_sec = det_ev.peak_time.timestamp() - t0_sec
                 latency = det_peak_sec - gt_ev.center_sec
-                matches.append(MatchResult(
-                    gt_event_id=gt_ev.event_id,
-                    detected_idx=di,
-                    iou=iou_val,
-                    period_error_pct=period_err,
-                    band_correct=band_ok,
-                    detection_latency_sec=latency,
-                ))
+                matches.append(
+                    MatchResult(
+                        gt_event_id=gt_ev.event_id,
+                        detected_idx=di,
+                        iou=iou_val,
+                        period_error_pct=period_err,
+                        band_correct=band_ok,
+                        detection_latency_sec=latency,
+                    )
+                )
                 matched_det.add(di)
                 matched_gt.add(gi)
 
@@ -198,24 +197,16 @@ def score_dataset(
     denom = precision + recall
     f1 = 2 * precision * recall / denom if denom > 0 else 0.0
 
-    band_acc = (
-        sum(1 for m in matches if m.band_correct) / tp
-        if tp > 0 else 1.0
-    )
+    band_acc = sum(1 for m in matches if m.band_correct) / tp if tp > 0 else 1.0
     mean_period_err = (
-        float(np.mean([m.period_error_pct for m in matches]))
-        if matches else 0.0
+        float(np.mean([m.period_error_pct for m in matches])) if matches else 0.0
     )
     median_period_err = (
-        float(np.median([m.period_error_pct for m in matches]))
-        if matches else 0.0
+        float(np.median([m.period_error_pct for m in matches])) if matches else 0.0
     )
-    mean_iou = (
-        float(np.mean([m.iou for m in matches])) if matches else 0.0
-    )
+    mean_iou = float(np.mean([m.iou for m in matches])) if matches else 0.0
     mean_latency = (
-        float(np.mean([m.detection_latency_sec for m in matches]))
-        if matches else 0.0
+        float(np.mean([m.detection_latency_sec for m in matches])) if matches else 0.0
     )
 
     # Per-difficulty recall
@@ -225,8 +216,7 @@ def score_dataset(
         if not gt_diff:
             continue
         matched_diff = sum(
-            1 for gi in matched_gt
-            if gt_detectable[gi].difficulty == diff
+            1 for gi in matched_gt if gt_detectable[gi].difficulty == diff
         )
         recall_by_diff[diff] = matched_diff / len(gt_diff)
 
@@ -235,21 +225,19 @@ def score_dataset(
     decoy_detected = 0
     if n_decoy > 0 and n_det > 0:
         if not (n_gt > 0):
-            det_ranges = [
-                _det_time_range(det, t0_sec) for det in detections
-            ]
+            det_ranges = [_det_time_range(det, t0_sec) for det in detections]
         for decoy in gt_decoys:
             for det_start, det_end in det_ranges:
                 iou_d = _time_iou(
-                    decoy.start_sec, decoy.end_sec,
-                    det_start, det_end,
+                    decoy.start_sec,
+                    decoy.end_sec,
+                    det_start,
+                    det_end,
                 )
                 if iou_d > 0.1:
                     decoy_detected += 1
                     break
-    decoy_rejection = (
-        1.0 - decoy_detected / n_decoy if n_decoy > 0 else 1.0
-    )
+    decoy_rejection = 1.0 - decoy_detected / n_decoy if n_decoy > 0 else 1.0
 
     return BenchmarkScore(
         dataset_id=manifest.dataset_id,
@@ -290,9 +278,7 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
     # Per-tier recall
     per_tier: dict[str, float] = {}
     for tier in ("tier1", "tier2", "tier3", "tier4", "decoy"):
-        tier_scores = [
-            s for s in scores if s.dataset_id.startswith(tier)
-        ]
+        tier_scores = [s for s in scores if s.dataset_id.startswith(tier)]
         if not tier_scores:
             continue
         tier_tp = sum(s.n_true_positives for s in tier_scores)
@@ -302,8 +288,7 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
     # Band accuracy
     total_matched = sum(len(s.matches) for s in scores)
     band_acc = (
-        sum(sum(1 for m in s.matches if m.band_correct) for s in scores)
-        / total_matched
+        sum(sum(1 for m in s.matches if m.band_correct) for s in scores) / total_matched
         if total_matched > 0
         else 1.0
     )
@@ -315,11 +300,7 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
 
     # Summary: harmonic mean of F1, band_accuracy, decoy_rejection
     components = [x for x in (f1, band_acc, decoy_rej) if x > 0]
-    summary = (
-        len(components) / sum(1.0 / c for c in components)
-        if components
-        else 0.0
-    )
+    summary = len(components) / sum(1.0 / c for c in components) if components else 0.0
 
     # Aggregate multi-threshold F1 across datasets
     all_thresholds: set[float] = set()
@@ -330,9 +311,7 @@ def score_suite(scores: list[BenchmarkScore]) -> SuiteScore:
         # Macro-average of per-dataset F1 (exact micro-average would
         # need raw TP/FP/FN counts per threshold, not stored)
         vals = [s.f1_at_iou.get(thr, 0.0) for s in scores if s.f1_at_iou]
-        overall_f1_at_iou[thr] = (
-            float(np.mean(vals)) if vals else 0.0
-        )
+        overall_f1_at_iou[thr] = float(np.mean(vals)) if vals else 0.0
 
     return SuiteScore(
         overall_precision=precision,
@@ -360,18 +339,20 @@ def composite_detection_score(suite: SuiteScore) -> float:
     # Clamp period error to [0, 100] then convert to accuracy
     total_matched = sum(len(s.matches) for s in suite.dataset_scores)
     if total_matched > 0:
-        mean_period_err = float(np.mean([
-            m.period_error_pct
-            for s in suite.dataset_scores
-            for m in s.matches
-        ]))
+        mean_period_err = float(
+            np.mean(
+                [m.period_error_pct for s in suite.dataset_scores for m in s.matches]
+            )
+        )
     else:
         mean_period_err = 100.0
     period_acc = max(0.0, 1.0 - mean_period_err / 100.0)
 
-    mean_iou = float(np.mean([
-        s.mean_iou for s in suite.dataset_scores if s.mean_iou > 0
-    ])) if any(s.mean_iou > 0 for s in suite.dataset_scores) else 0.0
+    mean_iou = (
+        float(np.mean([s.mean_iou for s in suite.dataset_scores if s.mean_iou > 0]))
+        if any(s.mean_iou > 0 for s in suite.dataset_scores)
+        else 0.0
+    )
 
     components = [
         (0.35, suite.overall_f1),

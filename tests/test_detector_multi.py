@@ -30,9 +30,16 @@ def time_axis():
     return n, dt, times
 
 
-def _inject(period_min: float, amplitude: float, n: int, dt: float,
-             decay_hours: float = 4.0, center_hours: float = 18.0,
-             noise_sigma: float = 0.0, seed: int = 1):
+def _inject(
+    period_min: float,
+    amplitude: float,
+    n: int,
+    dt: float,
+    decay_hours: float = 4.0,
+    center_hours: float = 18.0,
+    noise_sigma: float = 0.0,
+    seed: int = 1,
+):
     wave = WaveTemplate(
         period=period_min * 60.0,
         amplitude=amplitude,
@@ -40,8 +47,11 @@ def _inject(period_min: float, amplitude: float, n: int, dt: float,
         shift=center_hours * 3600.0,
     )
     _, signal = simulate_signal(
-        n_samples=n, dt=dt, waves=[wave],
-        noise_sigma=noise_sigma, seed=seed,
+        n_samples=n,
+        dt=dt,
+        waves=[wave],
+        noise_sigma=noise_sigma,
+        seed=seed,
     )
     return signal
 
@@ -53,12 +63,13 @@ class TestBandLanding:
         "band_name,period_min",
         [("QP30", 30), ("QP60", 60), ("QP120", 120)],
     )
-    def test_packet_lands_in_correct_band(self, time_axis, band_name,
-                                          period_min):
+    def test_packet_lands_in_correct_band(self, time_axis, band_name, period_min):
         n, dt, times = time_axis
         signal = _inject(period_min=period_min, amplitude=2.0, n=n, dt=dt)
         packets = detect_wave_packets_multi(
-            signal, times, dt=dt,
+            signal,
+            times,
+            dt=dt,
             min_duration_hours=1.5,
             min_pixels=30,
         )
@@ -66,7 +77,7 @@ class TestBandLanding:
         in_band = [p for p in packets if p.band == band_name]
         assert len(in_band) >= 1, (
             f"no {band_name} packet found, all bands: "
-            f"{[(p.band, p.period_sec/60) for p in packets]}"
+            f"{[(p.band, p.period_sec / 60) for p in packets]}"
         )
 
 
@@ -82,7 +93,9 @@ class TestNoCrossBandLeakage:
         n, dt, times = time_axis
         signal = _inject(period_min=period_min, amplitude=2.0, n=n, dt=dt)
         packets = detect_wave_packets_multi(
-            signal, times, dt=dt,
+            signal,
+            times,
+            dt=dt,
             min_duration_hours=2.0,
             min_pixels=80,
         )
@@ -116,11 +129,16 @@ class TestDurationRecovery:
         n, dt, times = time_axis
         decay_hours = 3.0
         signal = _inject(
-            period_min=period_min, amplitude=2.0, n=n, dt=dt,
+            period_min=period_min,
+            amplitude=2.0,
+            n=n,
+            dt=dt,
             decay_hours=decay_hours,
         )
         packets = detect_wave_packets_multi(
-            signal, times, dt=dt,
+            signal,
+            times,
+            dt=dt,
             min_duration_hours=1.5,
             min_pixels=30,
         )
@@ -149,12 +167,13 @@ class TestAmplitudeProportionality:
         for amp in (0.5, 1.0, 2.0, 4.0):
             sig = _inject(period_min=60, amplitude=amp, n=n, dt=dt)
             packets = detect_wave_packets_multi(
-                sig, times, dt=dt,
+                sig,
+                times,
+                dt=dt,
                 min_duration_hours=1.5,
                 min_pixels=30,
             )
-            best = max((p.prominence for p in packets if p.band == "QP60"),
-                       default=0.0)
+            best = max((p.prominence for p in packets if p.band == "QP60"), default=0.0)
             proms.append(best)
         assert all(a <= b + 1e-9 for a, b in zip(proms, proms[1:])), (
             f"prominences not monotonic: {proms}"
@@ -166,7 +185,11 @@ class TestPacketShape:
         n, dt, times = time_axis
         signal = _inject(period_min=60, amplitude=2.0, n=n, dt=dt)
         packets = detect_wave_packets_multi(
-            signal, times, dt=dt, min_duration_hours=1.5, min_pixels=20,
+            signal,
+            times,
+            dt=dt,
+            min_duration_hours=1.5,
+            min_pixels=20,
         )
         for p in packets:
             assert p.band in QP_BANDS
@@ -178,6 +201,10 @@ class TestPacketShape:
         n, dt, times = time_axis
         signal = np.zeros(n)
         packets = detect_wave_packets_multi(
-            signal, times, dt=dt, min_duration_hours=1.5, min_pixels=20,
+            signal,
+            times,
+            dt=dt,
+            min_duration_hours=1.5,
+            min_pixels=20,
         )
         assert packets == []

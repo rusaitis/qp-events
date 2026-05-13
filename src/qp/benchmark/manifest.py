@@ -114,11 +114,23 @@ def events_from_csv(path: Path) -> list[InjectedEvent]:
             # Convert types from strings
             row["should_detect"] = row["should_detect"].lower() in ("true", "1")
             for key in (
-                "period_sec", "amplitude_nT", "start_sec", "end_sec",
-                "center_sec", "duration_sec", "n_oscillations", "ellipticity",
-                "chirp_rate", "sawtooth_width", "envelope_asymmetry",
-                "amplitude_jitter", "harmonic_content", "snr_injected",
-                "snr_in_band", "start_2sigma_sec", "end_2sigma_sec",
+                "period_sec",
+                "amplitude_nT",
+                "start_sec",
+                "end_sec",
+                "center_sec",
+                "duration_sec",
+                "n_oscillations",
+                "ellipticity",
+                "chirp_rate",
+                "sawtooth_width",
+                "envelope_asymmetry",
+                "amplitude_jitter",
+                "harmonic_content",
+                "snr_injected",
+                "snr_in_band",
+                "start_2sigma_sec",
+                "end_2sigma_sec",
             ):
                 row[key] = float(row[key])
             events.append(InjectedEvent(**row))

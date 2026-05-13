@@ -59,7 +59,8 @@ def _parabolic_interp_period(
     .. math::
 
         p = \frac{y_{k-1} - y_{k+1}}
-                {2 \, (y_{k-1} - 2 y_k + y_{k+1})}, \quad p \in [-\tfrac{1}{2}, \tfrac{1}{2}]
+                {2 \, (y_{k-1} - 2 y_k + y_{k+1})},
+            \quad p \in [-\tfrac{1}{2}, \tfrac{1}{2}]
 
     For a log-spaced period grid, the vertex period is
     :math:`\exp(\log P_k + p (\log P_{k+1} - \log P_k))`.

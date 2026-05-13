@@ -79,5 +79,3 @@ def compute_power_ratios(
         "r_perp2": r_perp2,
         "r_total": r_total,
     }
-
-

@@ -4,9 +4,8 @@ wavelet coherence, quality score, and polarization fixes."""
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
-from qp.signal.fft import estimate_background_powerlaw, welch_psd
+from qp.signal.fft import estimate_background_powerlaw
 
 
 # ------------------------------------------------------------------
@@ -41,7 +40,7 @@ class TestPowerlawBackground:
         # Peak must be large relative to the base PSD at that frequency
         f_peak = 1.0 / 3600.0
         base_at_peak = 1e6 * f_peak ** (-2.0)
-        psd += 10 * base_at_peak * np.exp(-((freq - f_peak) / 5e-5) ** 2)
+        psd += 10 * base_at_peak * np.exp(-(((freq - f_peak) / 5e-5) ** 2))
         bg = estimate_background_powerlaw(psd, freq, exclude_bands=True)
         ratio = psd / bg
         peak_idx = np.argmin(np.abs(freq - f_peak))
@@ -64,7 +63,6 @@ class TestPowerlawBackground:
 
 
 class TestMatchedFilter:
-
     def test_detects_injected_signal(self):
         """A Gaussian-windowed sine should produce high MF-SNR."""
         from qp.signal.matched_filter import matched_filter_snr
@@ -80,8 +78,10 @@ class TestMatchedFilter:
         signal = np.zeros(n)
         centre = n // 2
         env_width = 1.5 * period
-        signal = 1.0 * np.sin(2 * np.pi * t / period) * np.exp(
-            -0.5 * ((t - t[centre]) / env_width) ** 2
+        signal = (
+            1.0
+            * np.sin(2 * np.pi * t / period)
+            * np.exp(-0.5 * ((t - t[centre]) / env_width) ** 2)
         )
         data = noise + signal
 
@@ -108,7 +108,6 @@ class TestMatchedFilter:
 
 
 class TestWaveletCoherence:
-
     def test_coherent_signals(self):
         """Two sine waves with fixed phase offset should have high coherence."""
         from qp.signal.coherence import wavelet_coherence
@@ -145,9 +144,9 @@ class TestWaveletCoherence:
 
 
 class TestQualityScore:
-
     def test_high_metrics_high_score(self):
         from qp.events.quality import compute_quality
+
         q = compute_quality(
             wavelet_sigma=15.0,
             fft_ratio=8.0,
@@ -161,6 +160,7 @@ class TestQualityScore:
 
     def test_low_metrics_low_score(self):
         from qp.events.quality import compute_quality
+
         q = compute_quality(
             wavelet_sigma=1.0,
             fft_ratio=0.5,
@@ -174,11 +174,13 @@ class TestQualityScore:
 
     def test_missing_metrics_graceful(self):
         from qp.events.quality import compute_quality
+
         q = compute_quality(wavelet_sigma=10.0)
         assert 0.0 < q <= 1.0
 
     def test_all_none_returns_zero(self):
         from qp.events.quality import compute_quality
+
         assert compute_quality() == 0.0
 
 
@@ -188,7 +190,6 @@ class TestQualityScore:
 
 
 class TestTaperedPolarization:
-
     def test_circular_signal_returns_high_ellipticity(self):
         """A perfect circularly polarized signal (π/2 phase shift)
         should give |ellipticity| ≈ 1."""
@@ -219,7 +220,6 @@ class TestTaperedPolarization:
         t = np.arange(1440) * 60.0
         b1 = np.sin(2 * np.pi * t / 3600.0)
         b2 = np.cos(2 * np.pi * t / 3600.0)
-        median_e, iqr = per_oscillation_ellipticity(b1, b2, dt=60.0,
-                                                      period=3600.0)
+        median_e, iqr = per_oscillation_ellipticity(b1, b2, dt=60.0, period=3600.0)
         assert abs(median_e) > 0.7
         assert iqr < 0.3, f"IQR = {iqr:.3f}"

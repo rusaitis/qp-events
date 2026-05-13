@@ -23,8 +23,8 @@ _BAND_PATTERN = "^(" + "|".join(QP_BAND_NAMES) + ")$"
 
 STATIC_DIR = Path(__file__).parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
-STYLE_CSS  = STATIC_DIR / "style.css"
-APP_JS     = STATIC_DIR / "app.js"
+STYLE_CSS = STATIC_DIR / "style.css"
+APP_JS = STATIC_DIR / "app.js"
 
 
 def _render_index() -> str:
@@ -36,7 +36,7 @@ def _render_index() -> str:
     return (
         INDEX_HTML.read_text(encoding="utf-8")
         .replace("{STYLE_V}", str(STYLE_CSS.stat().st_mtime_ns))
-        .replace("{APP_V}",   str(APP_JS.stat().st_mtime_ns))
+        .replace("{APP_V}", str(APP_JS.stat().st_mtime_ns))
     )
 
 
@@ -88,7 +88,8 @@ def index() -> HTMLResponse:
 def list_events(
     band: str | None = Query(None, pattern=_BAND_PATTERN),
     region: str | None = Query(
-        None, pattern="^(magnetosphere|magnetosheath|solar_wind|unknown)$",
+        None,
+        pattern="^(magnetosphere|magnetosheath|solar_wind|unknown)$",
     ),
     sort: str = Query("peak_time"),
 ) -> list[dict]:
@@ -197,7 +198,10 @@ def synthetic_benchmark_event(
     seed: int = Query(0, ge=0),
 ) -> dict:
     return synthetic.benchmark_event(
-        preset=preset, band=band, amplitude=amp, seed=seed,
+        preset=preset,
+        band=band,
+        amplitude=amp,
+        seed=seed,
     )
 
 

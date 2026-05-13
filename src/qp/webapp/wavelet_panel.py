@@ -21,6 +21,7 @@ from functools import lru_cache
 from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -38,7 +39,6 @@ from qp.signal.polarization_config import (
 from qp.events.threshold import wavelet_sigma_mask
 from qp.signal.wavelet import morlet_cwt
 from qp.webapp.loaders import (
-    _slice_window,
     get_segment_payload,
     load_event_table,
     _row_for,
@@ -52,9 +52,7 @@ DEFAULT_HOURS: float = 12.0
 
 
 @lru_cache(maxsize=512)
-def render_wavelet_png(
-    event_id: int, hours_pad: float = DEFAULT_HOURS
-) -> bytes | None:
+def render_wavelet_png(event_id: int, hours_pad: float = DEFAULT_HOURS) -> bytes | None:
     """Return PNG bytes of the wavelet scalogram for an event.
 
     The figure shows the b_perp1 CWT power (log color), the σ-mask
@@ -111,13 +109,19 @@ def render_wavelet_png(
     # turbo: perceptually-improved rainbow, much wider colour gamut than
     # magma — high-contrast peaks pop, low-power background stays cool.
     mesh = ax.pcolormesh(
-        time_edges, period_edges, log_pwr,
-        cmap="turbo", shading="flat", vmin=vmin, vmax=vmax,
+        time_edges,
+        period_edges,
+        log_pwr,
+        cmap="turbo",
+        shading="flat",
+        vmin=vmin,
+        vmax=vmax,
     )
     cb = fig.colorbar(mesh, ax=ax, pad=0.01, fraction=0.04)
     cb.set_label(
         r"$\log_{10}\,(|\mathrm{CWT}| / \tilde{|\mathrm{CWT}|}_\mathrm{row})$",
-        fontsize=9, color=fg_color,
+        fontsize=9,
+        color=fg_color,
     )
     cb.ax.tick_params(labelsize=8, colors=fg_color)
     cb.outline.set_edgecolor(fg_color)
@@ -126,16 +130,26 @@ def render_wavelet_png(
     # location is set by the per-row Bonferroni-derived n_sigma.
     cb.ax.axhline(0.75, color="#00ffaa", linestyle="--", linewidth=1.1)
     cb.ax.text(
-        1.6, 0.75, "σ-mask", color="#00ffaa", fontsize=7,
+        1.6,
+        0.75,
+        "σ-mask",
+        color="#00ffaa",
+        fontsize=7,
         transform=cb.ax.get_yaxis_transform(),
-        va="center", ha="left",
+        va="center",
+        ha="left",
     )
 
     # σ-mask boundary as a contour at the half-level of the boolean mask.
     if mask.any():
         ax.contour(
-            times_h, period_min, mask.astype(float),
-            levels=[0.5], colors="#00ffaa", linewidths=1.2, linestyles="--",
+            times_h,
+            period_min,
+            mask.astype(float),
+            levels=[0.5],
+            colors="#00ffaa",
+            linewidths=1.2,
+            linestyles="--",
         )
 
     # Event window shading.
@@ -149,8 +163,13 @@ def render_wavelet_png(
     ax.axvline(0.0, color="white", linewidth=1.0, linestyle=":", zorder=4)
     if peak is not None:
         ax.plot(
-            peak["time_h"], peak["period_min"],
-            marker="+", color="white", markersize=14, mew=2.0, zorder=5,
+            peak["time_h"],
+            peak["period_min"],
+            marker="+",
+            color="white",
+            markersize=14,
+            mew=2.0,
+            zorder=5,
         )
 
     # QP band edges (dashed gray) + labelled centroid lines.
@@ -158,20 +177,34 @@ def render_wavelet_png(
     x_text = xlim_for_label[1] - 0.04 * (xlim_for_label[1] - xlim_for_label[0])
     for band in QP_BANDS.values():
         for edge in (band.period_min_sec / 60.0, band.period_max_sec / 60.0):
-            ax.axhline(edge, color="#bbbbbb", linewidth=0.5, linestyle=":",
-                       alpha=0.6, zorder=2)
+            ax.axhline(
+                edge, color="#bbbbbb", linewidth=0.5, linestyle=":", alpha=0.6, zorder=2
+            )
         centroid_min = band.period_centroid_sec / 60.0
         ax.axhline(
             centroid_min,
-            color="#dddddd", linewidth=0.6, linestyle="-",
-            alpha=0.4, zorder=2,
+            color="#dddddd",
+            linewidth=0.6,
+            linestyle="-",
+            alpha=0.4,
+            zorder=2,
         )
         ax.text(
-            x_text, centroid_min, f"{int(centroid_min)} min",
-            color=fg_color, fontsize=8, alpha=0.95,
-            ha="right", va="center", zorder=6,
-            bbox=dict(boxstyle="round,pad=0.18", facecolor=bg_color,
-                      edgecolor="none", alpha=0.6),
+            x_text,
+            centroid_min,
+            f"{int(centroid_min)} min",
+            color=fg_color,
+            fontsize=8,
+            alpha=0.95,
+            ha="right",
+            va="center",
+            zorder=6,
+            bbox=dict(
+                boxstyle="round,pad=0.18",
+                facecolor=bg_color,
+                edgecolor="none",
+                alpha=0.6,
+            ),
         )
 
     ax.set_yscale("log")
@@ -185,7 +218,8 @@ def render_wavelet_png(
         spine.set_edgecolor(fg_color)
     ax.set_title(
         f"event {event_id} · CWT scalogram · σ-mask ({panel['n_sigma']:.2f}σ)",
-        fontsize=9, color=fg_color,
+        fontsize=9,
+        color=fg_color,
     )
     fig.tight_layout()
 
@@ -223,12 +257,24 @@ def wavelet_gates(
     # centroid, not necessarily the brightest pixel. Computed on each
     # transverse component separately (mirroring the detector's
     # per-axis σ-mask) and reported as the larger of the two.
-    s1 = _sigma_at_peak(panel["power1"], panel["freq"],
-                        panel["times_h"], panel["peak"], panel["window_h"])
-    s2 = _sigma_at_peak(panel["power2"], panel["freq"],
-                        panel["times_h"], panel["peak"], panel["window_h"])
-    sigma_at_peak = None if (s1 is None and s2 is None) else max(
-        x for x in (s1, s2) if x is not None
+    s1 = _sigma_at_peak(
+        panel["power1"],
+        panel["freq"],
+        panel["times_h"],
+        panel["peak"],
+        panel["window_h"],
+    )
+    s2 = _sigma_at_peak(
+        panel["power2"],
+        panel["freq"],
+        panel["times_h"],
+        panel["peak"],
+        panel["window_h"],
+    )
+    sigma_at_peak = (
+        None
+        if (s1 is None and s2 is None)
+        else max(x for x in (s1, s2) if x is not None)
     )
 
     # Polarization geometry was added in the round-8.1 schema (full Stokes
@@ -250,24 +296,24 @@ def wavelet_gates(
         "n_sigma_threshold": float(panel["n_sigma"]),
         "sigma_at_peak": sigma_at_peak,
         "gates": {
-            "q_factor":     float(row.q_factor),
+            "q_factor": float(row.q_factor),
             "mva_par_frac": float(row.mva_par_frac),
-            "stokes_d":     float(row.stokes_d),
+            "stokes_d": float(row.stokes_d),
         },
         "polarization": {
-            "ellipticity":         _opt("ellipticity"),
-            "inclination_deg":     _opt("inclination_deg"),
-            "polarized_fraction":  _opt("polarized_fraction"),
-            "stokes_i":            _opt("stokes_i"),
-            "stokes_q":            _opt("stokes_q"),
-            "stokes_u":            _opt("stokes_u"),
-            "stokes_v":            _opt("stokes_v"),
+            "ellipticity": _opt("ellipticity"),
+            "inclination_deg": _opt("inclination_deg"),
+            "polarized_fraction": _opt("polarized_fraction"),
+            "stokes_i": _opt("stokes_i"),
+            "stokes_q": _opt("stokes_q"),
+            "stokes_u": _opt("stokes_u"),
+            "stokes_v": _opt("stokes_v"),
         },
         "thresholds": {
-            "q_factor_min":     MIN_Q_FACTOR,
+            "q_factor_min": MIN_Q_FACTOR,
             "mva_par_frac_max": MAX_MVA_PARALLEL_FRACTION,
-            "stokes_d_min":     MIN_DEGREE_OF_POLARIZATION,
-            "fwer_alpha":       SEGMENT_FWER_ALPHA,
+            "stokes_d_min": MIN_DEGREE_OF_POLARIZATION,
+            "fwer_alpha": SEGMENT_FWER_ALPHA,
         },
     }
     if "is_duplicate" in row.index:
@@ -280,9 +326,7 @@ def wavelet_gates(
 # ---------------------------------------------------------------------- #
 
 
-def _build_panel(
-    event_id: int, *, hours_pad: float
-) -> dict[str, Any] | None:
+def _build_panel(event_id: int, *, hours_pad: float) -> dict[str, Any] | None:
     """Compute the scalogram and σ-mask for one event.
 
     Returns a dict with ``freq``, ``period_min``, ``times_h``, ``power``,
@@ -316,7 +360,7 @@ def _build_panel(
             arr[~np.isfinite(arr)] = np.nanmean(arr)
 
     freq, _, cwt1 = morlet_cwt(b_perp1, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
-    _,    _, cwt2 = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
     power1 = np.abs(cwt1)
     power2 = np.abs(cwt2)
     # Display the max of the two perpendicular powers — detector fires
@@ -325,10 +369,14 @@ def _build_panel(
     # separately (matching the detector's gate) and returns the larger.
     power = np.maximum(power1, power2)
     n_sigma = bonferroni_n_sigma_for_cwt(
-        power.shape[1], DT_SEC, freq, alpha=SEGMENT_FWER_ALPHA,
+        power.shape[1],
+        DT_SEC,
+        freq,
+        alpha=SEGMENT_FWER_ALPHA,
     )
-    mask = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma) | \
-           wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+    mask = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma) | wavelet_sigma_mask(
+        power2, freq, n_sigma=n_sigma
+    )
 
     period_min = (1.0 / freq) / 60.0
     times_h = np.array(
@@ -346,12 +394,16 @@ def _build_panel(
 
     window_h: tuple[float, float] | None = None
     if row.date_from is not None and row.date_to is not None:
-        d_from = row.date_from.to_pydatetime() if hasattr(
-            row.date_from, "to_pydatetime"
-        ) else row.date_from
-        d_to = row.date_to.to_pydatetime() if hasattr(
-            row.date_to, "to_pydatetime"
-        ) else row.date_to
+        d_from = (
+            row.date_from.to_pydatetime()
+            if hasattr(row.date_from, "to_pydatetime")
+            else row.date_from
+        )
+        d_to = (
+            row.date_to.to_pydatetime()
+            if hasattr(row.date_to, "to_pydatetime")
+            else row.date_to
+        )
         window_h = (
             (d_from - peak_time).total_seconds() / 3600.0,
             (d_to - peak_time).total_seconds() / 3600.0,
@@ -361,10 +413,10 @@ def _build_panel(
         "freq": freq,
         "period_min": period_min,
         "times_h": times_h,
-        "power": power,           # max(|cwt1|, |cwt2|) for display
-        "power1": power1,         # |cwt(b_perp1)| for per-component σ
-        "power2": power2,         # |cwt(b_perp2)| for per-component σ
-        "mask": mask,             # union of both σ-masks (detector-equivalent)
+        "power": power,  # max(|cwt1|, |cwt2|) for display
+        "power1": power1,  # |cwt(b_perp1)| for per-component σ
+        "power2": power2,  # |cwt(b_perp2)| for per-component σ
+        "mask": mask,  # union of both σ-masks (detector-equivalent)
         "n_sigma": float(n_sigma),
         "peak": peak,
         "window_h": window_h,
@@ -400,7 +452,8 @@ def _sigma_at_peak(
     # Per-row stats on background rows.
     bg_medians = np.median(power[bg_rows], axis=1)
     bg_mads = np.median(
-        np.abs(power[bg_rows] - bg_medians[:, None]), axis=1,
+        np.abs(power[bg_rows] - bg_medians[:, None]),
+        axis=1,
     )
     if not np.any(bg_mads > 0):
         return None
@@ -408,12 +461,20 @@ def _sigma_at_peak(
     log_p_bg = np.log10(periods_sec[bg_rows])
     order = np.argsort(log_p_bg)
     log_p_target = float(np.log10(target_period_sec))
-    med_at_peak = float(np.interp(
-        log_p_target, log_p_bg[order], bg_medians[order],
-    ))
-    mad_at_peak = float(np.interp(
-        log_p_target, log_p_bg[order], bg_mads[order],
-    ))
+    med_at_peak = float(
+        np.interp(
+            log_p_target,
+            log_p_bg[order],
+            bg_medians[order],
+        )
+    )
+    mad_at_peak = float(
+        np.interp(
+            log_p_target,
+            log_p_bg[order],
+            bg_mads[order],
+        )
+    )
     if mad_at_peak <= 0:
         return None
 
@@ -438,18 +499,22 @@ def _bin_edges_log(centers: np.ndarray) -> np.ndarray:
     """Edges for pcolormesh from log-spaced centers."""
     log_c = np.log10(np.maximum(centers, 1e-12))
     log_d = np.diff(log_c)
-    edges = np.concatenate([
-        [log_c[0] - log_d[0] / 2],
-        log_c[:-1] + log_d / 2,
-        [log_c[-1] + log_d[-1] / 2],
-    ])
-    return 10.0 ** edges
+    edges = np.concatenate(
+        [
+            [log_c[0] - log_d[0] / 2],
+            log_c[:-1] + log_d / 2,
+            [log_c[-1] + log_d[-1] / 2],
+        ]
+    )
+    return 10.0**edges
 
 
 def _bin_edges_linear(centers: np.ndarray) -> np.ndarray:
     d = np.diff(centers)
-    return np.concatenate([
-        [centers[0] - d[0] / 2],
-        centers[:-1] + d / 2,
-        [centers[-1] + d[-1] / 2],
-    ])
+    return np.concatenate(
+        [
+            [centers[0] - d[0] / 2],
+            centers[:-1] + d / 2,
+            [centers[-1] + d[-1] / 2],
+        ]
+    )

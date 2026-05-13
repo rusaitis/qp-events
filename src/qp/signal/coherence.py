@@ -29,8 +29,9 @@ def _smooth_in_time(
     smoothed = np.empty_like(W)
     for i, s in enumerate(scales):
         sigma_samples = max(1.0, 0.6 * s / dt)
-        smoothed[i] = gaussian_filter1d(W[i].real, sigma_samples) + \
-                       1j * gaussian_filter1d(W[i].imag, sigma_samples)
+        smoothed[i] = gaussian_filter1d(
+            W[i].real, sigma_samples
+        ) + 1j * gaussian_filter1d(W[i].imag, sigma_samples)
     return smoothed
 
 
@@ -47,9 +48,8 @@ def _smooth_in_scale(
         width += 1
     smoothed = np.empty_like(W)
     for j in range(W.shape[1]):
-        smoothed[:, j] = (
-            uniform_filter1d(W[:, j].real, width) +
-            1j * uniform_filter1d(W[:, j].imag, width)
+        smoothed[:, j] = uniform_filter1d(W[:, j].real, width) + 1j * uniform_filter1d(
+            W[:, j].imag, width
         )
     return smoothed
 
@@ -60,8 +60,12 @@ def wavelet_coherence(
     dt: float = 60.0,
     omega0: float = 10.0,
     n_freqs: int = 300,
-) -> tuple[NDArray[np.floating], NDArray[np.floating],
-           NDArray[np.floating], NDArray[np.floating]]:
+) -> tuple[
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
+]:
     r"""Wavelet coherence spectrum between two transverse components.
 
     Parameters
@@ -89,10 +93,8 @@ def wavelet_coherence(
     b_perp1 = np.asarray(b_perp1, dtype=float)
     b_perp2 = np.asarray(b_perp2, dtype=float)
 
-    freq1, _, cwt1 = morlet_cwt(b_perp1, dt=dt, omega0=omega0,
-                                 n_freqs=n_freqs)
-    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, omega0=omega0,
-                             n_freqs=n_freqs)
+    freq1, _, cwt1 = morlet_cwt(b_perp1, dt=dt, omega0=omega0, n_freqs=n_freqs)
+    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, omega0=omega0, n_freqs=n_freqs)
 
     # Scales for smoothing (scale = 1 / (freq * omega0 / (2π)) )
     scales = np.where(freq1 > 0, 1.0 / freq1, 1e10)
@@ -158,8 +160,8 @@ def ridge_coherence(
     if not freq_mask.any():
         return 0.0, 0.0
 
-    sub_coh = coherence[freq_mask, t_start_idx:t_end_idx + 1]
-    sub_phase = phase_diff[freq_mask, t_start_idx:t_end_idx + 1]
+    sub_coh = coherence[freq_mask, t_start_idx : t_end_idx + 1]
+    sub_phase = phase_diff[freq_mask, t_start_idx : t_end_idx + 1]
 
     mean_coh = float(np.nanmean(sub_coh))
 

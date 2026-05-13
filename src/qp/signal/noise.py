@@ -77,9 +77,10 @@ def power_law_noise(
     # Timmer-König: independent Gaussian draws for real and imaginary
     # parts, each scaled by sqrt(P(f)/2)
     spectrum = (
-        rng.standard_normal(len(freqs))
-        + 1j * rng.standard_normal(len(freqs))
-    ) * amplitude / np.sqrt(2)
+        (rng.standard_normal(len(freqs)) + 1j * rng.standard_normal(len(freqs)))
+        * amplitude
+        / np.sqrt(2)
+    )
 
     # Nyquist bin must be real for even-length signals
     if n_gen % 2 == 0:
@@ -200,20 +201,19 @@ def magnetospheric_background(
     t = np.arange(n_samples) * dt
 
     # Anisotropic noise defaults
-    a_par = (
-        noise_alpha_par if noise_alpha_par is not None
-        else noise_alpha + 0.2
-    )
-    s_par = (
-        noise_sigma_par if noise_sigma_par is not None
-        else noise_sigma / 2
-    )
+    a_par = noise_alpha_par if noise_alpha_par is not None else noise_alpha + 0.2
+    s_par = noise_sigma_par if noise_sigma_par is not None else noise_sigma / 2
 
     # Colored noise for all 3 components
     noise_seed = int(rng.integers(0, 2**31))
     bg = colored_noise_3component(
-        n_samples, dt, noise_alpha, noise_sigma, noise_seed,
-        alpha_par=a_par, sigma_par=s_par,
+        n_samples,
+        dt,
+        noise_alpha,
+        noise_sigma,
+        noise_seed,
+        alpha_par=a_par,
+        sigma_par=s_par,
     )
 
     # Mean field in B_par
@@ -221,9 +221,7 @@ def magnetospheric_background(
 
     # Slow sinusoidal trend in B_par
     slow_period_sec = slow_trend_period_days * 86400.0
-    bg[:, 0] += slow_trend_amplitude * np.sin(
-        2 * np.pi * t / slow_period_sec
-    )
+    bg[:, 0] += slow_trend_amplitude * np.sin(2 * np.pi * t / slow_period_sec)
 
     # Dual PPO modulation (N and S systems with independent phases)
     ppo_n_sec = ppo_n_period_hours * 3600.0

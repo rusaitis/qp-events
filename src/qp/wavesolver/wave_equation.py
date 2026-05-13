@@ -129,9 +129,12 @@ def boundary_error(
     if va_samples is not None and dlnh_samples is not None:
         y_end = _scan_boundary_errors(
             np.array([omega]),
-            s_span[0], s_span[1],
-            va_samples, dlnh_samples,
-            y0[0], y0[1],
+            s_span[0],
+            s_span[1],
+            va_samples,
+            dlnh_samples,
+            y0[0],
+            y0[1],
         )[0]
         return y_end - target
 
