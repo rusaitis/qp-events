@@ -34,6 +34,7 @@ from qp.wavesolver.density import (
     PowerLawDensity,
     UniformDensity,
 )
+from qp.wavesolver.cummings_solver import find_eigenfrequencies_cummings
 from qp.wavesolver.eigensolver import find_eigenfrequencies
 from qp.wavesolver.field_profile import compute_field_line_profile
 from qp.wavesolver.matrix_solver import find_eigenfrequencies_matrix
@@ -112,8 +113,9 @@ class WavesolverConfig:
     # Solver backend: "matrix" (default) discretises the self-adjoint
     # Sturm-Liouville form on the uniform sample grid and solves a symmetric
     # tridiagonal eigenproblem in one call; "shoot" keeps the legacy
-    # bracket-scan + Brent + numba RK4 shooter. The two have agreed to
-    # machine precision on every case tested in May 2026.
+    # bracket-scan + Brent + numba RK4 shooter; "cummings" reparametrises
+    # in μ=z/r (Cummings 1969 cos-θ) before discretising — suppresses the
+    # soft-wall mode 1 that the arc-length formulation exposes.
     method: str = "matrix"
 
     # Shooter-only knobs (ignored by the matrix backend).
@@ -207,9 +209,28 @@ def solve_eigenfrequencies(config: WavesolverConfig) -> EigenResult:
             va_samples=profile.va_samples,
             dlnh_samples=dlnh_samples,
         )
+    elif config.method == "cummings":
+        # Cummings (1969) cos-θ formulation. Uses the *native* trace grid
+        # (not the resampled uniform-s grid) because the μ=z/r monotonic
+        # ordering is what we need for the splines; the solver internally
+        # builds its own uniform μ grid.
+        assert h_alpha_samples is not None
+        assert profile.s_samples is not None
+        assert profile.B_samples is not None
+        assert profile.va_samples is not None
+        modes = find_eigenfrequencies_cummings(
+            positions=profile.positions,
+            arc_length=profile.arc_length,
+            h_alpha=profile.h1 if config.component == "toroidal" else profile.h2,
+            B=profile.field_magnitude,
+            va=profile.alfven_velocity_profile,
+            n_modes=config.n_modes,
+            include_eigenfunctions=config.include_eigenfunctions,
+        )
     else:
         raise ValueError(
-            f"Unknown solver method {config.method!r}; choose 'matrix' or 'shoot'"
+            f"Unknown solver method {config.method!r}; "
+            f"choose 'matrix', 'shoot', or 'cummings'"
         )
 
     return EigenResult(
