@@ -293,3 +293,116 @@ uv run python scripts/diag_ccap_effect.py
 
 All four diagnostics write to `Output/diagnostics/`. The conclusion of
 each is printed at the bottom of stdout under a `VERDICT` header.
+
+## Resolution (May 2026 v3) — the reference table was wrong, our solver is right
+
+A direct read of `paper/Rusaitis-et-al-2021.pdf` resolved the
+factor-of-2 mismatch that had haunted the previous diagnostics.
+
+**Fig 2** of Rusaitis (2021) — the only place in the paper where
+numerical mode periods are written down — reports for a noon-sector
+field line at **L = 20 R_S**:
+
+| Mode | Rusaitis Fig 2 period | Our matrix solver (L=20 noon) | Δ |
+|---|---:|---:|---:|
+| m=1 | 469 min | 495.6 min | +5.7 % |
+| m=2 | 121 min | 126.0 min | +4.1 % |
+| m=3 | 72 min  | 75.1 min  | +4.3 % |
+| m=4 | 52 min  | 53.8 min  | +3.5 % |
+
+Our solver reproduces every mode to ≤ 6 %. Mode 1 — the soft-wall mode
+that earlier sessions hypothesised Rusaitis was missing — is present in
+both papers and both solvers. There is no factor-of-2 discrepancy.
+
+**Where did the bogus `_REF_FUNDAMENTAL_MHZ` come from?** The
+previously-asserted reference values `{8: 0.12, 10: 0.088, 15: 0.053}` mHz
+came from `1d60295 feat: complete rewrite and reorganization` and were
+digitised from Rusaitis Fig 3 (eigenfrequency vs invariant latitude, log
+scale). Reading log-scale curves by eye is unreliable; whoever made the
+table almost certainly mistook either the m=2 curve or an alternative
+model variant for m=1, ending up at ~2× the true mode-1 frequency. The
+test `test_kmag_wkb_fundamental_at_L8` was set up to assert that the
+WKB-asymptotic mode (≈ 2× soft-wall mode 1) matched these bogus values,
+which it did — making the test pass *despite* the underlying reference
+being wrong.
+
+`tests/test_validation.py` now anchors on the explicit Fig 2 ladder at
+L=20 (`_REF_FIG2_L20_PERIODS_MIN`) with a 10 % tolerance, and includes
+a separate test that the high-mode spacing converges to the WKB
+asymptote (`test_kmag_high_mode_spacing_converges_to_wkb`).
+
+### One residual methodology note
+
+On p. 4 of the Rusaitis paper, the local scale factor h_α is computed
+by **flux conservation between two nearby traced field lines**, not by
+the analytical dipole formula `h1 = r·sinθ` that
+`src/qp/wavesolver/field_profile.py:188` uses. For an axisymmetric
+dipole the two are identical; for the KMAG offset/stretched field at
+large L or off-equator, they may differ at the ~10 % level. We match
+Rusaitis Fig 2 to 5 %, so this difference is bounded — but if a future
+high-precision comparison is needed (e.g., Fig 6 mode-1 curves vs
+digitised Fig 3), switching to flux-conservation h_α is the
+methodological alignment to try.
+
+The Phases 2–6 work below (analytical benchmarks, shared SL kernel,
+three-backend parity, soft-wall regression, external v_A comparison)
+hardens the solver into this confirmed-correct state.
+
+## Open questions for co-authors (Khurana / Kivelson)
+
+These are the genuinely-open questions after the May 2026 v3 audit.
+Each affects either the resubmission Fig 6 presentation or the
+absolute calibration of mode 1 at small L. Recommend raising with
+the co-authors before the next round of revisions.
+
+1. **Fig 3 calibration at small L.** Our matrix solver reproduces the
+   *explicit numerical* Rusaitis 2021 Fig 2 ladder at L=20 noon to
+   ≤ 6 % on every mode (m=1..4). However, reading the Fig 3
+   (eigenfrequency vs invariant latitude) log-scale curves by eye
+   suggests our mode 1 at L=8 noon (0.057 mHz) is ~50 % above where
+   Rusaitis's Fig 3 m=1 solid curve sits (~0.04 mHz). The Fig 3
+   curves are too coarsely drawn for a quantitative comparison.
+   *Question*: can you provide the underlying tabulated values for
+   Fig 3, or the source script, so we can do an apples-to-apples
+   comparison?
+
+2. **h_α from flux conservation vs analytical dipole.** Rusaitis 2021
+   page 4 states the local geometric scale factor h_α is computed by
+   *flux conservation between two nearby traced field lines*. Our
+   `src/qp/wavesolver/field_profile.py:188` uses the analytical dipole
+   formula `h₁ = r·sinθ` and the corresponding `h₂ = 1/(B·r·sinθ)`.
+   For an axisymmetric pure dipole these are identical, but for the
+   KMAG stretched/offset field at large L or off-equator they may
+   differ. Our L=20 agreement is at 4–6 %, bounding the effect.
+   *Question*: at small L (L=8) where the field is mostly dipolar,
+   does flux-conservation h_α change anything materially? If not, we
+   can defer the implementation.
+
+3. **Fig 6 mode-1 presentation for resubmission.** Our solver finds a
+   soft-wall mode 1 at ≈ 0.057 mHz at L=8 noon — the same physical
+   mode that Rusaitis 2021 Fig 2 reports at L=20 (469 min ≈ 0.036 mHz).
+   This is genuine resonance physics, not a numerical artefact. The
+   resubmission Fig 6 already plots this curve as the m=1 (blue solid).
+   *Question*: confirm we want to keep that presentation — i.e., the
+   QP120 ↔ m=2, QP60 ↔ m=4, QP30 ↔ m=6 mapping (even harmonics) with
+   the soft-wall m=1 plotted explicitly below them — rather than
+   re-numbering the soft-wall mode as "sub-resonant" and starting the
+   ladder at our mode 2.
+
+4. **Numerical method documentation in the paper.** Rusaitis 2021
+   page 4 says "shooting method (see Press, 2007, Section 18) with
+   homogeneous boundary conditions in the ionosphere. We start with
+   ξ_α = 0 at the northern ionosphere..." — identical to our shooter
+   path. Our matrix Sturm–Liouville backend (default since May 2026)
+   is more numerically robust and agrees with the shooter to ≤ 0.5 %.
+   *Question*: should the resubmission methodology text mention both
+   backends, or stick with the original shooting-method description?
+
+5. **The bogus reference table.** `tests/test_validation.py` previously
+   carried `_REF_FUNDAMENTAL_MHZ = {8: 0.12, 10: 0.088, 15: 0.053}` mHz,
+   labelled "from Rusaitis et al. (2021)". These values are not in the
+   paper text and don't match the m=1 solid curve in Fig 3. They were
+   replaced with the explicit Fig 2 L=20 ladder in `_REF_FIG2_L20_PERIODS_MIN`.
+   *Question*: do you remember where the original table came from?
+   (Likely a digitisation of Fig 3 by a previous Claude session, but
+   confirmation would close the loop.)

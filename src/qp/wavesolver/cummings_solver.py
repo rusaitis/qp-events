@@ -45,13 +45,14 @@ import logging
 
 import numpy as np
 from scipy.interpolate import CubicSpline
-from scipy.linalg import eigh_tridiagonal
 
+from qp.wavesolver._sl_kernel import solve_sl_uniform_grid
 from qp.wavesolver.result import EigenMode
 
 log = logging.getLogger(__name__)
 
-_MASS_CONDITION_WARN = 1e10  # mu-coordinate w_max/w_min is naturally large
+# mu-coordinate w_max/w_min is naturally large (Jacobian diverges near μ=±1)
+_MASS_CONDITION_WARN = 1e10
 
 
 def find_eigenfrequencies_cummings(
@@ -157,57 +158,27 @@ def find_eigenfrequencies_cummings(
     # 4. SL coefficients in μ space
     p_mu = h_alpha_g**2 * B_g / J_g
     w_mu = h_alpha_g**2 * B_g * J_g / va_g**2
-    if np.any(w_mu <= 0):
-        raise ValueError("Mass weights w·J = h_α²·B·J / v_A² must be positive")
 
-    # 5. Finite-difference SL operator on uniform μ grid
-    h = float(mu_uniform[1] - mu_uniform[0])
-    p_half = 0.5 * (p_mu[:-1] + p_mu[1:])   # cell-face p
-    p_left = p_half[:-1]    # length n_grid-2
-    p_right = p_half[1:]
-    diag_A = (p_left + p_right) / h**2
-    off_A = -p_right[:-1] / h**2
-
-    w_interior = w_mu[1:-1]
-    sqrt_w = np.sqrt(w_interior)
-    n_modes_req = max(1, min(n_modes, len(w_interior)))
-
-    mass_ratio = float(w_interior.max() / w_interior.min())
-    if mass_ratio > _MASS_CONDITION_WARN:
-        log.warning(
-            "Cummings μ-coordinate mass matrix spans %.2e orders of magnitude. "
-            "Lowest eigenvalues may lose precision.",
-            mass_ratio,
-        )
-
-    diag_t = diag_A / w_interior
-    off_t = off_A / (sqrt_w[:-1] * sqrt_w[1:])
-    eigvals, eigvecs_raw = eigh_tridiagonal(
-        diag_t,
-        off_t,
-        select="i",
-        select_range=(0, n_modes_req - 1),
+    sl = solve_sl_uniform_grid(
+        mu_uniform, p_mu, w_mu, n_modes,
+        include_eigenfunctions=include_eigenfunctions,
+        mass_condition_warn=_MASS_CONDITION_WARN,
+        diagnostic_label="Cummings μ-coordinate",
     )
-    eigvecs = eigvecs_raw / sqrt_w[:, None]
-    omegas = np.sqrt(np.maximum(eigvals, 0.0))
 
-    # 6. Pack into EigenMode; eigenfunctions live on the μ grid, but we
-    # return them sampled along arc length so they look like the matrix
-    # backend's output. The s(μ) spline gives the corresponding s positions.
+    # 5. Pack into EigenMode; report eigenfunctions on the arc-length s
+    # grid (sampled via s(μ) spline) so they're consistent with the
+    # matrix backend's output.
     s_uniform = s_of_mu(mu_uniform)
     modes: list[EigenMode] = []
-    for k in range(len(omegas)):
-        if include_eigenfunctions:
-            y_int = eigvecs[:, k]
-            if y_int[0] < 0:
-                y_int = -y_int
-            y_full = np.zeros(n_grid)
-            y_full[1:-1] = y_int
+    for k, omega in enumerate(sl.omegas):
+        if include_eigenfunctions and sl.eigenfunctions_full is not None:
+            y_full = sl.eigenfunctions_full[:, k]
             dy_full = np.gradient(y_full, s_uniform)
             mode_num = int(np.sum(np.sign(dy_full[:-1]) != np.sign(dy_full[1:])))
             modes.append(
                 EigenMode(
-                    angular_frequency=float(omegas[k]),
+                    angular_frequency=float(omega),
                     mode_number=mode_num if mode_num > 0 else k + 1,
                     eigenfunction=y_full,
                     eigenfunction_derivative=dy_full,
@@ -217,7 +188,7 @@ def find_eigenfrequencies_cummings(
         else:
             modes.append(
                 EigenMode(
-                    angular_frequency=float(omegas[k]),
+                    angular_frequency=float(omega),
                     mode_number=k + 1,
                 )
             )
