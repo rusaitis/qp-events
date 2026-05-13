@@ -117,34 +117,57 @@ def main() -> None:
     vmax = float(np.percentile(finite, 99)) if finite.size else 0.1
     vmin = 0.0
 
+    # Cassini's closed-field coverage clusters at |inv_lat| > ~30 deg —
+    # the equatorial strip is empty. Split each band into a broken-axis
+    # pair so the populated hemispheres dominate the figure.
     use_paper_style()
-    fig, axes = plt.subplots(
-        1, len(BANDS), figsize=(5 * len(BANDS), 5), sharey=True,
-        constrained_layout=True,
+    fig, axes_grid = plt.subplots(
+        2, len(BANDS),
+        figsize=(5 * len(BANDS), 5.2),
+        sharex="col",
+        gridspec_kw={"height_ratios": [3, 3], "hspace": 0.06, "wspace": 0.05},
+        constrained_layout=False,
     )
+    fig.subplots_adjust(left=0.06, right=0.92, top=0.9, bottom=0.1,
+                        hspace=0.06, wspace=0.05)
+    axes_north = axes_grid[0]
+    axes_south = axes_grid[1]
 
     images = []
-    for ax, band in zip(axes, BANDS, strict=True):
+    for ax_n, ax_s, band in zip(axes_north, axes_south, BANDS, strict=True):
         Z = np.ma.masked_invalid(ratios[band])
-        im = ax.pcolormesh(
-            lt, inv_lat, Z, shading="auto",
-            cmap="plasma", vmin=vmin, vmax=vmax,
-        )
-        images.append(im)
-        ax.set_title(
+        for ax in (ax_n, ax_s):
+            im = ax.pcolormesh(
+                lt, inv_lat, Z, shading="auto",
+                cmap="plasma", vmin=vmin, vmax=vmax,
+            )
+            images.append(im)
+            ax.set_xlim(0, 24)
+            ax.set_xticks([0, 6, 12, 18, 24])
+            for x in (6, 12, 18):
+                ax.axvline(x, color="white", lw=0.3, ls=":", alpha=0.35)
+        ax_n.set_ylim(40, 90)
+        ax_s.set_ylim(-90, -40)
+        ax_n.set_title(
             f"{BAND_LABELS[band]}  ({n_event_min[band]/60:.0f} event-h)",
             fontsize=11,
         )
-        ax.set_xlabel("Local time [h]")
-        ax.set_xlim(0, 24)
-        ax.set_xticks([0, 6, 12, 18, 24])
-        ax.set_ylim(-90, 90)
-        ax.axhline(0, color="white", lw=0.4, ls=":", alpha=0.5)
-        for x in (6, 12, 18):
-            ax.axvline(x, color="white", lw=0.3, ls=":", alpha=0.35)
+        ax_s.set_xlabel("Local time [h]")
+        # Hide the inner spines + ticks to make the gap read as a break.
+        ax_n.spines["bottom"].set_visible(False)
+        ax_s.spines["top"].set_visible(False)
+        ax_n.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+        ax_n.set_yticks([40, 60, 80])
+        ax_s.set_yticks([-80, -60, -40])
 
-    axes[0].set_ylabel("KMAG invariant latitude [deg]")
-    cbar = fig.colorbar(images[1], ax=axes, fraction=0.025, pad=0.02)
+    # Share y-tick labels only on the leftmost column.
+    for ax in list(axes_north[1:]) + list(axes_south[1:]):
+        ax.tick_params(axis="y", labelleft=False)
+
+    axes_north[0].set_ylabel("KMAG inv. lat. [deg]")
+    axes_south[0].set_ylabel("KMAG inv. lat. [deg]")
+    cbar = fig.colorbar(images[1], ax=axes_grid.ravel().tolist(),
+                        fraction=0.025, pad=0.02)
     cbar.set_label("Event time / dwell time  (closed-field MS)")
 
     n_events = ev.attrs.get("n_events", "?")

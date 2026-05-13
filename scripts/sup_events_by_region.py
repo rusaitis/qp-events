@@ -45,6 +45,13 @@ GROUP_COLORS = {
     "solar wind": "#f26b59",
 }
 
+# Post-hoc MVA-transversality cut used to define an "FLR-pure" subsample for
+# Figs 7 and 8. Same value passed to scripts/bin_events_round8.py via
+# --max-mva-par-frac. Tightening the in-detector default (0.5) at the binning
+# stage preserves the full catalogue while letting the FLR figures focus on
+# the transverse Alfvenic events.
+FLR_PURE_MVA_CUT = 0.20
+
 
 def build_groups(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Split events into the five comparison categories (mutually exclusive
@@ -92,6 +99,9 @@ def summary_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
         }
         for b in QP_BAND_NAMES:
             row[f"{b} [%]"] = 100 * (g.band == b).mean()
+        retain_frac = (
+            float((g.mva_par_frac <= FLR_PURE_MVA_CUT).mean()) if len(g) else float("nan")
+        )
         rows.append(
             {
                 **row,
@@ -108,6 +118,7 @@ def summary_table(groups: dict[str, pd.DataFrame]) -> pd.DataFrame:
                 "KS(period)": ks_period[0],
                 "KS(MVA)": ks_mva[0],
                 "KS(A‖/A⊥)": ks_ratio[0],
+                f"retain @MVA≤{FLR_PURE_MVA_CUT:.2f} [%]": 100 * retain_frac,
             }
         )
     return pd.DataFrame(rows).set_index("region")
@@ -164,6 +175,21 @@ def make_figure(groups: dict[str, pd.DataFrame], out_path: Path) -> None:
         title="MVA major-axis transversality",
     )
     axes[0, 1].axvline(0.5, color="white", ls="--", alpha=0.5, lw=0.8)
+    axes[0, 1].axvline(
+        FLR_PURE_MVA_CUT,
+        color="white",
+        ls="-",
+        alpha=0.6,
+        lw=1.0,
+    )
+    axes[0, 1].text(
+        FLR_PURE_MVA_CUT,
+        axes[0, 1].get_ylim()[1] * 0.92,
+        f" FLR-pure cut ({FLR_PURE_MVA_CUT:g})",
+        color="white",
+        fontsize=8,
+        va="top",
+    )
 
     # 3. A_par / A_perp
     step_hist(
@@ -238,6 +264,7 @@ def write_csv_and_latex(table: pd.DataFrame, csv_path: Path, tex_path: Path) -> 
         "|mag.lat|",
         "KS(MVA)",
         "KS(A‖/A⊥)",
+        f"retain @MVA≤{FLR_PURE_MVA_CUT:.2f} [%]",
     ]
     relabel = {
         "MS inner (r$\\leq$12)": r"MS inner ($r\leq 12\,R_S$)",
@@ -256,6 +283,9 @@ def write_csv_and_latex(table: pd.DataFrame, csv_path: Path, tex_path: Path) -> 
         "QP120 [%]": r"QP120 [\%]",
         "KS(MVA)": r"$D_\mathrm{KS}(\mathrm{MVA})$",
         "KS(A‖/A⊥)": r"$D_\mathrm{KS}(A_\parallel/A_\perp)$",
+        f"retain @MVA≤{FLR_PURE_MVA_CUT:.2f} [%]": (
+            rf"retain $@\,\mathrm{{MVA}}\!\leq\!{FLR_PURE_MVA_CUT:g}$ [\%]"
+        ),
     }
 
     int_cols = {"n"}

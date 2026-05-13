@@ -275,6 +275,17 @@ def main() -> None:
             "duplicates), if the column is present."
         ),
     )
+    parser.add_argument(
+        "--max-mva-par-frac",
+        type=float,
+        default=0.5,
+        help=(
+            "Drop events with mva_par_frac above this threshold before "
+            "binning. Default 0.5 matches the detector gate (no change). "
+            "Tighten (e.g. 0.2) for FLR-focused figures to suppress "
+            "compressional boundary contamination."
+        ),
+    )
     add_verbosity_arg(parser)
     args = parser.parse_args()
 
@@ -293,6 +304,16 @@ def main() -> None:
         n_drop = int(df["is_duplicate"].sum())
         df = df.loc[~df["is_duplicate"]].reset_index(drop=True)
         log.info("  dropped %d duplicate rows (post-hoc dedup)", n_drop)
+
+    if args.max_mva_par_frac < 0.5:
+        n_before = len(df)
+        df = df.loc[df["mva_par_frac"] <= args.max_mva_par_frac].reset_index(drop=True)
+        log.info(
+            "  dropped %d events with mva_par_frac > %.3f (FLR-purity cut); %d remain",
+            n_before - len(df),
+            args.max_mva_par_frac,
+            len(df),
+        )
 
     # 2. Load trajectory + regions
     t_load = time.perf_counter()
@@ -372,6 +393,7 @@ def main() -> None:
         "n_events": int(len(df)),
         "n_samples_trajectory": int(t_unix.size),
         "b_threshold_nT": args.b_threshold,
+        "max_mva_par_frac": float(args.max_mva_par_frac),
         "events_parquet": str(args.events),
         "kmag_inv_lat_populated": bool(args.with_kmag_trace),
         "kmag_eq_r_populated": bool(args.with_kmag_trace),
