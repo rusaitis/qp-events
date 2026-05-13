@@ -16,13 +16,20 @@ MIN_DEGREE_OF_POLARIZATION: float = 0.7
 
 #: MVA major-axis maximum parallel fraction. Transverse waves have
 #: ``(e1·b_par)^2 → 0``; the gate rejects compressional perturbations
-#: where the major axis aligns with B_0.
+#: where the major axis aligns with B_0. The cut at 0.5 corresponds
+#: geometrically to a 45° major-axis tilt from B_0 (cos²45° = 0.5):
+#: beyond that the perturbation is more compressional than transverse,
+#: so it cannot be an Alfvén-mode FLR harmonic.
 MAX_MVA_PARALLEL_FRACTION: float = 0.5
 
 #: Half-width (degrees) of the band around 90°/270° that
 #: ``classify_polarization`` calls "circular", and around 0°/180°/360°
-#: that it calls "linear". A 30° tolerance straddles the natural
-#: bimodal distribution of QP-event phase shifts.
+#: that it calls "linear". ±30° is the conventional ±π/6 tolerance
+#: used in classical polarimetry to distinguish quadrature (circular)
+#: from in-phase / anti-phase (linear) cross-correlation peaks. With
+#: ≲ 30° spread the two populations in the QP-event phase distribution
+#: stay well separated; widening the tolerance past 45° starts merging
+#: them.
 CIRCULAR_LINEAR_TOL_DEG: float = 30.0
 
 #: Cosine-taper fraction for Hilbert-transformed Stokes computation.

@@ -297,10 +297,12 @@ MIN_Q_FACTOR: float = 3.0
 #: :math:`\langle z_1 z_2^* \rangle` average to zero.
 #:
 #: Community convention. The 0.6–0.8 range is standard for "polarized
-#: event" identification in magnetospheric ULF-wave catalogues (Samson
-#: 1973, *Geophys. J. R. Astr. Soc.* 34, 403; Anderson et al. 1990,
-#: *JGR* 95 A6; Bortnik et al. 2007, *JGR* 112 A11; Engebretson et al.
-#: 1986, *JGR* 91 A7); 0.7 is the most frequently adopted single value.
+#: event" identification in magnetospheric ULF-wave catalogues (Means
+#: 1972, *JGR* 77, 5551; Samson 1973, *Geophys. J. R. Astr. Soc.* 34(4),
+#: 403; Anderson et al. 1990, *JGR* 95(A7), 10495; Engebretson et al.
+#: 1986, *GRL* 13(9), 905; Bortnik et al. 2007, *JGR* 112, A04204,
+#: doi:10.1029/2006JA011900); 0.7 is the most frequently adopted single
+#: value.
 #:
 #: Empirical justification for 0.7 in this catalogue —
 #: ``scripts/diag_stokes_distribution.py`` re-runs the detector on 111

@@ -4,6 +4,13 @@ Two examples of running cross-correlation between b_perp1 and b_perp2:
   Example 1: mostly 90° phase shift (circular polarization, most common)
   Example 2: mostly 180° phase shift (linear polarization)
 
+Examples are picked from the round-8 catalogue (``Output/events_round8.parquet``)
+by Stokes ellipticity rather than by the cross-correlation classifier — the
+Stokes estimator is the round-8 detector's ground truth and is period-aware
+by construction. The phase-axis conversion ``deg/sec = 360 / period`` is
+threaded through ``running_phase`` so the ±90° / ±180° reference lines
+carry their literal physical meaning for any band (QP30 / QP60 / QP120).
+
 Referee: full 360° range, no phase-jump artifacts.
 """
 
@@ -11,6 +18,7 @@ import sys
 import types
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import signal as sig
 
@@ -34,149 +42,111 @@ import qp
 from qp.plotting.style import use_paper_style, style_axes
 
 
-def running_phase(b_perp1, b_perp2, dt=60.0, half_window=61):
-    """Compute running cross-correlation phase between two transverse components.
+def running_phase(b_perp1, b_perp2, dt=60.0, period_sec=3600.0):
+    """Sliding cross-correlation phase between two transverse components.
 
-    Matches the algorithm from mag_fft_sweeper.py lines 802-832.
+    A ±1-period window slides over the signal; at each sample the
+    normalized cross-correlation is computed and the lag of its peak is
+    reported as a phase shift in degrees, restricted to ±180° (one
+    half-period — beyond that the wrap-around lobes are indistinguishable
+    from the central peak).
 
     Parameters
     ----------
     b_perp1, b_perp2 : array
-        Perpendicular field components.
+        Transverse field components (same length).
     dt : float
         Sampling interval in seconds.
-    half_window : int
-        Half-width of sliding window in samples (61 = ~1 hour at 1-min).
+    period_sec : float
+        Wave period in seconds — sets both the deg/sec conversion
+        (``360° per period``) and the sliding-window half-width
+        (one period each side).
 
     Returns
     -------
     phase_deg : array
-        Phase shift in degrees at each time step.
-    valid_mask : array of bool
-        True where the phase estimate is valid (away from edges).
+        Phase shift in degrees at each time step (NaN at edges).
+    valid : array of bool
+        True where ``phase_deg`` is finite.
     """
     N = len(b_perp1)
+    half_window = int(round(period_sec / dt))
     phase_deg = np.full(N, np.nan)
-    sr = 1.0 / dt
+    deg_per_sec = 360.0 / period_sec
 
     for ind in range(half_window, N - half_window):
-        i0 = ind - half_window
-        i1 = ind + half_window
-        y1 = b_perp1[i0:i1]
-        y2 = b_perp2[i0:i1]
+        y1 = b_perp1[ind - half_window:ind + half_window]
+        y2 = b_perp2[ind - half_window:ind + half_window]
         npts = len(y1)
-
         ccor = sig.correlate(y2, y1, mode="same", method="direct")
-        delay_arr = np.linspace(-npts / sr, npts / sr, npts)
-        delay_arr = delay_arr / 3600.0 * 180.0  # Convert seconds to degrees (1h = 180°)
-
-        # Mask lags outside ±180°
-        mask_lo = delay_arr < -180
-        mask_hi = delay_arr > 180
-        ccor[mask_lo] = 0
-        ccor[mask_hi] = 0
-
-        phase_deg[ind] = delay_arr[np.argmax(ccor)]
+        lags_samples = sig.correlation_lags(npts, npts, mode="same")
+        deg = lags_samples * dt * deg_per_sec
+        # Restrict to ±180° (one half-period); beyond that the cross-correlation
+        # has wrap-around peaks that are indistinguishable from the central one.
+        in_range = np.abs(deg) <= 180.0
+        if not np.any(in_range):
+            continue
+        idx = np.where(in_range)[0]
+        phase_deg[ind] = deg[idx[np.argmax(ccor[idx])]]
 
     valid = ~np.isnan(phase_deg)
     return phase_deg, valid
 
 
-def classify_segment(phase_deg, valid):
-    """Classify a segment's dominant polarization."""
-    ph = phase_deg[valid]
-    if len(ph) < 100:
-        return "unknown", 0.0
+def pick_examples_from_catalogue(
+    catalogue_path: Path,
+    prefer_band: str = "QP60",
+    circ_abs_ell: float = 0.8,
+    lin_abs_ell: float = 0.15,
+):
+    """Pick best circular and linear examples from the round-8 catalogue.
 
-    # Circular: phase near ±90°
-    near_90 = np.sum(np.abs(np.abs(ph) - 90) < 30)
-    # Linear (anti-phase): phase near ±180° (wrapping at the boundary)
-    near_180 = np.sum(np.abs(ph) > 150)
-    frac_90 = near_90 / len(ph)
-    frac_180 = near_180 / len(ph)
+    Selection by Stokes ellipticity (the detector's ground truth) rather
+    than by the cross-correlation classifier. Among candidates passing
+    the ellipticity cut, pick the one with the highest ``stokes_d``
+    (most coherent), preferring ``prefer_band`` if available.
 
-    if frac_90 > frac_180 and frac_90 > 0.3:
-        return "circular", frac_90
-    elif frac_180 > frac_90 and frac_180 > 0.3:
-        return "linear", frac_180
-    else:
-        return "mixed", max(frac_90, frac_180)
+    Returns
+    -------
+    circ_row, lin_row : pandas.Series
+        Catalogue rows for the chosen examples. ``segment_idx`` keys back
+        into ``Cassini_MAG_MFA_36H.npy``; ``period_min`` sets the
+        phase-axis scale for ``running_phase``.
+    """
+    df = pd.read_parquet(catalogue_path)
 
+    def best_from(pool: pd.DataFrame) -> pd.Series:
+        pref = pool[pool["band"] == prefer_band]
+        if len(pref) > 0:
+            return pref.nlargest(1, "stokes_d").iloc[0]
+        return pool.nlargest(1, "stokes_d").iloc[0]
 
-def find_examples(data, max_scan=2000):
-    """Scan MFA segments to find good circular and linear polarization examples."""
-    best_circular = None
-    best_circular_score = 0
-    best_linear = None
-    best_linear_score = 0
-
-    n_scanned = 0
-    for idx, seg in enumerate(data):
-        if n_scanned >= max_scan:
-            break
-
-        # Filter
-        if seg.flag is not None:
-            continue
-        if not isinstance(seg.info, dict) or seg.info.get("location") != 0:
-            continue
-        if not hasattr(seg, "FIELDS") or len(seg.FIELDS) < 3:
-            continue
-
-        b_perp1 = seg.FIELDS[1].y
-        b_perp2 = seg.FIELDS[2].y
-
-        if b_perp1 is None or len(b_perp1) < 1440:
-            continue
-
-        # Check signal strength — skip weak segments
-        amp = max(np.std(b_perp1), np.std(b_perp2))
-        if amp < 0.03:
-            continue
-
-        # Trim to central 24h
-        pad = 6 * 60
-        bp1 = b_perp1[pad:-pad] if len(b_perp1) > 2 * pad else b_perp1
-        bp2 = b_perp2[pad:-pad] if len(b_perp2) > 2 * pad else b_perp2
-
-        phase, valid = running_phase(bp1, bp2)
-        pol_type, score = classify_segment(phase, valid)
-
-        n_scanned += 1
-        if n_scanned % 200 == 0:
-            print(f"  Scanned {n_scanned} segments...")
-
-        if pol_type == "circular" and score > best_circular_score:
-            best_circular_score = score
-            best_circular = idx
-        elif pol_type == "linear" and score > best_linear_score:
-            best_linear_score = score
-            best_linear = idx
-
-    print(f"  Scanned {n_scanned} segments total")
-    print(f"  Best circular: idx={best_circular}, score={best_circular_score:.2f}")
-    print(f"  Best linear: idx={best_linear}, score={best_linear_score:.2f}")
-    return best_circular, best_linear
+    circ_pool = df[df["ellipticity"].abs() > circ_abs_ell]
+    lin_pool = df[df["ellipticity"].abs() < lin_abs_ell]
+    if circ_pool.empty or lin_pool.empty:
+        raise RuntimeError(
+            f"Catalogue does not contain both circular (|e|>{circ_abs_ell}) "
+            f"and linear (|e|<{lin_abs_ell}) examples"
+        )
+    return best_from(circ_pool), best_from(lin_pool)
 
 
-def plot_example(axes_ts, axes_ph, seg, title, panel_labels):
-    """Plot one example: timeseries + running phase."""
+def plot_example(axes_ts, axes_ph, seg, period_sec, title, panel_labels):
+    """Plot one example: timeseries + period-aware running phase."""
     b_perp1 = seg.FIELDS[1].y
     b_perp2 = seg.FIELDS[2].y
     times = seg.datetime
 
-    # Trim to central 24h
+    # Trim to central 24 h of the 36-h segment (drop 6 h of context each side).
     pad = 6 * 60
     if len(b_perp1) > 2 * pad:
         b_perp1 = b_perp1[pad:-pad]
         b_perp2 = b_perp2[pad:-pad]
         times = times[pad:-pad]
 
-    # Time in hours from start
     t0 = times[0]
     hours = np.array([(t - t0).total_seconds() / 3600 for t in times])
 
-    # Timeseries panel
     ax = axes_ts
     ax.plot(hours, b_perp1, color="#FFB000", label=r"$B_{\perp 1}$", lw=1.2, alpha=0.8)
     ax.plot(hours, b_perp2, color="#fdf33c", label=r"$B_{\perp 2}$", lw=1.2, alpha=0.8)
@@ -190,12 +160,10 @@ def plot_example(axes_ts, axes_ph, seg, title, panel_labels):
     ax.set_xticklabels([])
     style_axes(ax)
 
-    # Phase panel
     ax = axes_ph
-    phase, valid = running_phase(b_perp1, b_perp2)
+    phase, valid = running_phase(b_perp1, b_perp2, period_sec=period_sec)
     ax.plot(hours[valid], phase[valid], color="#FFB000", lw=1.2, alpha=0.8)
 
-    # Reference lines
     for deg in [-180, -90, 0, 90, 180]:
         ls = "--" if deg in [-90, 90] else "-" if deg == 0 else ":"
         alpha = 0.5 if deg in [-90, 90] else 0.3
@@ -212,27 +180,30 @@ def plot_example(axes_ts, axes_ph, seg, title, panel_labels):
 
 
 def main():
+    catalogue_path = qp.OUTPUT_DIR / "events_round8.parquet"
+    print(f"Picking examples from {catalogue_path}")
+    circ_row, lin_row = pick_examples_from_catalogue(catalogue_path)
+
+    print(
+        f"  circular: seg {int(circ_row['segment_idx'])} {circ_row['date_from']} "
+        f"{circ_row['band']}  T={circ_row['period_min']:.1f} min  "
+        f"e={circ_row['ellipticity']:+.3f}  d={circ_row['stokes_d']:.3f}"
+    )
+    print(
+        f"  linear:   seg {int(lin_row['segment_idx'])} {lin_row['date_from']} "
+        f"{lin_row['band']}  T={lin_row['period_min']:.1f} min  "
+        f"e={lin_row['ellipticity']:+.3f}  d={lin_row['stokes_d']:.3f}"
+    )
+
     print("Loading MFA 36H data...")
     data = np.load(qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy", allow_pickle=True)
-    print(f"Loaded {len(data)} segments")
 
-    print("Scanning for circular and linear polarization examples...")
-    idx_circ, idx_lin = find_examples(data)
-
-    if idx_circ is None or idx_lin is None:
-        print("Could not find both examples!")
-        return
-
-    seg_circ = data[idx_circ]
-    seg_lin = data[idx_lin]
+    seg_circ = data[int(circ_row["segment_idx"])]
+    seg_lin = data[int(lin_row["segment_idx"])]
     date_circ = seg_circ.datetime[0].strftime("%Y-%m-%d")
     date_lin = seg_lin.datetime[0].strftime("%Y-%m-%d")
-    print(f"Circular example: idx={idx_circ}, date={date_circ}")
-    print(f"Linear example: idx={idx_lin}, date={date_lin}")
 
-    # --- Plot ---
     use_paper_style()
-
     fig, (ax_a, ax_b, ax_c, ax_d) = plt.subplots(
         4, 1, figsize=(12, 10),
         gridspec_kw={"height_ratios": [2, 1.5, 2, 1.5]},
@@ -241,18 +212,27 @@ def main():
 
     plot_example(
         ax_a, ax_b, seg_circ,
-        f"EXAMPLE 1 (Mostly 90° polarization) — {date_circ}",
+        period_sec=float(circ_row["period_min"]) * 60.0,
+        title=(
+            f"EXAMPLE 1 (Circular: |e|={abs(circ_row['ellipticity']):.2f}, "
+            f"T={circ_row['period_min']:.1f} min) — {date_circ}"
+        ),
         panel_labels=("a", "b"),
     )
     plot_example(
         ax_c, ax_d, seg_lin,
-        f"EXAMPLE 2 (Mostly 180° polarization) — {date_lin}",
+        period_sec=float(lin_row["period_min"]) * 60.0,
+        title=(
+            f"EXAMPLE 2 (Linear: |e|={abs(lin_row['ellipticity']):.2f}, "
+            f"T={lin_row['period_min']:.1f} min) — {date_lin}"
+        ),
         panel_labels=("c", "d"),
     )
 
-    plt.savefig("output/figure10.png", dpi=300, bbox_inches="tight",
-                facecolor=fig.get_facecolor())
-    print("Saved output/figure10.png")
+    out_path = Path("output/figure10.png")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=300, bbox_inches="tight", facecolor=fig.get_facecolor())
+    print(f"Saved {out_path}")
     plt.close()
 
 

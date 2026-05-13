@@ -35,8 +35,13 @@ fraction :math:`p / I`.
 References
 ----------
 Born & Wolf, *Principles of Optics*, 7th ed., §1.4.2.
-Samson, J. C. (1973), "Description of the polarisation states of vector
-processes", *Geophys. J. R. Astr. Soc.* 34, 403.
+Means, J. D. (1972), "Use of the three-dimensional covariance matrix in
+analysing the polarization properties of plane waves", *JGR* 77(28),
+5551–5559, doi:10.1029/JA077i028p05551 — the canonical magnetospheric
+magnetic-Stokes reference.
+Samson, J. C. (1973), "Descriptions of the polarisation states of vector
+processes: applications to ULF magnetic fields", *Geophys. J. R. Astr.
+Soc.* 34(4), 403–419, doi:10.1111/j.1365-246X.1973.tb02404.x.
 Sonnerup & Cahill (1967), *JGR* 72, 171. Sonnerup & Scheible (1998),
 *ISSI Scientific Reports* SR-001 §8 — MVA helpers below.
 """
