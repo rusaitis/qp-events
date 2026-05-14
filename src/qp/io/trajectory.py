@@ -125,7 +125,10 @@ def lookup_region_codes(
 
     Samples before the first crossing get :data:`UNKNOWN_REGION_CODE`,
     since Cassini's magnetospheric region is not cataloged for that
-    period.
+    period. ``crossing_times_unix`` must be sorted ascending; a sample at
+    exactly a crossing time gets the *previous* region (``np.searchsorted``
+    side='left' convention) — at 1-min MAG cadence the off-by-one-minute
+    edge case is below the catalog's temporal resolution.
     """
     idx = np.searchsorted(crossing_times_unix, sample_timestamps) - 1
     return np.where(
