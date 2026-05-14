@@ -28,6 +28,7 @@ _BG_FIT_FREQ_HIGH_HZ = 1.0 / (30.0 * 60.0)  # 30-minute high-frequency edge
 _BG_TARGET_FRACTION = 0.5  # half the points above the baseline → median
 _BG_TOLERANCE = 0.01  # convergence band on the above-fraction
 _BG_MAX_ITER = 50  # safety cap on the level-adjustment loop
+_BG_STEP_SHRINK = 0.8  # geometric shrink applied to the level-adjust step each iter
 _BG_SAVGOL_WINDOW = 17  # log-PSD smoothing window (must be odd)
 _BG_SAVGOL_ORDER = 3
 
@@ -211,7 +212,7 @@ def estimate_background(
 
         direction = -1.0 if error > 0 else 1.0
         bg_smooth += direction * adjust
-        adjust *= 0.8  # shrink step
+        adjust *= _BG_STEP_SHRINK
 
     # Interpolate back to original frequency grid
     f_bg = interp1d(x_new, bg_smooth, kind="cubic", fill_value="extrapolate")

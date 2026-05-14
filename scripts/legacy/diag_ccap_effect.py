@@ -37,9 +37,9 @@ from _common import setup_logging
 from scipy.constants import mu_0 as MU0
 from scipy.constants import speed_of_light as SPEED_OF_LIGHT
 
+import qp.wavesolver.density as density_mod
+import qp.wavesolver.field_profile as field_profile_mod
 from qp.fieldline.kmag_model import SaturnField
-from qp.wavesolver import density as density_mod
-from qp.wavesolver import field_profile as field_profile_mod
 from qp.wavesolver.density import SATURN_RADIUS
 from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 

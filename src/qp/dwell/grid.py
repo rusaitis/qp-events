@@ -33,6 +33,11 @@ def region_name(code: int | None) -> str:
     return REGION_CODES.get(int(code), "unknown")
 
 
+# Weak-field cap (nT) for the plasma-sheet proxy used in SI Fig 2: samples
+# with |B| below this threshold are counted as plasma-sheet dwell time.
+PLASMA_SHEET_B_THRESHOLD_NT: float = 2.0
+
+
 @dataclass(frozen=True, slots=True)
 class DwellGridConfig:
     r"""Configuration for the spherical dwell-time grid.
@@ -358,7 +363,7 @@ def accumulate_weak_field_grid_cached(
     cache: BinCache,
     btotal: ArrayLike,
     dt_minutes: float = 1.0,
-    b_threshold: float = 2.0,
+    b_threshold: float = PLASMA_SHEET_B_THRESHOLD_NT,
     region_codes: ArrayLike | None = None,
     *,
     mask: ArrayLike | None = None,
@@ -697,14 +702,15 @@ def accumulate_weak_field_grid(
     z: ArrayLike,
     btotal: ArrayLike,
     dt_minutes: float = 1.0,
-    b_threshold: float = 2.0,
+    b_threshold: float = PLASMA_SHEET_B_THRESHOLD_NT,
     region_codes: ArrayLike | None = None,
     config: DwellGridConfig | None = None,
 ) -> dict[str, np.ndarray]:
     r"""Accumulate dwell time in 2D (dipole_inv_lat, LT) grid for weak-field regions.
 
     Filters samples where $|B| < $ ``b_threshold`` before accumulating,
-    providing a proxy for plasma sheet dwell time (SI Fig 2).
+    providing a proxy for plasma sheet dwell time (SI Fig 2). The
+    default threshold is :data:`PLASMA_SHEET_B_THRESHOLD_NT`.
 
     Uses the analytical dipole invariant latitude (no tracing needed).
 

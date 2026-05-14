@@ -31,6 +31,11 @@ TRACE_STEP_RS: float = 0.05  # RK4 step (R_S)
 TRACE_MAX_STEPS: int = 100_000  # Loop safety cap
 TRACE_MAX_RADIUS_RS: float = 300.0  # Outer-boundary stop (R_S)
 
+# Max distance (R_S) between the nearest traced point and the planet surface
+# for a footpoint to count as "reached the planet" — see
+# _conjugate_latitude_from_spherical().
+FOOTPOINT_TOLERANCE_RS: float = 0.5
+
 
 class FieldModel(Protocol):
     """Protocol for a magnetic field model callable.
@@ -48,12 +53,13 @@ def _conjugate_latitude_from_spherical(
     """Shared kernel: invariant latitude at the planet surface from
     spherical coordinates ``rtp`` shape (N, 3).
 
-    Returns ``None`` if no trace point lies within 0.5 R_S of the
-    surface (i.e., the field line never reached the planet).
+    Returns ``None`` if no trace point lies within
+    :data:`FOOTPOINT_TOLERANCE_RS` of the surface (i.e., the field line
+    never reached the planet).
     """
     r = rtp[:, 0]
     idx = np.argmin(np.abs(r - surface_radius))
-    if np.abs(r[idx] - surface_radius) > 0.5:
+    if np.abs(r[idx] - surface_radius) > FOOTPOINT_TOLERANCE_RS:
         return None
     return 90.0 - np.degrees(rtp[idx, 1])
 
