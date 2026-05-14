@@ -24,7 +24,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
+from _common import (  # noqa: E402
+    OUTPUT_DIR,
+    _check_mva_par_frac,
+    ensure_figures_dir,
+    setup_logging,
+)
 
 from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 from qp.events.normalization import (  # noqa: E402
@@ -45,11 +50,6 @@ LT_SECTORS = [
 
 BANDS = list(QP_BAND_NAMES)
 BAND_COLORS = QP_BAND_COLORS
-
-#: Floor on summed dwell time per latitude bin. Bins below this floor
-#: produce ratio NaN — they have too little Cassini coverage to be
-#: trusted. Shared with Fig 8 via :data:`qp.events.normalization`.
-MIN_DWELL_MINUTES_LATITUDE = MIN_DWELL_MINUTES_PER_CELL
 
 #: Latitude rebinning width. Native dwell grid is 1 deg; collapse to 5 deg
 #: to recover the latitude trend without wallpapering single-cell noise.
@@ -86,7 +86,7 @@ def _bootstrap_band(
     if rng is None:
         rng = np.random.default_rng(42)
     ratios = np.full((n, ev_1d.size), np.nan)
-    valid = dw_1d >= MIN_DWELL_MINUTES_LATITUDE
+    valid = dw_1d >= MIN_DWELL_MINUTES_PER_CELL
     for i in range(n):
         ev_r = rng.poisson(np.maximum(ev_1d, 0.0)).astype(float)
         ratios[i, valid] = ev_r[valid] / dw_1d[valid]
@@ -113,7 +113,7 @@ def _sector_ratio(
     dw_b, _ = _rebin_latitude(dw_1d, lat_centers, LAT_BIN_WIDTH_DEG)
     with np.errstate(divide="ignore", invalid="ignore"):
         ratio = np.where(
-            dw_b >= MIN_DWELL_MINUTES_LATITUDE,
+            dw_b >= MIN_DWELL_MINUTES_PER_CELL,
             ev_b / dw_b,
             np.nan,
         )
@@ -139,6 +139,23 @@ def main() -> None:
     log.info("event-time : %s", ev_path.name)
     log.info("dwell      : %s", dw_path.name)
     log.info("bands      : %s", ev.attrs.get("bands"))
+
+    # Surface the FLR-purity cut that produced this event zarr; the
+    # published figure uses 0.2. Without this guard, a default-pipeline
+    # zarr (no cut) would render silently with the same code path.
+    _check_mva_par_frac(ev)
+
+    if "magnetosphere" not in ev.data_vars and "magnetosphere" not in ev:
+        # Soft check: zarr layout we can't read with this script.
+        raise SystemExit(
+            "event zarr lacks per-region variables (expected '<band>_magnetosphere'). "
+            "Re-run scripts/bin_events_round8.py with the default region split."
+        )
+    if "magnetosphere" not in dw.data_vars:
+        raise SystemExit(
+            f"dwell zarr at {dw_path.name} lacks 'magnetosphere' variable — "
+            "is this the canonical Cassini dwell grid?"
+        )
 
     lt_centers = ev["local_time"].values
     lat_centers = ev["magnetic_latitude"].values
@@ -193,7 +210,7 @@ def main() -> None:
     fig.suptitle(
         f"Figure 7 (round-8) — QP occurrence vs magnetic latitude  "
         f"(n={n_events} events; magnetosphere-only dwell; "
-        f"{int(MIN_DWELL_MINUTES_LATITUDE / 60)} h dwell floor; "
+        f"{int(MIN_DWELL_MINUTES_PER_CELL / 60)} h dwell floor; "
         f"Poisson 16-84% band)",
         fontsize=11,
     )

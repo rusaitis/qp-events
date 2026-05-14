@@ -8,8 +8,6 @@ Referee notes: dark background, ephemeris ticks, visible vertical period lines.
 """
 
 import datetime
-import sys
-import types
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -18,32 +16,11 @@ import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
-# Register stubs for legacy pickle deserialization.
-# DO NOT REMOVE: stub names match the module paths used when the legacy
-# DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-_stub_classes = [
-    "SignalSnapshot",
-    "NewSignal",
-    "Interval",
-    "FFT_list",
-    "WaveSignal",
-    "Wave",
-]
-_stub_modules = [
-    "__main__",
-    "data_sweeper",
-    "mag_fft_sweeper",
-    "cassinilib",
-    "cassinilib.NewSignal",
-]
-for mod_path in _stub_modules:
-    if mod_path not in sys.modules:
-        sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in _stub_classes:
-        setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
+from qp.io.products import register_legacy_pickle_stubs  # noqa: E402
 
+register_legacy_pickle_stubs()
 
-import qp
+import qp  # noqa: E402
 from qp.coords.mfa import to_mfa
 from qp.plotting.style import (
     FIELD_COLORS,

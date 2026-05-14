@@ -1,0 +1,71 @@
+# Matplotlib style for publication figures in
+# "Long-period Alfvén waves as signatures of field line resonances
+# in Saturn's magnetosphere" (Rusaitis et al.).
+#
+# Loaded by qp.plotting.style.use_paper_style(); the dark-background
+# colors and a couple of overrides are then applied on top in code, so
+# tweaks to layout/sizing belong here.
+
+# --- Figure / saving -----------------------------------------------------
+figure.figsize:     12.0, 5.0
+figure.dpi:         120
+savefig.dpi:        300
+savefig.bbox:       tight
+savefig.format:     png
+savefig.pad_inches: 0.05
+
+# --- Fonts ---------------------------------------------------------------
+font.family:        sans-serif
+font.sans-serif:    DejaVu Sans, Helvetica, Arial
+font.size:          14
+mathtext.default:   regular
+text.usetex:        False
+
+# --- Axes ----------------------------------------------------------------
+axes.titlesize:     14
+axes.labelsize:     14
+axes.linewidth:     0.8
+axes.grid:          False
+axes.axisbelow:     True
+axes.formatter.use_mathtext: True
+axes.formatter.limits: -3, 4
+
+# --- Ticks ---------------------------------------------------------------
+xtick.labelsize:    12
+ytick.labelsize:    12
+xtick.direction:    out
+ytick.direction:    out
+xtick.major.size:   4
+ytick.major.size:   4
+xtick.major.width:  0.8
+ytick.major.width:  0.8
+xtick.minor.size:   2
+ytick.minor.size:   2
+xtick.minor.width:  0.6
+ytick.minor.width:  0.6
+xtick.minor.visible: True
+ytick.minor.visible: True
+
+# --- Lines ---------------------------------------------------------------
+lines.linewidth:    1.4
+lines.markersize:   4.0
+lines.solid_capstyle: round
+
+# --- Legends -------------------------------------------------------------
+legend.fontsize:    12
+legend.frameon:     False
+legend.borderpad:   0.3
+legend.handlelength: 1.5
+
+# --- Grid ----------------------------------------------------------------
+grid.color:         "#CCCCCC"
+grid.linestyle:     --
+grid.linewidth:     0.5
+grid.alpha:         0.4
+
+# --- Images / colormaps --------------------------------------------------
+image.cmap:         plasma
+image.interpolation: nearest
+
+# --- Errorbar ------------------------------------------------------------
+errorbar.capsize:   2

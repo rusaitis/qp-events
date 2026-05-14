@@ -149,7 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
     # --- Storage ---
     storage_group = parser.add_argument_group("Storage")
     storage_group.add_argument(
-        "--output", type=str, default="Output/dwell_grid.zarr", help="Output zarr path"
+        "--output",
+        type=str,
+        default="Output/dwell_grid_cassini_saturn.zarr",
+        help="Output zarr path",
     )
     storage_group.add_argument(
         "--compress",

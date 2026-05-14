@@ -9,8 +9,6 @@ Referee notes: dark background, ephemeris in caption.
 """
 
 import datetime
-import sys
-import types
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -19,37 +17,14 @@ import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
-# --- Register stub classes BEFORE any project imports ---
-# The pickled .npy files reference classes from data_sweeper, cassinilib.NewSignal,
-# etc. We register lightweight stubs so numpy.load can deserialize them without
-# importing the full (heavy, fragile) old codebase.
-# DO NOT REMOVE: stub names match the module paths used when the legacy
-# DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-_stub_classes = [
-    "SignalSnapshot",
-    "NewSignal",
-    "Interval",
-    "FFT_list",
-    "WaveSignal",
-    "Wave",
-]
-_stub_modules = [
-    "__main__",
-    "data_sweeper",
-    "mag_fft_sweeper",
-    "cassinilib",
-    "cassinilib.NewSignal",
-]
+# DataProducts/*.npy were pickled with classes from the legacy
+# data_sweeper/cassinilib codebase; register stub modules first so
+# numpy.load() can resolve the names. See qp.io.products docstring.
+from qp.io.products import register_legacy_pickle_stubs  # noqa: E402
 
-for mod_path in _stub_modules:
-    if mod_path not in sys.modules:
-        sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in _stub_classes:
-        setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
+register_legacy_pickle_stubs()
 
-# Now safe to import qp
-
-import qp
+import qp  # noqa: E402
 from qp.coords.mfa import to_mfa
 from qp.plotting.style import (
     BG_COLOR,

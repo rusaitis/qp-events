@@ -7,11 +7,55 @@ start here rather than reprocessing from raw.
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
 
 import qp
+
+#: Module paths the legacy DataProducts/*.npy pickles reference. They no
+#: longer exist in the tree (removed in the cleanup commit); stub modules
+#: are registered so ``numpy.load(..., allow_pickle=True)`` resolves the
+#: class references without dragging the old codebase back.
+_LEGACY_PICKLE_MODULES: tuple[str, ...] = (
+    "__main__",
+    "data_sweeper",
+    "mag_fft_sweeper",
+    "cassinilib",
+    "cassinilib.NewSignal",
+    "cassinilib.PlotFFT",
+)
+
+#: Class names referenced by the legacy pickles. Registered as empty
+#: types on each stub module above — unpickling only needs the symbol to
+#: resolve, the array data itself is recovered as a numpy ndarray.
+_LEGACY_PICKLE_CLASSES: tuple[str, ...] = (
+    "SignalSnapshot",
+    "NewSignal",
+    "Interval",
+    "FFT_list",
+    "WaveSignal",
+    "Wave",
+)
+
+
+def register_legacy_pickle_stubs() -> None:
+    """Register empty stub modules + classes for legacy ``.npy`` pickles.
+
+    Must be called **before** ``np.load(..., allow_pickle=True)`` on any
+    of the ``DataProducts/Cassini_MAG_*.npy`` arrays — otherwise unpickling
+    raises ``ModuleNotFoundError`` for ``data_sweeper`` / ``cassinilib``.
+    Idempotent.
+    """
+    for mod_path in _LEGACY_PICKLE_MODULES:
+        if mod_path not in sys.modules:
+            sys.modules[mod_path] = types.ModuleType(mod_path)
+        mod = sys.modules[mod_path]
+        for cls_name in _LEGACY_PICKLE_CLASSES:
+            if not hasattr(mod, cls_name):
+                setattr(mod, cls_name, type(cls_name, (), {}))
 
 
 def _load(name: str, products_dir: Path | None = None) -> np.ndarray:

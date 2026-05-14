@@ -3,7 +3,7 @@
 import numpy as np
 
 from qp.events.catalog import WaveTemplate
-from qp.signal.cross_correlation import ellipticity_inclination_tapered
+from qp.signal.polarization import ellipticity_inclination_tapered
 from qp.signal.synthetic import simulate_wave_physics
 
 

@@ -22,7 +22,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
+from _common import (  # noqa: E402
+    OUTPUT_DIR,
+    _check_mva_par_frac,
+    ensure_figures_dir,
+    setup_logging,
+)
 
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
 from qp.events.normalization import MIN_DWELL_MINUTES_PER_CELL  # noqa: E402
@@ -38,10 +43,6 @@ BAND_LABELS = {
     f"{_HARMONIC_HINT.get(b, '')})"
     for b in BANDS
 }
-
-#: Floor on dwell time per cell. Below this we treat the ratio as
-#: noise-dominated and mask. Shared with Fig 7.
-MIN_DWELL_MINUTES = MIN_DWELL_MINUTES_PER_CELL
 
 #: Gaussian smoothing scale, in cells. With dlat = 1 deg and dlt = 0.25 h
 #: this corresponds to ~2 deg latitude / 0.5 h LT. The smoothing wraps
@@ -70,6 +71,24 @@ def main() -> None:
     log.info("event-time : %s", ev_path.name)
     log.info("dwell      : %s", dw_path.name)
 
+    _check_mva_par_frac(ev)
+
+    # Preflight: this figure consumes the KMAG-traced inv-lat schema. If
+    # bin_events_round8.py / compute_dwell_grid.py were run without the
+    # KMAG path the variables are absent and the script would otherwise
+    # die mid-render with a confusing KeyError.
+    if "kmag_inv_lat" not in ev.coords:
+        raise SystemExit(
+            "event zarr lacks the 'kmag_inv_lat' coordinate — re-run "
+            "scripts/bin_events_round8.py with --with-kmag-trace."
+        )
+    if "kmag_inv_lat_closed_magnetosphere" not in dw.data_vars:
+        raise SystemExit(
+            f"dwell zarr at {dw_path.name} lacks "
+            "'kmag_inv_lat_closed_magnetosphere'. Regenerate the dwell "
+            "grid with the KMAG-trace step enabled."
+        )
+
     lt = ev["local_time"].values
     inv_lat = ev["kmag_inv_lat"].values
     # Closed-MS denominator. inv_lat is signed by spacecraft hemisphere
@@ -90,7 +109,7 @@ def main() -> None:
         ev_2d = ev[ev_var].values  # (inv_lat, LT)
         n_event_min[band] = float(ev_2d.sum())
         with np.errstate(divide="ignore", invalid="ignore"):
-            r = np.where(dw_kmag >= MIN_DWELL_MINUTES, ev_2d / dw_kmag, np.nan)
+            r = np.where(dw_kmag >= MIN_DWELL_MINUTES_PER_CELL, ev_2d / dw_kmag, np.nan)
         ratios[band] = _smooth(r)
 
     # Shared color scale across bands so the QP60 vs QP30/QP120 contrast is
@@ -153,8 +172,8 @@ def main() -> None:
     for ax in list(axes_north[1:]) + list(axes_south[1:]):
         ax.tick_params(axis="y", labelleft=False)
 
-    axes_north[0].set_ylabel("KMAG inv. lat. [deg]")
-    axes_south[0].set_ylabel("KMAG inv. lat. [deg]")
+    axes_north[0].set_ylabel("KMAG inv. lat. N [deg]")
+    axes_south[0].set_ylabel("KMAG inv. lat. S [deg]")
     cbar = fig.colorbar(
         images[1], ax=axes_grid.ravel().tolist(), fraction=0.025, pad=0.02
     )
@@ -164,7 +183,7 @@ def main() -> None:
     fig.suptitle(
         f"Figure 8 (round-8) — QP occurrence in KMAG inv. lat × LT  "
         f"(n={n_events} events; closed-field MS; "
-        f"{int(MIN_DWELL_MINUTES / 60)} h dwell floor; sigma={SMOOTHING_SIGMA} smooth)",
+        f"{int(MIN_DWELL_MINUTES_PER_CELL / 60)} h dwell floor; sigma={SMOOTHING_SIGMA} smooth)",
         fontsize=11,
     )
 

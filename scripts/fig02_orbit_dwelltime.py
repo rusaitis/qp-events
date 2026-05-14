@@ -8,8 +8,6 @@ Referee: remove spurious tilted dashed line, make green 10 R_S more visible.
 """
 
 import os
-import sys
-import types
 from pathlib import Path
 
 import matplotlib.colors as mcolors
@@ -18,29 +16,11 @@ import numpy as np
 
 _project_root = Path(__file__).resolve().parents[1]
 
-# Register stubs
-for mod_path in [
-    "__main__",
-    "data_sweeper",
-    "mag_fft_sweeper",
-    "cassinilib",
-    "cassinilib.NewSignal",
-    "cassinilib.PlotFFT",
-]:
-    if mod_path not in sys.modules:
-        sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in [
-        "SignalSnapshot",
-        "NewSignal",
-        "Interval",
-        "FFT_list",
-        "WaveSignal",
-        "Wave",
-    ]:
-        setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
+from qp.io.products import register_legacy_pickle_stubs  # noqa: E402
 
+register_legacy_pickle_stubs()
 
-import qp
+import qp  # noqa: E402
 from qp.plotting.style import style_axes, use_paper_style
 
 

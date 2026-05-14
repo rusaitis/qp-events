@@ -128,5 +128,5 @@ class TestOccurrenceConfigDefaults:
         cfg = OccurrenceConfig()
         with pytest.raises((AttributeError, Exception)):
             cfg.min_dwell_minutes = 999.0  # type: ignore[misc]
-        assert cfg.min_dwell_minutes == 60.0
+        assert cfg.min_dwell_minutes == MIN_DWELL_MINUTES_PER_CELL
         assert cfg.clip_max == 1.0

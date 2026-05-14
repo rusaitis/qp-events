@@ -12,11 +12,8 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 
 from qp.events.normalization import occurrence_rate, weighted_occurrence_rate
-from qp.signal.cross_correlation import (
-    classify_polarization,
-    ellipticity_inclination_tapered,
-    phase_shift,
-)
+from qp.signal.cross_correlation import classify_polarization, phase_shift
+from qp.signal.polarization import ellipticity_inclination_tapered
 
 # ── Phase 8.1 — Quality-weighted occurrence rate ───────────────────────────────
 

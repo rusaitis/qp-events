@@ -627,6 +627,9 @@ def detect_round8(
                 np.real(cwt_perp2[i_freq_peak, sl]),
             ]
         )
+        # NOTE: local `mva_parallel_fraction` is persisted as `mva_par_frac`
+        # in DetectedEvent / parquet / zarr (per CLAUDE.md canonical-name
+        # table). The two names refer to the same quantity.
         mva_parallel_fraction = mva_major_axis_parallel_fraction(
             field_bandpassed, par_axis=0
         )

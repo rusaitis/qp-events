@@ -21,9 +21,10 @@ import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
 #: Floor on per-cell dwell time below which the event/dwell ratio is
-#: too noisy to plot. 10 hours ≈ one PPO recurrence period: cells with
-#: less coverage than this cannot contain a statistically meaningful
-#: number of QP wave trains regardless of band. Shared by Figs 7 & 8.
+#: too noisy to plot. 600 min ≈ one PPO recurrence period (~10.7 h):
+#: cells with less coverage than this cannot contain a statistically
+#: meaningful number of QP wave trains regardless of band. Shared by
+#: Figs 7 & 8.
 MIN_DWELL_MINUTES_PER_CELL: float = 600.0
 
 
@@ -31,7 +32,7 @@ MIN_DWELL_MINUTES_PER_CELL: float = 600.0
 class OccurrenceConfig:
     """Knobs for occurrence-rate computation."""
 
-    min_dwell_minutes: float = 60.0  # 1 h floor
+    min_dwell_minutes: float = MIN_DWELL_MINUTES_PER_CELL
     clip_max: float = 1.0  # cap ratio at 100 %
 
 
@@ -42,7 +43,7 @@ def occurrence_rate(
     event_grid: ArrayLike,
     dwell_grid: ArrayLike,
     *,
-    min_dwell_minutes: float = 60.0,
+    min_dwell_minutes: float = MIN_DWELL_MINUTES_PER_CELL,
     clip_max: float | None = 1.0,
 ) -> NDArray[np.floating]:
     r"""Per-cell occurrence rate ``event_time / dwell_time``.
@@ -52,7 +53,7 @@ def occurrence_rate(
     event_grid, dwell_grid : array_like
         Cumulative event and dwell time, **same shape**, **same units**
         (minutes). Values must be non-negative.
-    min_dwell_minutes : float, default 60.0
+    min_dwell_minutes : float, default ``MIN_DWELL_MINUTES_PER_CELL`` (600)
         Cells with less than this much dwell are set to ``NaN`` to
         suppress noisy single-pass cells.
     clip_max : float or None, default 1.0
@@ -121,7 +122,7 @@ def weighted_occurrence_rate(
     weighted_event_grid: ArrayLike,
     dwell_grid: ArrayLike,
     *,
-    min_dwell_minutes: float = 60.0,
+    min_dwell_minutes: float = MIN_DWELL_MINUTES_PER_CELL,
     clip_max: float | None = 1.0,
 ) -> NDArray[np.floating]:
     r"""Quality-weighted occurrence rate.

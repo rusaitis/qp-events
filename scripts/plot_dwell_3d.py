@@ -39,7 +39,9 @@ def main():
         description="PyVista 3D equatorial dwell-time visualization",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--input", type=str, default="Output/dwell_grid.zarr")
+    parser.add_argument(
+        "--input", type=str, default="Output/dwell_grid_cassini_saturn.zarr"
+    )
     parser.add_argument("--variable", type=str, default="total")
     parser.add_argument(
         "--r-max", type=float, default=70.0, help="Max radial distance to display (R_S)"

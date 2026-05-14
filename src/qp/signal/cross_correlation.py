@@ -8,9 +8,8 @@ b_perp1 / b_perp2 cross-correlation peak:
     - 90° phase shift → circular polarization (most common)
     - 180° phase shift → linear polarization
 
-Stokes / ellipticity helpers were lifted to :mod:`qp.signal.polarization`;
-import them from there. They are re-exported here for back-compat with
-existing call sites — schedule for removal once consumers are migrated.
+Stokes / ellipticity helpers live in :mod:`qp.signal.polarization`;
+import them from there.
 """
 
 from __future__ import annotations
@@ -18,27 +17,12 @@ from __future__ import annotations
 import numpy as np
 from numpy.typing import ArrayLike
 
-from qp.signal.polarization import (
-    ellipticity_inclination,
-    ellipticity_inclination_tapered,
-    per_oscillation_ellipticity,
-    stokes_parameters,
-    stokes_parameters_real,
-    stokes_parameters_tapered,
-)
 from qp.signal.polarization_config import CIRCULAR_LINEAR_TOL_DEG
 
 __all__ = [
     "cross_correlate",
     "phase_shift",
     "classify_polarization",
-    # Re-exports for back-compat (canonical home: qp.signal.polarization).
-    "stokes_parameters",
-    "stokes_parameters_real",
-    "stokes_parameters_tapered",
-    "ellipticity_inclination",
-    "ellipticity_inclination_tapered",
-    "per_oscillation_ellipticity",
 ]
 
 

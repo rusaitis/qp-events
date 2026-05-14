@@ -11,7 +11,7 @@ Loads the zarr dataset produced by compute_dwell_grid.py and creates:
 Usage
 -----
     uv run python scripts/plot_dwell_slices.py
-    uv run python scripts/plot_dwell_slices.py --input Output/dwell_grid.zarr
+    uv run python scripts/plot_dwell_slices.py --input Output/dwell_grid_cassini_saturn.zarr
 """
 
 from __future__ import annotations
@@ -95,7 +95,9 @@ def meridian_slice(ds, ax, lt_center, lt_half_width=1.0, variable="total", title
 
 def main():
     parser = argparse.ArgumentParser(description="Plot dwell-time grid slices")
-    parser.add_argument("--input", type=str, default="Output/dwell_grid.zarr")
+    parser.add_argument(
+        "--input", type=str, default="Output/dwell_grid_cassini_saturn.zarr"
+    )
     parser.add_argument("--output-dir", type=str, default="Output")
     parser.add_argument(
         "--variable",

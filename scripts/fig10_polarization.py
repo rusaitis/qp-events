@@ -14,8 +14,6 @@ carry their literal physical meaning for any band (QP30 / QP60 / QP120).
 Referee: full 360° range, no phase-jump artifacts.
 """
 
-import sys
-import types
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -25,28 +23,9 @@ from scipy import signal as sig
 
 _project_root = Path(__file__).resolve().parents[1]
 
-# Register stubs.
-# DO NOT REMOVE: stub names match the module paths used when the legacy
-# DataProducts/*.npy arrays were pickled. Removing them silently breaks np.load().
-for mod_path in [
-    "__main__",
-    "data_sweeper",
-    "mag_fft_sweeper",
-    "cassinilib",
-    "cassinilib.NewSignal",
-    "cassinilib.PlotFFT",
-]:
-    if mod_path not in sys.modules:
-        sys.modules[mod_path] = types.ModuleType(mod_path)
-    for cls_name in [
-        "SignalSnapshot",
-        "NewSignal",
-        "Interval",
-        "FFT_list",
-        "WaveSignal",
-        "Wave",
-    ]:
-        setattr(sys.modules[mod_path], cls_name, type(cls_name, (), {}))
+from qp.io.products import register_legacy_pickle_stubs  # noqa: E402
+
+register_legacy_pickle_stubs()
 
 
 import qp
