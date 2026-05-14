@@ -30,6 +30,7 @@ from typing import Any
 import numpy as np
 
 import qp
+from qp.dwell.grid import region_name
 
 __all__ = [
     "SegmentPayload",
@@ -39,14 +40,6 @@ __all__ = [
     "ppo_at_peak_from_info",
     "region_at_peak_from_info",
 ]
-
-
-_REGION_CODE_TO_NAME = {
-    0: "magnetosphere",
-    1: "magnetosheath",
-    2: "solar_wind",
-    9: "unknown",
-}
 
 _INFO_KEYS_TO_KEEP = (
     "median_LT",
@@ -64,7 +57,7 @@ _INFO_KEYS_TO_KEEP = (
 )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SegmentPayload:
     """Picklable view of a single 36-hour MFA segment.
 
@@ -268,4 +261,4 @@ def region_at_peak_from_info(
         code = int(locations[idx])
     except (TypeError, ValueError):
         return "unknown"
-    return _REGION_CODE_TO_NAME.get(code, "unknown")
+    return region_name(code)

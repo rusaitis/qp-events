@@ -31,9 +31,7 @@ class WaveEvent:
     # Legacy fields (kept for back-compat)
     # ------------------------------------------------------------------
     period: float | None = None  # dominant period in seconds
-    period_std: float | None = None  # period uncertainty
     amplitude: float | None = None  # peak amplitude in nT
-    amplitude_std: float | None = None
     snr: float | None = None  # signal-to-noise ratio (or prominence)
     local_time: float | None = None  # hours
     mag_lat: float | None = None  # magnetic latitude (degrees)
@@ -42,7 +40,6 @@ class WaveEvent:
     coord_ksm: tuple[float, float, float] | None = None
     coord_krtp: tuple[float, float, float] | None = None
     closed_field_line: bool | None = None
-    comment: str = ""
 
     # ------------------------------------------------------------------
     # Phase 1+ fields

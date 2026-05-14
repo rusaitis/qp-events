@@ -208,12 +208,17 @@ def main() -> None:
     # canonical schema.
     records = df_out.to_dict(orient="records")
     n_written = events_to_parquet(records, args.output, attrs=enriched_attrs)
-    log.info("wrote %d enriched events to %s", n_written, args.output)
-    print(
-        f"Enriched {n_written} events → {args.output}\n"
-        f"  closed lines: {result.n_closed} / {n_events}"
-        f" ({100 * result.n_closed / n_events:.1f}%)\n"
-        f"  tracing time: {elapsed:.1f}s ({n_events / elapsed:.0f} traces/s)",
+    log.info(
+        "Enriched %d events → %s\n"
+        "  closed lines: %d / %d (%.1f%%)\n"
+        "  tracing time: %.1fs (%.0f traces/s)",
+        n_written,
+        args.output,
+        result.n_closed,
+        n_events,
+        100 * result.n_closed / n_events,
+        elapsed,
+        n_events / elapsed,
     )
     # Optional: write a tiny enrichment-summary JSON next to the parquet.
     summary_path = args.output.with_suffix(args.output.suffix + ".enrich.json")

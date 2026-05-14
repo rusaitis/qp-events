@@ -31,7 +31,7 @@ from qp.time_utils import parse_datetime, to_timestamp
 log = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class MagSegment:
     r"""A time segment of Cassini MAG data.
 

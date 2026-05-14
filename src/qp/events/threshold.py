@@ -280,7 +280,7 @@ class GateConfig:
     """
 
     fft_ratio_threshold: float = 5.0
-    n_sigma: float = 5.0  # calibrated by scripts/calibrate_threshold.py
+    n_sigma: float = 5.0
     min_duration_hours: float = 2.5
     min_pixels: int = 300
     min_oscillations: float = 3.0

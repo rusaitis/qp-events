@@ -488,7 +488,6 @@ def main() -> None:
         args.output,
         attrs["elapsed_seconds"],
     )
-    print(f"Wrote {n_written} events to {args.output}")
 
 
 if __name__ == "__main__":

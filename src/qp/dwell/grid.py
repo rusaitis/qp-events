@@ -26,6 +26,13 @@ REGION_CODES: dict[int, str] = {
 }
 
 
+def region_name(code: int | None) -> str:
+    """Map a Jackman boundary-crossing region code to its canonical name."""
+    if code is None:
+        return "unknown"
+    return REGION_CODES.get(int(code), "unknown")
+
+
 @dataclass(frozen=True, slots=True)
 class DwellGridConfig:
     r"""Configuration for the spherical dwell-time grid.

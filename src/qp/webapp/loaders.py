@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 import qp
+from qp.dwell.grid import region_name
 from qp.events.sweep_loader import (
     SegmentPayload,
     segment_to_payload,
@@ -27,13 +28,6 @@ from qp.signal.fft import welch_psd
 
 register_legacy_pickle_stubs()
 
-
-_REGION_CODE_TO_NAME = {
-    0: "magnetosphere",
-    1: "magnetosheath",
-    2: "solar_wind",
-    9: "unknown",
-}
 
 EVENTS_PARQUET: Path = qp.OUTPUT_DIR / "events_round8.parquet"
 SEGMENTS_NPY: Path = qp.DATA_PRODUCTS / "Cassini_MAG_MFA_36H.npy"
@@ -150,7 +144,7 @@ def _region_spans(
             {
                 "t0": t0.isoformat(),
                 "t1": t1.isoformat(),
-                "region": _REGION_CODE_TO_NAME.get(code, "unknown"),
+                "region": region_name(code),
             }
         )
     if pairs[0][0] > t_start:
@@ -376,7 +370,7 @@ def region_intervals() -> list[dict[str, Any]]:
             {
                 "epoch_start": t0,
                 "epoch_end": t1,
-                "region": _REGION_CODE_TO_NAME.get(int(codes[i]), "unknown"),
+                "region": region_name(int(codes[i])),
             }
         )
     # Tail interval until end of mission (2017-09-15) keeps coverage complete.
@@ -387,7 +381,7 @@ def region_intervals() -> list[dict[str, Any]]:
             {
                 "epoch_start": t_last,
                 "epoch_end": t_end,
-                "region": _REGION_CODE_TO_NAME.get(int(codes[-1]), "unknown"),
+                "region": region_name(int(codes[-1])),
             }
         )
     return out

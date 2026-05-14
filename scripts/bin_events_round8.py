@@ -496,11 +496,12 @@ def main() -> None:
             100.0 * loss_frac,
             args.trace_every,
         )
-    print(
-        f"Wrote {args.output}\n"
-        f"  bands: {bands}\n"
-        f"  total event minutes (grid): {total_minutes_in_grid:.0f}\n"
-        f"  sum(duration_minutes) + n_events: {expected_grid_total:.0f}"
+    log.info(
+        "Wrote %s\n  bands: %s\n  total event minutes (grid): %.0f\n  sum(duration_minutes) + n_events: %.0f",
+        args.output,
+        bands,
+        total_minutes_in_grid,
+        expected_grid_total,
     )
 
 
