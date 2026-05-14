@@ -1,18 +1,14 @@
-"""Magnetic field line tracing, KMAG interface, and dwell time computation."""
+"""Magnetic field line tracing and KMAG interface.
+
+For dwell-time accumulation see :mod:`qp.dwell.grid` (canonical pipeline
+behind ``Output/dwell_grid_cassini_saturn.zarr``).
+"""
 
 from qp.analysis.filtering import (
     bin_centers,
     bin_edges,
     bin_to_value,
     value_to_bin,
-)
-from qp.fieldline.dwell_time import (
-    compute_dwell_time_map,
-    filter_dwell_map,
-    normalize_event_to_dwell,
-    reduce_to_lt,
-    reduce_to_lt_lat,
-    reduce_to_mlat,
 )
 from qp.fieldline.kmag_model import (
     SaturnField,

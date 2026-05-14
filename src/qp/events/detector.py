@@ -48,6 +48,15 @@ if TYPE_CHECKING:
 #: production default.
 ThresholdMethod = Literal["mad_row", "tc_chi2", "fdr_chi2", "pooled"]
 
+#: Time window (s) for declaring two peaks duplicates. Used both by the
+#: in-segment dedup (:func:`dedup_peaks_by_period`) and by the catalogue-
+#: level pass in :mod:`qp.events.dedup` (re-exported there as
+#: ``DEFAULT_DT_SEC``). 2 h is the longest QP-band wave-train length plus a
+#: half-period cushion; distinct trains in the same band are separated by
+#: ~10 h (PPO). Defined here at module top because it is used as a default
+#: argument in :func:`dedup_peaks_by_period` below.
+DEDUP_WINDOW_SEC: float = 7200.0
+
 # Imported lazily inside functions to avoid an import cycle:
 #   qp.events.threshold imports qp.signal.pipeline.SpectralResult
 #   qp.signal.pipeline currently does not import qp.events, so we're
@@ -194,7 +203,7 @@ def _ridge_to_packet(
 
 def dedup_peaks_by_period(
     peaks: list[WavePacketPeak],
-    dt_sec: float = 7200.0,
+    dt_sec: float = DEDUP_WINDOW_SEC,
     *,
     period_log2_tol: float = 0.5,
 ) -> list[WavePacketPeak]:
@@ -272,6 +281,13 @@ def dedup_peaks_by_period(
 #   narrowness      spectral Q-factor              >= 3
 #   transversality  MVA major-axis projection      |e_max . b_par|^2 <= 0.5
 #   polarization    Stokes degree d                >= 0.7
+#
+# MVA = Minimum Variance Analysis (Sonnerup & Cahill 1967). `mva_par_frac`
+# is the squared projection of the principal MVA eigenvector e_max onto
+# the local mean-field direction b̂ — i.e. cos²(MVA major axis, B). A
+# transverse Alfvén wave drives perturbations perpendicular to B, so a
+# pure FLR sits near 0; a compressional fluctuation aligned with B
+# saturates near 1. The 0.5 cutoff is the cos²(45°) midpoint.
 #
 # Plus three housekeeping rules: duration >= 2 h, dedup 2 h same-band,
 # min_pixels 10. See the round-7/round-8 retrospectives in
@@ -576,7 +592,7 @@ def detect_round8(
         all_peaks.extend(peaks)
 
     all_peaks.sort(key=lambda p: p.peak_time)
-    merged = dedup_peaks_by_period(all_peaks, dt_sec=7200.0)
+    merged = dedup_peaks_by_period(all_peaks, dt_sec=DEDUP_WINDOW_SEC)
 
     # Per-detection physical gates.
     n_time = cwt1.shape[1]
@@ -660,7 +676,7 @@ def detect_round8(
 
 def dedup_peaks_by_band(
     peaks: list[WavePacketPeak],
-    dt_sec: float = 7200.0,
+    dt_sec: float = DEDUP_WINDOW_SEC,
     *,
     period_log2_tol: float = 0.5,
 ) -> list[WavePacketPeak]:

@@ -42,7 +42,17 @@ from qp.fieldline.saturn_coords import (
 
 @dataclass(frozen=True, slots=True)
 class SaturnFieldConfig:
-    """Configuration for the KMAG Saturn magnetic field model."""
+    """Configuration for the KMAG Saturn magnetic field model.
+
+    The defaults are the nominal Khurana 2020 values used throughout the
+    QP paper: ``dp = 0.017 nPa`` is within ~1% of the bias-minimizing
+    solar-wind dynamic pressure at L=10–20; ``by_imf = -0.2 nT`` and
+    ``bz_imf = 0.1 nT`` are nominal IMF components. KMAG is largely
+    insensitive to the IMF inside L≈20 (the Cassini mission median is
+    ≈0), so the small non-zero defaults exist mainly to seed the
+    pressure-scaled magnetopause / current-sheet model without
+    degenerating to zero shielding.
+    """
 
     dp: float = 0.017  # solar wind dynamic pressure (nPa)
     by_imf: float = -0.2  # IMF By component (nT, KSM)

@@ -33,6 +33,7 @@ import qp
 from qp.dwell.grid import region_name
 
 __all__ = [
+    "MIN_SAMPLES_PER_SEGMENT",
     "SegmentPayload",
     "load_segments",
     "segment_to_payload",
@@ -40,6 +41,10 @@ __all__ = [
     "ppo_at_peak_from_info",
     "region_at_peak_from_info",
 ]
+
+# Half of a 36-h segment in 1-min samples. Below this the FFT background
+# estimate is unreliable and the segment is dropped before detection.
+MIN_SAMPLES_PER_SEGMENT: int = 18 * 60
 
 _INFO_KEYS_TO_KEEP = (
     "median_LT",
@@ -145,7 +150,7 @@ def segment_to_payload(seg_idx: int, seg: Any) -> SegmentPayload | None:
         return None
     times = list(seg.datetime)
     n_samples = len(times)
-    if n_samples < 18 * 60:
+    if n_samples < MIN_SAMPLES_PER_SEGMENT:
         return None
     b_par = np.asarray(seg.FIELDS[0].y, dtype=float)
     b_perp1 = np.asarray(seg.FIELDS[1].y, dtype=float)

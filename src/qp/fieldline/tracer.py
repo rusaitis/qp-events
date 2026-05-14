@@ -24,6 +24,13 @@ SATURN_DIPOLE_MOMENT = 380.0  # Approximately 0.2154 Gauss * R_S^3
 # Saturn oblateness: (R_eq - R_pol) / R_eq ≈ 0.09796
 SATURN_FLATTENING = 0.09796
 
+# Default RK4 tracing parameters. Used as the default values of the public
+# tracer signatures below so a caller can opt into different precision /
+# safety limits without re-typing the literals.
+TRACE_STEP_RS: float = 0.05  # RK4 step (R_S)
+TRACE_MAX_STEPS: int = 100_000  # Loop safety cap
+TRACE_MAX_RADIUS_RS: float = 300.0  # Outer-boundary stop (R_S)
+
 
 class FieldModel(Protocol):
     """Protocol for a magnetic field model callable.
@@ -122,8 +129,8 @@ def dipole_field(position: ArrayLike) -> np.ndarray:
         Magnetic field in nT (Cartesian components).
     """
     pos = np.asarray(position, dtype=float)
-    single = pos.ndim == 1
-    if single:
+    is_scalar_input = pos.ndim == 1
+    if is_scalar_input:
         pos = pos[np.newaxis, :]
 
     x, y, z = pos[:, 0], pos[:, 1], pos[:, 2]
@@ -137,15 +144,15 @@ def dipole_field(position: ArrayLike) -> np.ndarray:
     Bz = M * (3 * z**2 - r**2) / r5
 
     B = np.stack([Bx, By, Bz], axis=-1)
-    return B[0] if single else B
+    return B[0] if is_scalar_input else B
 
 
 def trace_dipole_fieldline(
     start_position: ArrayLike,
-    step: float = 0.05,
-    max_steps: int = 100000,
+    step: float = TRACE_STEP_RS,
+    max_steps: int = TRACE_MAX_STEPS,
     min_radius: float = 1.0,
-    max_radius: float = 300.0,
+    max_radius: float = TRACE_MAX_RADIUS_RS,
 ) -> np.ndarray:
     """Trace a field line in a dipole field using RK4.
 
@@ -193,7 +200,7 @@ def trace_dipole_fieldline(
 
 def trace_dipole_fieldline_bidirectional(
     start_position: ArrayLike,
-    step: float = 0.05,
+    step: float = TRACE_STEP_RS,
     **kwargs,
 ) -> np.ndarray:
     """Trace a field line in both directions from the starting point."""
@@ -237,9 +244,9 @@ def trace_fieldline(
     field_func: FieldModel,
     start_position: ArrayLike,
     step: float = 0.01,
-    max_steps: int = 100000,
+    max_steps: int = TRACE_MAX_STEPS,
     min_radius: float = 1.0,
-    max_radius: float = 300.0,
+    max_radius: float = TRACE_MAX_RADIUS_RS,
     flattening: float = 0.0,
 ) -> FieldLineTrace:
     """Trace a field line using RK4 for any magnetic field model.

@@ -134,7 +134,7 @@ def build_band_masks(
         [band_lookup(p) for p in period_arr],
         dtype=object,
     )
-    n_unmapped = int(np.sum(band_for_row == None))  # noqa: E711
+    n_unmapped = sum(1 for v in band_for_row if v is None)
 
     masks: dict[str, np.ndarray] = {}
     for band in bands:
@@ -171,7 +171,7 @@ class BinningStats:
         return self.n_binned / max(self.n_total, 1)
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SegmentPositions:
     """Minimal per-segment data needed for walking binning.
 
@@ -413,7 +413,7 @@ def _accumulate_mask(
 # ----------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class SegmentPositionsExt(SegmentPositions):
     """Per-segment positions enriched with KSM cartesian + region codes.
 

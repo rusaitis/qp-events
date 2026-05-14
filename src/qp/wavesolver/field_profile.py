@@ -34,7 +34,7 @@ from qp.wavesolver.density import (
 DENSITY_FLOOR_RELATIVISTIC = "relativistic"
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class FieldLineProfile:
     """All physical quantities along a traced field line.
 

@@ -50,6 +50,7 @@ from qp.events.detector import (  # noqa: E402
 from qp.events.peak_kmag import J2000_POSIX, kmag_peak_columns  # noqa: E402
 from qp.events.persistence import event_to_record, events_to_parquet  # noqa: E402
 from qp.events.sweep_loader import (  # noqa: E402
+    MIN_SAMPLES_PER_SEGMENT,
     load_segments,
     ppo_at_peak_from_info,
     region_at_peak_from_info,
@@ -230,10 +231,10 @@ def _amp_within_cap(d: DetectedEvent, cap_nT: float) -> bool:
 def process_segment(payload: SegmentDetectionPayload) -> list[dict]:
     """Worker entry point: detect events and return parquet-ready rows."""
     times = payload.times
-    if len(times) < 18 * 60:
+    if len(times) < MIN_SAMPLES_PER_SEGMENT:
         return []
     info = payload.info or {}
-    if info.get("NaN_count", 0) and info["NaN_count"] > 18 * 60:
+    if info.get("NaN_count", 0) and info["NaN_count"] > MIN_SAMPLES_PER_SEGMENT:
         return []
 
     seg_t0 = times[0]

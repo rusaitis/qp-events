@@ -9,6 +9,11 @@ where $s$ is arc length, $h_i$ is the scale factor ($i=1$ toroidal, $i=2$
 poloidal), $B$ is field magnitude, $v_A$ is Alfvén speed, and $\omega$ is
 the angular frequency.
 
+In code, the symbol ``dlnh`` always denotes the log-derivative
+$\frac{d}{ds}\ln(h_i^{2}B)$ — the scale-factor-weighted source term that
+multiplies $dy/ds$ above. It enters the integrator as a precomputed
+cubic spline (``dlnh_spline``) over the field line's arc-length grid.
+
 This is converted to a first-order system for `scipy.integrate.solve_ivp`:
 
 - $y_0 = y$ (displacement)

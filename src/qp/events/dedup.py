@@ -35,13 +35,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from qp.events.detector import DEDUP_WINDOW_SEC as DEFAULT_DT_SEC
+
 if TYPE_CHECKING:
     import pandas as pd
 
 log = logging.getLogger(__name__)
 
 
-DEFAULT_DT_SEC: float = 7200.0
 DEFAULT_PERIOD_REL_TOL: float = 0.10
 
 

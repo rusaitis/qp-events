@@ -29,7 +29,7 @@ from scipy.constants import mu_0 as MU0
 from scipy.constants import speed_of_light as SPEED_OF_LIGHT
 from scipy.interpolate import CubicSpline
 
-SATURN_RADIUS = 60268e3  # Saturn equatorial radius (m) — no scipy constant
+from qp.constants import SATURN_RADIUS
 
 # ============================================================================
 # Digitized observational data
