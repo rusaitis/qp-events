@@ -25,6 +25,8 @@ import numpy as np  # noqa: E402
 from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
 
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
+from qp.events.normalization import MIN_DWELL_MINUTES_PER_CELL  # noqa: E402
+from qp.plotting.maps import smooth_2d_nan_aware  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -38,33 +40,20 @@ BAND_LABELS = {
 }
 
 #: Floor on dwell time per cell. Below this we treat the ratio as
-#: noise-dominated and mask.
-MIN_DWELL_MINUTES = 600.0  # 10 hours
+#: noise-dominated and mask. Shared with Fig 7.
+MIN_DWELL_MINUTES = MIN_DWELL_MINUTES_PER_CELL
 
 #: Gaussian smoothing scale, in cells. With dlat = 1 deg and dlt = 0.25 h
-#: this corresponds to ~2 deg latitude / 0.5 h LT.
+#: this corresponds to ~2 deg latitude / 0.5 h LT. The smoothing wraps
+#: across the midnight seam (LT=0/24): without that, the post-dusk
+#: QP30/QP60 peaks near 23-24 LT would not bleed into 0-1 LT and the
+#: figure would show an artificial discontinuity at midnight.
 SMOOTHING_SIGMA = 2.0
 
 
 def _smooth(arr: np.ndarray, sigma: float = SMOOTHING_SIGMA) -> np.ndarray:
-    """Gaussian-smooth a 2D ``(inv_lat, LT)`` array, ignoring NaN cells.
-
-    Axis 0 (inv_lat) uses ``mode="reflect"``; axis 1 (LT) uses
-    ``mode="wrap"`` because local time is physically periodic over
-    [0, 24). Without the wrap, the post-dusk QP30/QP60 peaks near
-    23-24 LT would not bleed into 0-1 LT, leaving an artificial seam
-    at the midnight boundary.
-    """
-    from scipy.ndimage import gaussian_filter
-
-    valid = np.isfinite(arr)
-    filled = np.where(valid, arr, 0.0)
-    mode = ("reflect", "wrap")
-    sm = gaussian_filter(filled, sigma=sigma, mode=mode)
-    wt = gaussian_filter(valid.astype(float), sigma=sigma, mode=mode)
-    out = np.where(wt > 0, sm / wt, np.nan)
-    out[~valid] = np.nan
-    return out
+    """Periodic-LT Gaussian smoothing of an ``(inv_lat, LT)`` grid."""
+    return smooth_2d_nan_aware(arr, sigma, periodic_axis=1)
 
 
 def main() -> None:

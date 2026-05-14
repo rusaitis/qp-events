@@ -359,23 +359,23 @@ def _build_panel(event_id: int, *, hours_pad: float) -> dict[str, Any] | None:
         if not np.isfinite(arr).all():
             arr[~np.isfinite(arr)] = np.nanmean(arr)
 
-    freq, _, cwt1 = morlet_cwt(b_perp1, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
-    _, _, cwt2 = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
-    power1 = np.abs(cwt1)
-    power2 = np.abs(cwt2)
+    freq, _, cwt_perp1 = morlet_cwt(b_perp1, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
+    _, _, cwt_perp2 = morlet_cwt(b_perp2, dt=DT_SEC, n_freqs=N_FREQS_PANEL)
+    power_perp1 = np.abs(cwt_perp1)
+    power_perp2 = np.abs(cwt_perp2)
     # Display the max of the two perpendicular powers — detector fires
     # on whichever component triggers, so the max is what catches the
     # eye. The σ computation downstream operates on each component
     # separately (matching the detector's gate) and returns the larger.
-    power = np.maximum(power1, power2)
+    power = np.maximum(power_perp1, power_perp2)
     n_sigma = bonferroni_n_sigma_for_cwt(
         power.shape[1],
         DT_SEC,
         freq,
         alpha=SEGMENT_FWER_ALPHA,
     )
-    mask = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma) | wavelet_sigma_mask(
-        power2, freq, n_sigma=n_sigma
+    mask = wavelet_sigma_mask(power_perp1, freq, n_sigma=n_sigma) | wavelet_sigma_mask(
+        power_perp2, freq, n_sigma=n_sigma
     )
 
     period_min = (1.0 / freq) / 60.0
@@ -413,9 +413,9 @@ def _build_panel(event_id: int, *, hours_pad: float) -> dict[str, Any] | None:
         "freq": freq,
         "period_min": period_min,
         "times_h": times_h,
-        "power": power,  # max(|cwt1|, |cwt2|) for display
-        "power1": power1,  # |cwt(b_perp1)| for per-component σ
-        "power2": power2,  # |cwt(b_perp2)| for per-component σ
+        "power": power,  # max(|cwt(b_perp1)|, |cwt(b_perp2)|) for display
+        "power1": power_perp1,  # |cwt(b_perp1)| for per-component σ
+        "power2": power_perp2,  # |cwt(b_perp2)| for per-component σ
         "mask": mask,  # union of both σ-masks (detector-equivalent)
         "n_sigma": float(n_sigma),
         "peak": peak,

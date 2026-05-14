@@ -47,6 +47,16 @@ _DENSITY_MODELS: dict[str, type] = {
     "uniform": UniformDensity,
 }
 
+# Ionospheric footpoint radius for dipole tracing. Offset from 1.0 R_S
+# so the trace starts just above the planet surface, where the dipole
+# expression is non-singular and the field is well-defined.
+IONOSPHERIC_START_RS = 1.1
+
+# Local-time → azimuthal-angle conversion. 24 h around the planet maps
+# to 360°, with noon at φ=0 and midnight at φ=π.
+LT_NOON_HOURS = 12.0
+DEG_PER_LT_HOUR = 360.0 / 24.0
+
 
 @dataclass(frozen=True, slots=True)
 class WavesolverConfig:
@@ -321,12 +331,12 @@ def _starting_position(config: WavesolverConfig) -> np.ndarray:
     (for backwards compatibility).
     """
     # Local time → azimuthal angle (0h=midnight → φ=π, 12h=noon → φ=0)
-    phi = math.radians((config.local_time_hours - 12.0) * 15.0)
+    phi = math.radians((config.local_time_hours - LT_NOON_HOURS) * DEG_PER_LT_HOUR)
 
     if config.colatitude is not None:
         # Explicit colatitude: start from ionosphere
         colat_rad = math.radians(config.colatitude)
-        r0 = 1.1
+        r0 = IONOSPHERIC_START_RS
         x = r0 * math.sin(colat_rad) * math.cos(phi)
         y = r0 * math.sin(colat_rad) * math.sin(phi)
         z = r0 * math.cos(colat_rad)
@@ -343,7 +353,7 @@ def _starting_position(config: WavesolverConfig) -> np.ndarray:
     # Dipole: start from ionosphere using exact formula
     sin_colat = 1.0 / math.sqrt(config.l_shell)
     colat_rad = math.asin(sin_colat)
-    r0 = 1.1
+    r0 = IONOSPHERIC_START_RS
     x = r0 * math.sin(colat_rad) * math.cos(phi)
     y = r0 * math.sin(colat_rad) * math.sin(phi)
     z = r0 * math.cos(colat_rad)

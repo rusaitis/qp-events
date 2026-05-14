@@ -40,6 +40,7 @@ from _common import FIGURES_DIR, setup_logging  # noqa: E402
 
 import qp  # noqa: E402
 from qp.events.footprints import apply_filter, read_zarr  # noqa: E402
+from qp.plotting.maps import smooth_2d_nan_aware  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -53,18 +54,15 @@ SMOOTHING_SIGMA_DEFAULT = 2.0
 
 
 def _smooth(arr: np.ndarray, sigma: float) -> np.ndarray:
-    """Gaussian-smooth a 2D array, ignoring NaN cells (mirrors Fig 8)."""
+    """Gaussian-smooth a 2D array, ignoring NaN cells.
+
+    Unlike Fig 8's smoothing, this one is non-periodic on both axes —
+    the filtered-events views can render any 2D grid (``(lat, LT)``,
+    ``(L_eq, LT)``, etc.), not all of which have a periodic LT axis.
+    """
     if sigma <= 0:
         return arr
-    from scipy.ndimage import gaussian_filter
-
-    valid = np.isfinite(arr)
-    filled = np.where(valid, arr, 0.0)
-    sm = gaussian_filter(filled, sigma=sigma)
-    wt = gaussian_filter(valid.astype(float), sigma=sigma)
-    out = np.where(wt > 0, sm / wt, np.nan)
-    out[~valid] = np.nan
-    return out
+    return smooth_2d_nan_aware(arr, sigma)
 
 
 def _load_denominator(grid: str) -> tuple[np.ndarray, dict[str, np.ndarray], str]:

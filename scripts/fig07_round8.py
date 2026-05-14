@@ -27,7 +27,11 @@ import numpy as np  # noqa: E402
 from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
 
 from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
-from qp.events.normalization import collapse_to_latitude, slice_lt_sector  # noqa: E402
+from qp.events.normalization import (  # noqa: E402
+    MIN_DWELL_MINUTES_PER_CELL,
+    collapse_to_latitude,
+    slice_lt_sector,
+)
 from qp.plotting.style import use_paper_style  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -44,12 +48,17 @@ BAND_COLORS = QP_BAND_COLORS
 
 #: Floor on summed dwell time per latitude bin. Bins below this floor
 #: produce ratio NaN — they have too little Cassini coverage to be
-#: trusted.
-MIN_DWELL_MINUTES_LATITUDE = 600.0  # 10 hours
+#: trusted. Shared with Fig 8 via :data:`qp.events.normalization`.
+MIN_DWELL_MINUTES_LATITUDE = MIN_DWELL_MINUTES_PER_CELL
 
 #: Latitude rebinning width. Native dwell grid is 1 deg; collapse to 5 deg
 #: to recover the latitude trend without wallpapering single-cell noise.
 LAT_BIN_WIDTH_DEG = 5.0
+
+#: Poisson bootstrap resample count for the 16–84 % confidence band on
+#: the per-latitude event/dwell ratio. 500 is enough to resolve the band
+#: to ~5 % of its width without making the figure-build wall-clock heavy.
+BOOTSTRAP_RESAMPLES = 500
 
 
 def _rebin_latitude(
@@ -70,7 +79,7 @@ def _rebin_latitude(
 def _bootstrap_band(
     ev_1d: np.ndarray,
     dw_1d: np.ndarray,
-    n: int = 500,
+    n: int = BOOTSTRAP_RESAMPLES,
     rng: np.random.Generator | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Poisson bootstrap of the per-latitude ratio."""

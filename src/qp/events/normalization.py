@@ -20,6 +20,12 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+#: Floor on per-cell dwell time below which the event/dwell ratio is
+#: too noisy to plot. 10 hours ≈ one PPO recurrence period: cells with
+#: less coverage than this cannot contain a statistically meaningful
+#: number of QP wave trains regardless of band. Shared by Figs 7 & 8.
+MIN_DWELL_MINUTES_PER_CELL: float = 600.0
+
 
 @dataclass(frozen=True, slots=True)
 class OccurrenceConfig:

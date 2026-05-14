@@ -6,12 +6,71 @@ Used for Figures 2b, 7, 8, SI1, SI2.
 from __future__ import annotations
 
 import copy
+from typing import Literal
 
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import ArrayLike
+
+
+def smooth_2d_nan_aware(
+    arr: np.ndarray,
+    sigma: float,
+    *,
+    periodic_axis: Literal[0, 1] | None = None,
+) -> np.ndarray:
+    """Gaussian-smooth a 2D grid while ignoring NaN cells.
+
+    Cells that are NaN in the input stay NaN in the output (no value is
+    invented). Finite cells get a kernel-weighted average of their
+    neighbours, with the weight at each neighbour scaled by whether that
+    neighbour itself was finite. Equivalent to convolving the finite
+    mask and the filled array separately, then dividing — the standard
+    NaN-aware smoothing recipe.
+
+    Parameters
+    ----------
+    arr : ndarray, shape (n0, n1)
+        2D array, may contain NaN.
+    sigma : float
+        Kernel standard deviation, in cells (same convention as
+        :func:`scipy.ndimage.gaussian_filter`).
+    periodic_axis : {0, 1, None}, default None
+        If 0 or 1, that axis is treated as periodic (``mode='wrap'``).
+        The other axis uses ``mode='reflect'``. Use ``periodic_axis=1``
+        for a 2D ``(lat, LT)`` grid so the kernel wraps across the
+        midnight seam at LT=0/24.
+
+    Returns
+    -------
+    smoothed : ndarray, same shape as ``arr``
+        NaN-preserving Gaussian smoothing.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    valid = np.isfinite(arr)
+    filled = np.where(valid, arr, 0.0)
+
+    # Per-axis mode tuple chosen so the Literal annotation in scipy's stubs
+    # is satisfied without a runtime cast.
+    if periodic_axis is None:
+        smoothed = gaussian_filter(filled, sigma=sigma, mode="reflect")
+        weight = gaussian_filter(valid.astype(float), sigma=sigma, mode="reflect")
+    elif periodic_axis == 0:
+        smoothed = gaussian_filter(filled, sigma=sigma, mode=["wrap", "reflect"])
+        weight = gaussian_filter(
+            valid.astype(float), sigma=sigma, mode=["wrap", "reflect"]
+        )
+    else:
+        smoothed = gaussian_filter(filled, sigma=sigma, mode=["reflect", "wrap"])
+        weight = gaussian_filter(
+            valid.astype(float), sigma=sigma, mode=["reflect", "wrap"]
+        )
+    out = np.where(weight > 0, smoothed / weight, np.nan)
+    out[~valid] = np.nan
+    return out
 
 
 def plot_lt_lat_heatmap(

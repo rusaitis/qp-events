@@ -77,6 +77,16 @@ log = logging.getLogger(__name__)
 # rerunning the detector.
 # ---------------------------------------------------------------------
 
+#: Outer period range (minutes) for the "fine" log-spaced band scheme.
+#: Brackets the three paper bands (QP30/60/120) with one bin of headroom
+#: on each side, so cross-band leakage is visible without polluting the
+#: paper bands themselves.
+_FINE_BAND_RANGE_MIN: tuple[float, float] = (15.0, 180.0)
+#: Number of fine bands (log-spaced). Five gives an octave of coverage
+#: above and below the central QP60 band — enough to resolve the
+#: harmonic relation without overfitting the dwell denominator.
+_FINE_BAND_COUNT: int = 5
+
 
 def _paper_bands() -> tuple[list[str], dict[str, tuple[float, float]]]:
     bands = list(QP_BAND_NAMES)
@@ -88,11 +98,15 @@ def _paper_bands() -> tuple[list[str], dict[str, tuple[float, float]]]:
 
 
 def _fine_bands() -> tuple[list[str], dict[str, tuple[float, float]]]:
-    """5 log-spaced bands across 15-180 min."""
-    edges_min = np.geomspace(15.0, 180.0, num=6)
+    """Log-spaced fallback band scheme (sees ``_FINE_BAND_*`` constants)."""
+    edges_min = np.geomspace(
+        _FINE_BAND_RANGE_MIN[0],
+        _FINE_BAND_RANGE_MIN[1],
+        num=_FINE_BAND_COUNT + 1,
+    )
     bands: list[str] = []
     edges: dict[str, tuple[float, float]] = {}
-    for k in range(5):
+    for k in range(_FINE_BAND_COUNT):
         name = f"B{k + 1}"
         bands.append(name)
         edges[name] = (float(edges_min[k]), float(edges_min[k + 1]))

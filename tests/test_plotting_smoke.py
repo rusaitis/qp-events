@@ -25,6 +25,7 @@ from qp.plotting.maps import (
     draw_range_indicator,
     plot_lt_lat_heatmap,
     plot_polar_heatmap,
+    smooth_2d_nan_aware,
 )
 from qp.plotting.saturn import (
     REFERENCE_SHELLS,
@@ -491,3 +492,33 @@ class TestLtToPhi:
         from numpy.testing import assert_allclose
 
         assert_allclose(phi_to_lt(lt_to_phi(12)), 12.0)
+
+
+class TestSmooth2dNanAware:
+    """Smoothing helper used by Fig 8 and the filtered event/dwell view."""
+
+    def test_constant_field_is_preserved(self):
+        arr = np.full((10, 12), 3.0)
+        out = smooth_2d_nan_aware(arr, sigma=1.5)
+        from numpy.testing import assert_allclose
+
+        assert_allclose(out, arr)
+
+    def test_nan_cells_stay_nan(self):
+        arr = np.ones((6, 6))
+        arr[2, 3] = np.nan
+        out = smooth_2d_nan_aware(arr, sigma=1.0)
+        assert np.isnan(out[2, 3])
+        # neighbours stay finite — NaN doesn't propagate
+        assert np.isfinite(out[2, 2])
+        assert np.isfinite(out[3, 3])
+
+    def test_periodic_axis_wraps(self):
+        """Putting a spike at LT=0 leaks into LT=23 when axis 1 is periodic."""
+        arr = np.zeros((4, 24))
+        arr[:, 0] = 1.0
+        non_periodic = smooth_2d_nan_aware(arr, sigma=1.5)
+        periodic = smooth_2d_nan_aware(arr, sigma=1.5, periodic_axis=1)
+        # Far edge of LT axis carries some smoothed weight only with wrap.
+        assert periodic[2, -1] > non_periodic[2, -1]
+        assert periodic[2, -1] > 0.0

@@ -14,6 +14,23 @@ from scipy.signal import savgol_filter
 
 from qp.events.bands import QP_SEARCH_BAND
 
+# ----------------------------------------------------------------------
+# Background-fit defaults for :func:`estimate_background`.
+#
+# The background is anchored over the QP detection band (30 min — 3 h),
+# i.e. the frequency window where the signal of interest lives. The
+# iterative fit raises/lowers the Savitzky-Golay baseline until half the
+# spectral points in that band sit above it — by construction a robust
+# median estimator that is insensitive to a small fraction of QP peaks.
+# ----------------------------------------------------------------------
+_BG_FIT_FREQ_LOW_HZ = 1.0 / (3.0 * 3600.0)  # 3-hour low-frequency edge
+_BG_FIT_FREQ_HIGH_HZ = 1.0 / (30.0 * 60.0)  # 30-minute high-frequency edge
+_BG_TARGET_FRACTION = 0.5  # half the points above the baseline → median
+_BG_TOLERANCE = 0.01  # convergence band on the above-fraction
+_BG_MAX_ITER = 50  # safety cap on the level-adjustment loop
+_BG_SAVGOL_WINDOW = 17  # log-PSD smoothing window (must be odd)
+_BG_SAVGOL_ORDER = 3
+
 
 def welch_psd(
     data: ArrayLike,
@@ -118,13 +135,13 @@ def spectrogram(
 def estimate_background(
     psd: ArrayLike,
     freq: ArrayLike,
-    savgol_window: int = 17,
-    savgol_order: int = 3,
-    freq_low: float = 1 / (3 * 3600),
-    freq_high: float = 1 / (30 * 60),
-    target_fraction: float = 0.5,
-    tolerance: float = 0.01,
-    max_iterations: int = 50,
+    savgol_window: int = _BG_SAVGOL_WINDOW,
+    savgol_order: int = _BG_SAVGOL_ORDER,
+    freq_low: float = _BG_FIT_FREQ_LOW_HZ,
+    freq_high: float = _BG_FIT_FREQ_HIGH_HZ,
+    target_fraction: float = _BG_TARGET_FRACTION,
+    tolerance: float = _BG_TOLERANCE,
+    max_iterations: int = _BG_MAX_ITER,
 ) -> np.ndarray:
     """Estimate the smooth background of an FFT power spectrum.
 

@@ -521,30 +521,30 @@ def detect_round8(
     # Complex CWTs of all three field components. The transverse pair
     # feeds ridge extraction and Stokes; b_par enters MVA.
     freq, _, cwt_par = morlet_cwt(b_par, dt=dt, n_freqs=n_freqs)
-    _, _, cwt1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
-    _, _, cwt2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
-    power1 = np.abs(cwt1)
-    power2 = np.abs(cwt2)
+    _, _, cwt_perp1 = morlet_cwt(b_perp1, dt=dt, n_freqs=n_freqs)
+    _, _, cwt_perp2 = morlet_cwt(b_perp2, dt=dt, n_freqs=n_freqs)
+    power_perp1 = np.abs(cwt_perp1)
+    power_perp2 = np.abs(cwt_perp2)
 
-    n_time = power1.shape[1]
+    n_time = power_perp1.shape[1]
 
     if threshold_method == "mad_row":
         n_sigma = bonferroni_n_sigma_for_cwt(n_time, dt, freq, alpha=fwer_alpha)
-        mask1 = wavelet_sigma_mask(power1, freq, n_sigma=n_sigma)
-        mask2 = wavelet_sigma_mask(power2, freq, n_sigma=n_sigma)
+        mask_perp1 = wavelet_sigma_mask(power_perp1, freq, n_sigma=n_sigma)
+        mask_perp2 = wavelet_sigma_mask(power_perp2, freq, n_sigma=n_sigma)
     elif threshold_method == "tc_chi2":
         # Bonferroni-corrected per-pixel α under the same FWER budget.
         v_indep = _v_indep_for_cwt(n_time, dt, freq)
         alpha_pixel = fwer_alpha / v_indep
-        mask1 = torrence_compo_chi2_mask(
-            power1,
+        mask_perp1 = torrence_compo_chi2_mask(
+            power_perp1,
             freq,
             b_perp1,
             dt=dt,
             alpha=alpha_pixel,
         )
-        mask2 = torrence_compo_chi2_mask(
-            power2,
+        mask_perp2 = torrence_compo_chi2_mask(
+            power_perp2,
             freq,
             b_perp2,
             dt=dt,
@@ -552,8 +552,8 @@ def detect_round8(
         )
     elif threshold_method == "fdr_chi2":
         # FDR target is the FWER budget — apples-to-apples conservatism.
-        mask1 = fdr_chi2_mask(power1, freq, b_perp1, dt=dt, q=fwer_alpha)
-        mask2 = fdr_chi2_mask(power2, freq, b_perp2, dt=dt, q=fwer_alpha)
+        mask_perp1 = fdr_chi2_mask(power_perp1, freq, b_perp1, dt=dt, q=fwer_alpha)
+        mask_perp2 = fdr_chi2_mask(power_perp2, freq, b_perp2, dt=dt, q=fwer_alpha)
     elif threshold_method == "pooled":
         if bg_archive is None or region is None:
             raise ValueError(
@@ -562,22 +562,26 @@ def detect_round8(
                 "the segment's plasma-region label"
             )
         n_sigma = bonferroni_n_sigma_for_cwt(n_time, dt, freq, alpha=fwer_alpha)
-        mask1 = pooled_archive_mask(power1, freq, region, bg_archive, n_sigma=n_sigma)
-        mask2 = pooled_archive_mask(power2, freq, region, bg_archive, n_sigma=n_sigma)
+        mask_perp1 = pooled_archive_mask(
+            power_perp1, freq, region, bg_archive, n_sigma=n_sigma
+        )
+        mask_perp2 = pooled_archive_mask(
+            power_perp2, freq, region, bg_archive, n_sigma=n_sigma
+        )
     else:  # pragma: no cover — Literal exhausts the cases
         raise ValueError(f"unknown threshold_method: {threshold_method!r}")
 
     if apply_coi_mask:
         coi = _coi_mask(freq, n_time, dt=dt)
-        mask1 = mask1 & coi
-        mask2 = mask2 & coi
+        mask_perp1 = mask_perp1 & coi
+        mask_perp2 = mask_perp2 & coi
 
     times = [epoch + datetime.timedelta(seconds=float(s)) for s in t]
 
     all_peaks: list[WavePacketPeak] = []
     for component, power, mask in (
-        (b_perp1, power1, mask1),
-        (b_perp2, power2, mask2),
+        (b_perp1, power_perp1, mask_perp1),
+        (b_perp2, power_perp2, mask_perp2),
     ):
         peaks = detect_wave_packets_multi(
             data=component,
@@ -595,7 +599,7 @@ def detect_round8(
     merged = dedup_peaks_by_period(all_peaks, dt_sec=DEDUP_WINDOW_SEC)
 
     # Per-detection physical gates.
-    n_time = cwt1.shape[1]
+    n_time = cwt_perp1.shape[1]
     kept: list[DetectedEvent] = []
     for peak in merged:
         if peak.period_sec is None or peak.period_sec <= 0 or peak.band is None:
@@ -616,15 +620,17 @@ def detect_round8(
         # Transversality: MVA on bandpass-filtered 3-component field.
         i_freq_peak = int(np.argmin(np.abs(freq - 1.0 / peak.period_sec)))
         sl = slice(i_start, i_end + 1)
-        field_bp = np.column_stack(
+        field_bandpassed = np.column_stack(
             [
                 np.real(cwt_par[i_freq_peak, sl]),
-                np.real(cwt1[i_freq_peak, sl]),
-                np.real(cwt2[i_freq_peak, sl]),
+                np.real(cwt_perp1[i_freq_peak, sl]),
+                np.real(cwt_perp2[i_freq_peak, sl]),
             ]
         )
-        par_frac = mva_major_axis_parallel_fraction(field_bp, par_axis=0)
-        if par_frac > max_mva_par_frac:
+        mva_parallel_fraction = mva_major_axis_parallel_fraction(
+            field_bandpassed, par_axis=0
+        )
+        if mva_parallel_fraction > max_mva_par_frac:
             continue
         # Polarization purity over a peak-centred half-octave window
         # (same width as one QP band, but anchored on the actual peak
@@ -634,38 +640,45 @@ def detect_round8(
         in_band = (freq >= f_peak / math.sqrt(2.0)) & (freq < f_peak * math.sqrt(2.0))
         if not in_band.any():
             continue
-        c1_window = cwt1[in_band, sl]
-        c2_window = cwt2[in_band, sl]
-        s_i, s_q, s_u, s_v = stokes_parameters(
-            c1_window.ravel(),
-            c2_window.ravel(),
+        cwt_perp1_band = cwt_perp1[in_band, sl]
+        cwt_perp2_band = cwt_perp2[in_band, sl]
+        stokes_i, stokes_q, stokes_u, stokes_v = stokes_parameters(
+            cwt_perp1_band.ravel(),
+            cwt_perp2_band.ravel(),
         )
-        d = (np.sqrt(s_q * s_q + s_u * s_u + s_v * s_v) / s_i) if s_i > 0 else 0.0
-        if d < min_stokes_d:
+        stokes_degree = (
+            (
+                np.sqrt(stokes_q * stokes_q + stokes_u * stokes_u + stokes_v * stokes_v)
+                / stokes_i
+            )
+            if stokes_i > 0
+            else 0.0
+        )
+        if stokes_degree < min_stokes_d:
             continue
         ell, incl_deg, pol_frac = ellipticity_inclination_from_stokes(
-            s_i,
-            s_q,
-            s_u,
-            s_v,
+            stokes_i,
+            stokes_q,
+            stokes_u,
+            stokes_v,
         )
         # Bandpass amplitudes (RMS of the real CWT slice at peak f).
-        b_perp1_amp = float(np.sqrt(np.mean(field_bp[:, 1] ** 2)))
-        b_perp2_amp = float(np.sqrt(np.mean(field_bp[:, 2] ** 2)))
-        b_par_amp = float(np.sqrt(np.mean(field_bp[:, 0] ** 2)))
+        b_perp1_amp = float(np.sqrt(np.mean(field_bandpassed[:, 1] ** 2)))
+        b_perp2_amp = float(np.sqrt(np.mean(field_bandpassed[:, 2] ** 2)))
+        b_par_amp = float(np.sqrt(np.mean(field_bandpassed[:, 0] ** 2)))
         kept.append(
             DetectedEvent(
                 peak=peak,
                 q_factor=float(q),
-                mva_par_frac=float(par_frac),
-                stokes_d=float(d),
+                mva_par_frac=float(mva_parallel_fraction),
+                stokes_d=float(stokes_degree),
                 b_perp1_amp=b_perp1_amp,
                 b_perp2_amp=b_perp2_amp,
                 b_par_amp=b_par_amp,
-                stokes_i=float(s_i),
-                stokes_q=float(s_q),
-                stokes_u=float(s_u),
-                stokes_v=float(s_v),
+                stokes_i=float(stokes_i),
+                stokes_q=float(stokes_q),
+                stokes_u=float(stokes_u),
+                stokes_v=float(stokes_v),
                 ellipticity=float(ell),
                 inclination_deg=float(incl_deg),
                 polarized_fraction=float(pol_frac),
