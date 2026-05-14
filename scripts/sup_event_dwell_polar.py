@@ -19,13 +19,10 @@ Usage::
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-
-import numpy as np
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np
+from _common import setup_logging  # noqa: E402
 from matplotlib.colors import LogNorm  # noqa: E402
 
 import qp  # noqa: E402
@@ -89,7 +86,7 @@ def _format_polar(ax, *, L_max: float) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging()
 
     import xarray as xr
 

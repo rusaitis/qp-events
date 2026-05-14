@@ -114,11 +114,11 @@ def solve_sl_uniform_grid(
     p_half = 0.5 * (p[:-1] + p[1:])
 
     # Interior indexing i' = i - 1, for i = 1..N-1 (count N-1)
-    p_left = p_half[:-1]   # p_{i-1/2} for i=1..N-1; length N-1
-    p_right = p_half[1:]   # p_{i+1/2} for i=1..N-1; length N-1
+    p_left = p_half[:-1]  # p_{i-1/2} for i=1..N-1; length N-1
+    p_right = p_half[1:]  # p_{i+1/2} for i=1..N-1; length N-1
 
-    diag_A = (p_left + p_right) / h**2                         # (N-1,)
-    off_A = -p_right[:-1] / h**2                                # (N-2,)
+    diag_A = (p_left + p_right) / h**2  # (N-1,)
+    off_A = -p_right[:-1] / h**2  # (N-2,)
 
     # Interior mass weights
     w_int = w[1:-1]

@@ -29,15 +29,14 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (used in argparse type and helpers)
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from _common import FIGURES_DIR, setup_logging  # noqa: E402
 
 import qp  # noqa: E402
 from qp.events.footprints import apply_filter, read_zarr  # noqa: E402
@@ -169,10 +168,7 @@ def main() -> None:
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING,
-        format="%(message)s",
-    )
+    setup_logging(args.verbose)
 
     # ---- load --------------------------------------------------------
     import pandas as pd
@@ -276,7 +272,7 @@ def main() -> None:
     out = args.output
     if out is None:
         tag = "all" if not args.filter else f"f{abs(hash(args.filter)) % 10_000_000}"
-        out = qp.OUTPUT_DIR / "figures" / f"filtered_{args.grid}_{tag}.png"
+        out = FIGURES_DIR / f"filtered_{args.grid}_{tag}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)

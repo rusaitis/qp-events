@@ -252,8 +252,14 @@ class TestModeNumber:
 # ============================================================================
 
 
+@pytest.mark.slow
 class TestFindEigenfrequencies:
-    """Tests for the full eigenfrequency solver."""
+    """Tests for the full eigenfrequency solver.
+
+    Marked slow: each test invokes the shooter backend on a synthetic
+    medium with bracket scans + Brent root-finding; class total ~5 s
+    out of the 28 s full suite.
+    """
 
     def test_finds_correct_number_of_modes(self, uniform_medium):
         """Should find the requested number of modes."""

@@ -23,13 +23,14 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from _common import setup_logging
 from scipy.constants import atomic_mass as AMU
 from scipy.constants import mu_0 as MU0
 
 from qp.wavesolver.density import SATURN_RADIUS, UniformDensity
 from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 ION_MASS_AMU = 18.0

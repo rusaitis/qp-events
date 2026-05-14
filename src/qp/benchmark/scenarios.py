@@ -15,6 +15,8 @@ Scenario counts:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from qp.benchmark.generator import (
     EventSpec,
     GapSpec,
@@ -44,77 +46,96 @@ def _centers(
     return [margin_h + i * spacing + spacing / 2 for i in range(n_events)]
 
 
+def _uniform_packets(
+    *,
+    dataset_id: str,
+    description: str,
+    band: str,
+    n_events: int,
+    duration_days: float,
+    noise_alpha: float,
+    noise_sigma: float,
+    amplitude: float,
+    decay_hours: float,
+    background_trend: bool = False,
+    difficulty_tier: str = "tier1",
+    difficulty: str = "easy",
+    **event_extras: object,
+) -> ScenarioConfig:
+    """Build a ScenarioConfig of ``n_events`` identical packets of one band.
+
+    Replaces ~15 lines of boilerplate per scenario. ``**event_extras`` is
+    forwarded to :class:`EventSpec`, letting the rare per-event field
+    (``polarization``, ``waveform``, ``chirp_rate``, …) be overridden
+    without proliferating positional arguments.
+    """
+    centers = _centers(n_events, duration_days)
+    return ScenarioConfig(
+        dataset_id=dataset_id,
+        description=description,
+        duration_days=duration_days,
+        noise_alpha=noise_alpha,
+        noise_sigma=noise_sigma,
+        background_trend=background_trend,
+        difficulty_tier=difficulty_tier,
+        event_specs=[
+            EventSpec(
+                band=band,
+                amplitude=amplitude,
+                center_hours=c,
+                decay_hours=decay_hours,
+                difficulty=difficulty,
+                **event_extras,  # type: ignore[arg-type]
+            )
+            for c in centers
+        ],
+    )
+
+
 # ======================================================================
 # TIER 1: Easy (target ≥95% recall)
 # ======================================================================
 
 
 def tier1_clean_qp30() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier1_clean_qp30",
         description="8 clean QP30 sine packets, white noise, circular pol",
+        band="QP30",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.0,
         noise_sigma=0.01,
-        background_trend=False,
-        difficulty_tier="tier1",
-        event_specs=[
-            EventSpec(
-                band="QP30",
-                amplitude=2.0,
-                center_hours=c,
-                decay_hours=2.0,
-                difficulty="easy",
-            )
-            for c in centers
-        ],
+        amplitude=2.0,
+        decay_hours=2.0,
     )
 
 
 def tier1_clean_qp60() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier1_clean_qp60",
         description="8 clean QP60 sine packets, white noise, circular pol",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.0,
         noise_sigma=0.01,
-        background_trend=False,
-        difficulty_tier="tier1",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=2.0,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="easy",
-            )
-            for c in centers
-        ],
+        amplitude=2.0,
+        decay_hours=4.0,
     )
 
 
 def tier1_clean_qp120() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier1_clean_qp120",
         description="8 clean QP120 sine packets, white noise, circular pol",
+        band="QP120",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.0,
         noise_sigma=0.01,
-        background_trend=False,
-        difficulty_tier="tier1",
-        event_specs=[
-            EventSpec(
-                band="QP120",
-                amplitude=2.0,
-                center_hours=c,
-                decay_hours=6.0,
-                difficulty="easy",
-            )
-            for c in centers
-        ],
+        amplitude=2.0,
+        decay_hours=6.0,
     )
 
 
@@ -175,48 +196,34 @@ def tier1_full_spectrum() -> ScenarioConfig:
 
 
 def tier2_colored_noise() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier2_colored_noise",
         description="QP60 in realistic colored noise (alpha=1.2)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.2,
         noise_sigma=0.05,
-        background_trend=False,
+        amplitude=1.0,
+        decay_hours=4.0,
         difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.0,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="moderate",
-            )
-            for c in centers
-        ],
+        difficulty="moderate",
     )
 
 
 def tier2_low_amplitude() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier2_low_amplitude",
         description="QP60 at 0.3 nT (near detection threshold)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.5,
         noise_sigma=0.02,
-        background_trend=False,
+        amplitude=0.3,
+        decay_hours=4.0,
         difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=0.3,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="moderate",
-            )
-            for c in centers
-        ],
+        difficulty="moderate",
     )
 
 
@@ -256,73 +263,53 @@ def tier2_sawtooth_shapes() -> ScenarioConfig:
 
 
 def tier2_linear_pol() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier2_linear_pol",
         description="QP60 with linear polarization",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.5,
         noise_sigma=0.02,
-        background_trend=False,
+        amplitude=1.5,
+        decay_hours=4.0,
         difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.5,
-                center_hours=c,
-                decay_hours=4.0,
-                polarization="linear",
-                ellipticity=0.0,
-                difficulty="moderate",
-            )
-            for c in centers
-        ],
+        difficulty="moderate",
+        polarization="linear",
+        ellipticity=0.0,
     )
 
 
 def tier2_short_packets() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier2_short_packets",
         description="QP60 with short duration (~3-4 oscillations)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=0.5,
         noise_sigma=0.02,
-        background_trend=False,
+        amplitude=1.5,
+        decay_hours=1.5,
         difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.5,
-                center_hours=c,
-                decay_hours=1.5,
-                difficulty="moderate",
-            )
-            for c in centers
-        ],
+        difficulty="moderate",
     )
 
 
 def tier2_ppo_background() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier2_ppo_background",
         description="QP60 with full magnetospheric background (PPO + trend)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.2,
         noise_sigma=0.05,
+        amplitude=1.5,
+        decay_hours=4.0,
         background_trend=True,
         difficulty_tier="tier2",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.5,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="moderate",
-            )
-            for c in centers
-        ],
+        difficulty="moderate",
     )
 
 
@@ -418,49 +405,35 @@ def tier3_asymmetric_envelope() -> ScenarioConfig:
 
 
 def tier3_amplitude_jitter() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier3_amplitude_jitter",
         description="QP60 with 30% per-cycle amplitude jitter",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.0,
         noise_sigma=0.03,
-        background_trend=False,
+        amplitude=1.0,
+        decay_hours=4.0,
         difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.0,
-                center_hours=c,
-                decay_hours=4.0,
-                amplitude_jitter=0.3,
-                difficulty="hard",
-            )
-            for c in centers
-        ],
+        difficulty="hard",
+        amplitude_jitter=0.3,
     )
 
 
 def tier3_near_threshold() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier3_near_threshold",
         description="QP60 at 0.15 nT with colored noise (SNR ~3)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.2,
         noise_sigma=0.05,
-        background_trend=False,
+        amplitude=0.15,
+        decay_hours=4.0,
         difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=0.15,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="hard",
-            )
-            for c in centers
-        ],
+        difficulty="hard",
     )
 
 
@@ -530,48 +503,35 @@ def tier3_travelling_waves() -> ScenarioConfig:
 
 
 def tier4_buried_in_noise() -> ScenarioConfig:
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier4_buried_in_noise",
         description="QP60 at SNR < 1.5 (nearly indistinguishable from noise)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.2,
         noise_sigma=0.05,
+        amplitude=0.07,
+        decay_hours=4.0,
         background_trend=True,
         difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=0.07,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="extreme",
-            )
-            for c in centers
-        ],
+        difficulty="extreme",
     )
 
 
 def tier4_qp120_short() -> ScenarioConfig:
-    centers = _centers(6, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier4_qp120_short",
         description="QP120 with only ~3 oscillations (6h duration)",
+        band="QP120",
+        n_events=6,
         duration_days=10,
         noise_alpha=1.0,
         noise_sigma=0.03,
-        background_trend=False,
+        amplitude=0.5,
+        decay_hours=2.0,
         difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(
-                band="QP120",
-                amplitude=0.5,
-                center_hours=c,
-                decay_hours=2.0,
-                difficulty="extreme",
-            )
-            for c in centers
-        ],
+        difficulty="extreme",
     )
 
 
@@ -958,49 +918,35 @@ def tier4_heavy_gaps() -> ScenarioConfig:
 
 def tier3_steep_noise() -> ScenarioConfig:
     """QP60 in steep α = 1.5 noise (von Papen et al. 2014)."""
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier3_steep_noise",
         description="QP60 in steep colored noise (alpha=1.5)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.5,
         noise_sigma=0.05,
-        background_trend=False,
+        amplitude=1.0,
+        decay_hours=4.0,
         difficulty_tier="tier3",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=1.0,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="hard",
-            )
-            for c in centers
-        ],
+        difficulty="hard",
     )
 
 
 def tier4_kolmogorov_noise() -> ScenarioConfig:
     """QP60 in Kolmogorov α ≈ 5/3 ≈ 1.7 noise (Xu et al. 2023)."""
-    centers = _centers(8, 10)
-    return ScenarioConfig(
+    return _uniform_packets(
         dataset_id="tier4_kolmogorov_noise",
         description="QP60 in Kolmogorov turbulence (alpha=1.7)",
+        band="QP60",
+        n_events=8,
         duration_days=10,
         noise_alpha=1.7,
         noise_sigma=0.05,
-        background_trend=False,
+        amplitude=0.8,
+        decay_hours=4.0,
         difficulty_tier="tier4",
-        event_specs=[
-            EventSpec(
-                band="QP60",
-                amplitude=0.8,
-                center_hours=c,
-                decay_hours=4.0,
-                difficulty="extreme",
-            )
-            for c in centers
-        ],
+        difficulty="extreme",
     )
 
 
@@ -1113,7 +1059,7 @@ def decoy_roll_artifacts() -> ScenarioConfig:
 # Registry
 # ======================================================================
 
-ALL_SCENARIOS: dict[str, callable] = {
+ALL_SCENARIOS: dict[str, Callable[[], ScenarioConfig]] = {
     # Tier 1
     "tier1_clean_qp30": tier1_clean_qp30,
     "tier1_clean_qp60": tier1_clean_qp60,

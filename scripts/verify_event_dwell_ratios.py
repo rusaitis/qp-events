@@ -9,11 +9,7 @@ Usage::
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 import qp  # noqa: E402
 

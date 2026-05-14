@@ -34,6 +34,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from _common import setup_logging
 
 from qp.fieldline.kmag_model import SaturnField
 from qp.fieldline.tracer import saturn_field_wrapper, trace_fieldline_bidirectional
@@ -41,7 +42,7 @@ from qp.wavesolver.density import BagenalDelamere
 from qp.wavesolver.field_profile import compute_field_line_profile
 from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 
@@ -53,7 +54,9 @@ def _trace_field_line(l_shell: float, lt: float = 12.0):
     phi = math.radians((lt - 12.0) * 15.0)
     start = np.array([l_shell * math.cos(phi), l_shell * math.sin(phi), 0.0])
     field_func = saturn_field_wrapper(field, cfg_time, coord="KSM")
-    trace = trace_fieldline_bidirectional(field_func, start, step=0.03, max_steps=100000)
+    trace = trace_fieldline_bidirectional(
+        field_func, start, step=0.03, max_steps=100000
+    )
     profile = compute_field_line_profile(trace, BagenalDelamere())
     return profile
 
@@ -66,26 +69,39 @@ def main() -> None:
     profile = _trace_field_line(20.0)
     s = profile.arc_length
     va_kms = profile.alfven_velocity_profile / 1e3
-    r = np.linalg.norm(profile.positions, axis=1)
-    mag_lat = np.degrees(np.arctan2(profile.positions[:, 2],
-                                     np.hypot(profile.positions[:, 0],
-                                              profile.positions[:, 1])))
+    mag_lat = np.degrees(
+        np.arctan2(
+            profile.positions[:, 2],
+            np.hypot(profile.positions[:, 0], profile.positions[:, 1]),
+        )
+    )
 
     log.info("=" * 72)
     log.info("L=20 noon trace (Rusaitis Fig 2 anchor)")
-    log.info("  arc length: %.2f to %.2f R_S",
-             s.min() / 60_268_000, s.max() / 60_268_000)
-    log.info("  v_A range: %.2f to %.2e km/s (peak at footpoints)",
-             va_kms.min(), va_kms.max())
-    log.info("  v_A at equator (s_eq): %.2f km/s",
-             va_kms[profile.equator_index])
+    log.info(
+        "  arc length: %.2f to %.2f R_S", s.min() / 60_268_000, s.max() / 60_268_000
+    )
+    log.info(
+        "  v_A range: %.2f to %.2e km/s (peak at footpoints)",
+        va_kms.min(),
+        va_kms.max(),
+    )
+    log.info("  v_A at equator (s_eq): %.2f km/s", va_kms[profile.equator_index])
 
     # Plot 1: v_A vs arc length
     fig, ax = plt.subplots(figsize=(9, 4.5))
     SATURN_R = 60_268_000
     ax.semilogy(s / SATURN_R, va_kms, lw=1.8, label="our v_A")
-    ax.axhline(10, ls=":", color="0.5", lw=0.7, label="Rusaitis Fig 1b colorbar min (10 km/s)")
-    ax.axhline(1e4, ls=":", color="0.5", lw=0.7, label="Rusaitis Fig 1b colorbar max (10⁴ km/s)")
+    ax.axhline(
+        10, ls=":", color="0.5", lw=0.7, label="Rusaitis Fig 1b colorbar min (10 km/s)"
+    )
+    ax.axhline(
+        1e4,
+        ls=":",
+        color="0.5",
+        lw=0.7,
+        label="Rusaitis Fig 1b colorbar max (10⁴ km/s)",
+    )
     ax.set_xlabel("arc length s (R_S)")
     ax.set_ylabel("v_A (km/s, log)")
     ax.set_title("KMAG L=20 noon — v_A along field line (Bagenal density)")
@@ -125,7 +141,9 @@ def main() -> None:
     cbar.set_ticklabels(["10", "10²", "10³", "10⁴"])
     ax.set_xlabel("x (R_S)")
     ax.set_ylabel("z (R_S)")
-    ax.set_title("KMAG + Bagenal — v_A in (x, z) [compare against Rusaitis 2021 Fig 1b]")
+    ax.set_title(
+        "KMAG + Bagenal — v_A in (x, z) [compare against Rusaitis 2021 Fig 1b]"
+    )
     ax.set_aspect("equal")
     ax.grid(alpha=0.3)
     fig.tight_layout()
@@ -135,20 +153,27 @@ def main() -> None:
 
     # Verdict — overlay our L=20 mode periods on Rusaitis Fig 2 reference
     result = solve_eigenfrequencies(
-        WavesolverConfig(l_shell=20.0, n_modes=4, field=SaturnField(),
-                          local_time_hours=12.0)
+        WavesolverConfig(
+            l_shell=20.0, n_modes=4, field=SaturnField(), local_time_hours=12.0
+        )
     )
     rusaitis_periods = [469.0, 121.0, 72.0, 52.0]
     log.info("=" * 72)
     log.info("L=20 noon mode periods (Rusaitis Fig 2 vs ours):")
     log.info("  m  |  Rusaitis (min) |  ours (min)  |  Δ")
-    for m, (ref, ours) in enumerate(zip(rusaitis_periods, result.periods_minutes), 1):
+    for m, (ref, ours) in enumerate(
+        zip(rusaitis_periods, result.periods_minutes, strict=False), 1
+    ):
         delta = (ours - ref) / ref * 100
         log.info("  %d  |  %12.1f  |  %10.1f  |  %+5.1f%%", m, ref, float(ours), delta)
     log.info("=" * 72)
     log.info("Qualitative v_A check vs Rusaitis Fig 1b:")
     log.info("  Expected (Fig 1b color range): 10 - 10000 km/s, peak at high latitudes")
-    log.info("  Our L=20 trace: %.2f - %.2e km/s (peak at footpoints)", va_kms.min(), va_kms.max())
+    log.info(
+        "  Our L=20 trace: %.2f - %.2e km/s (peak at footpoints)",
+        va_kms.min(),
+        va_kms.max(),
+    )
     if va_kms.min() > 1 and va_kms.max() < 1e6:
         log.info("  ⇒ v_A spans the same order-of-magnitude range as Rusaitis Fig 1b.")
     log.info("If the (x, z) plot looks qualitatively like Rusaitis Fig 1b (red")

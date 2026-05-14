@@ -19,15 +19,13 @@ Usage::
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-
-import numpy as np
-import pandas as pd
-from scipy import stats
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from pathlib import Path  # noqa: F401  (used in helper signatures below)
 
 import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np
+import pandas as pd
+from _common import ensure_figures_dir, setup_logging  # noqa: E402
+from scipy import stats
 
 import qp  # noqa: E402
 from qp.events.bands import QP_BAND_NAMES  # noqa: E402
@@ -345,7 +343,7 @@ def write_csv_and_latex(table: pd.DataFrame, csv_path: Path, tex_path: Path) -> 
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging()
 
     parquet = qp.OUTPUT_DIR / "events_round8.parquet"
     df = pd.read_parquet(parquet)
@@ -365,8 +363,7 @@ def main() -> None:
     table = summary_table(groups)
     print(table.to_string(float_format=lambda x: f"{x:.3g}"))
 
-    fig_dir = qp.OUTPUT_DIR / "figures"
-    fig_dir.mkdir(parents=True, exist_ok=True)
+    fig_dir = ensure_figures_dir()
     make_figure(groups, fig_dir / "sup_events_by_region.png")
     write_csv_and_latex(
         table,

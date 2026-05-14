@@ -1204,8 +1204,14 @@ class TestKmagInvLatIO:
 # ============================================================================
 
 
+@pytest.mark.slow
 class TestComputeInvariantLatitudesParallel:
-    """Tests for region filtering and the multiprocessing tracer."""
+    """Tests for region filtering and the multiprocessing tracer.
+
+    Marked slow: the parallel KMAG tracer spins up a multiprocessing
+    pool per test and runs 20 invariant-latitude traces; total class
+    runtime is ~6 s vs ~20 s for the entire fast suite.
+    """
 
     @pytest.fixture
     def synthetic_inputs(self):

@@ -33,6 +33,7 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
+from _common import setup_logging
 
 from qp.events.dedup import tag_duplicates
 from qp.events.peers import DEFAULT_MIN_OVERLAP_FRAC, tag_peers
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging()
 
     df = pd.read_parquet(args.parquet)
     log.info("loaded %d events from %s", len(df), args.parquet)

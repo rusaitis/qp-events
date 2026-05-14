@@ -27,6 +27,7 @@ from qp.fieldline.tracer import (
     saturn_field_wrapper,
     trace_fieldline_bidirectional,
 )
+from qp.wavesolver.cummings_solver import find_eigenfrequencies_cummings
 from qp.wavesolver.density import (
     BagenalDelamere,
     DensityModel,
@@ -34,7 +35,6 @@ from qp.wavesolver.density import (
     PowerLawDensity,
     UniformDensity,
 )
-from qp.wavesolver.cummings_solver import find_eigenfrequencies_cummings
 from qp.wavesolver.eigensolver import find_eigenfrequencies
 from qp.wavesolver.field_profile import compute_field_line_profile
 from qp.wavesolver.matrix_solver import find_eigenfrequencies_matrix

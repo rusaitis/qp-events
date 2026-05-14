@@ -19,7 +19,6 @@ Output: ``Output/figures/figure11_ppo_phase_fold.png``
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import matplotlib
 
@@ -27,8 +26,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
 
 from qp.events.bands import QP_BAND_COLORS, QP_BAND_NAMES  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
@@ -58,9 +56,9 @@ def _rayleigh_p(phases_deg: np.ndarray) -> float:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging()
 
-    parquet = _PROJECT_ROOT / "Output" / "events_round8.parquet"
+    parquet = OUTPUT_DIR / "events_round8.parquet"
     if not parquet.exists():
         raise SystemExit(f"missing {parquet} — run sweep_events_round8.py first")
 
@@ -132,9 +130,7 @@ def main() -> None:
         "Figure 11 (round-8) — QP wave events vs SLS5 PPO phase",
         fontsize=12,
     )
-    out_dir = _PROJECT_ROOT / "Output" / "figures"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "figure11_ppo_phase_fold.png"
+    out = ensure_figures_dir() / "figure11_ppo_phase_fold.png"
     fig.savefig(out, dpi=180, bbox_inches="tight")
     plt.close(fig)
     log.info("wrote %s", out)

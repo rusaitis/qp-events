@@ -43,7 +43,9 @@ def test_three_backends_agree_on_kmag_l8_full_ladder() -> None:
     shoot = _solve("shoot", **base)
 
     n = min(len(matrix), len(cummings), len(shoot))
-    assert n == 6, f"expected 6 modes from each backend, got {len(matrix)}/{len(cummings)}/{len(shoot)}"
+    assert n == 6, (
+        f"expected 6 modes from each backend, got {len(matrix)}/{len(cummings)}/{len(shoot)}"
+    )
     assert_allclose(cummings[:n], matrix[:n], rtol=5e-3)
     assert_allclose(shoot[:n], matrix[:n], rtol=5e-3)
     assert_allclose(shoot[:n], cummings[:n], rtol=5e-3)
@@ -71,7 +73,9 @@ def test_three_backends_agree_on_dipole_l6_uniform_full_ladder() -> None:
     shoot = _solve("shoot", **base)
 
     n = min(len(matrix), len(cummings), len(shoot))
-    assert n >= 4, f"expected ≥4 modes from each backend; got {len(matrix)}/{len(cummings)}/{len(shoot)}"
+    assert n >= 4, (
+        f"expected ≥4 modes from each backend; got {len(matrix)}/{len(cummings)}/{len(shoot)}"
+    )
     assert_allclose(cummings[:n], matrix[:n], rtol=5e-3)
     assert_allclose(shoot[:n], matrix[:n], rtol=1e-2)
     assert_allclose(shoot[:n], cummings[:n], rtol=1e-2)

@@ -33,6 +33,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from _common import TIMESTAMPED_LOG_FMT, setup_logging
 
 from qp.events.bands import QP_BANDS, get_band
 from qp.events.detector import (
@@ -200,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = p.parse_args(argv)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    setup_logging(fmt=TIMESTAMPED_LOG_FMT)
 
     arr, keep_idx = load_segments()
     sampled = keep_idx[:: args.stride]

@@ -16,15 +16,13 @@ Output: ``Output/figures/figure8_round8.png``
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from _common import OUTPUT_DIR, ensure_figures_dir, setup_logging  # noqa: E402
 
 from qp.events.bands import QP_BAND_NAMES, get_band  # noqa: E402
 from qp.plotting.style import use_paper_style  # noqa: E402
@@ -70,11 +68,11 @@ def _smooth(arr: np.ndarray, sigma: float = SMOOTHING_SIGMA) -> np.ndarray:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    setup_logging()
     import xarray as xr
 
-    ev_path = _PROJECT_ROOT / "Output" / "event_time_grid_round8.zarr"
-    dw_path = _PROJECT_ROOT / "Output" / "dwell_grid_cassini_saturn.zarr"
+    ev_path = OUTPUT_DIR / "event_time_grid_round8.zarr"
+    dw_path = OUTPUT_DIR / "dwell_grid_cassini_saturn.zarr"
     if not ev_path.exists() or not dw_path.exists():
         raise SystemExit(f"Missing input(s):\n  {ev_path}\n  {dw_path}")
 
@@ -181,9 +179,7 @@ def main() -> None:
         fontsize=11,
     )
 
-    out_dir = _PROJECT_ROOT / "Output" / "figures"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "figure8_round8.png"
+    out = ensure_figures_dir() / "figure8_round8.png"
     fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     log.info("wrote %s", out)

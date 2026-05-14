@@ -48,7 +48,7 @@ class InjectedEvent:
     difficulty: str  # "easy", "moderate", "hard", "extreme"
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class DatasetManifest:
     """Manifest for one benchmark dataset."""
 

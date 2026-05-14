@@ -18,10 +18,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.interpolate import CubicSpline
-
 from scipy.constants import mu_0 as MU0
 from scipy.constants import speed_of_light as SPEED_OF_LIGHT
+from scipy.interpolate import CubicSpline
 
 from qp.coords.transforms import car2sph
 from qp.fieldline.tracer import FieldLineTrace
@@ -168,8 +167,8 @@ def compute_field_line_profile(
                 f"Unknown density_floor sentinel: {density_floor!r}. "
                 f"Use {DENSITY_FLOOR_RELATIVISTIC!r}, a numeric value, or None."
             )
-        floor_value: np.ndarray | float | None = (
-            B_T**2 / (MU0 * density_model.ion_mass_kg * SPEED_OF_LIGHT**2)
+        floor_value: np.ndarray | float | None = B_T**2 / (
+            MU0 * density_model.ion_mass_kg * SPEED_OF_LIGHT**2
         )
     else:
         floor_value = density_floor

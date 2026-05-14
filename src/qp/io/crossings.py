@@ -24,7 +24,7 @@ SW = 2  # solar wind
 UNKNOWN = 9
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class BoundaryCrossing:
     """Single boundary crossing event."""
 

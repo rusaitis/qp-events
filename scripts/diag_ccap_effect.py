@@ -33,6 +33,7 @@ from unittest.mock import patch
 
 import matplotlib.pyplot as plt
 import numpy as np
+from _common import setup_logging
 from scipy.constants import mu_0 as MU0
 from scipy.constants import speed_of_light as SPEED_OF_LIGHT
 
@@ -42,7 +43,7 @@ from qp.wavesolver import field_profile as field_profile_mod
 from qp.wavesolver.density import SATURN_RADIUS
 from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 
@@ -80,15 +81,24 @@ def _solve(label: str, l_shell: float = 8.0, n_modes: int = 6):
     log.info("=" * 72)
     log.info("  %s", label)
     log.info("  v_A: s_min=%.3e  s_eq=%.3e  s_max=%.3e  (m/s)", va[0], va.min(), va[-1])
-    log.info("  WKB omega_1 = pi / int(ds/v_A) = %.4e rad/s = %.4f mHz",
-             omega_wkb, omega_wkb / (2 * np.pi) * 1e3)
+    log.info(
+        "  WKB omega_1 = pi / int(ds/v_A) = %.4e rad/s = %.4f mHz",
+        omega_wkb,
+        omega_wkb / (2 * np.pi) * 1e3,
+    )
     log.info("  mode |   omega       |  freq (mHz) | period (min) | ratio /m1")
     omegas = result.angular_frequencies
     fs = result.frequencies_mhz
     Ts = result.periods_minutes
     for i, m in enumerate(result.modes):
-        log.info("    %d  | %.6e | %10.4f  | %10.2f  | %6.3f",
-                 m.mode_number, omegas[i], fs[i], Ts[i], omegas[i] / omegas[0])
+        log.info(
+            "    %d  | %.6e | %10.4f  | %10.2f  | %6.3f",
+            m.mode_number,
+            omegas[i],
+            fs[i],
+            Ts[i],
+            omegas[i] / omegas[0],
+        )
     return result, omega_wkb, va, s
 
 
@@ -104,20 +114,32 @@ def main() -> None:
     # (2) Monkey-patch BOTH density and field_profile namespaces (field_profile
     # imports alfven_velocity into its own namespace, so density-only patching
     # does not reach the call site).
-    with patch.object(density_mod, "alfven_velocity", _va_raw), \
-         patch.object(field_profile_mod, "alfven_velocity", _va_raw):
-        r_nocap, wkb_nocap, va_nocap, s_nocap = _solve("(2) no cap (raw v_A, can exceed c)")
+    with (
+        patch.object(density_mod, "alfven_velocity", _va_raw),
+        patch.object(field_profile_mod, "alfven_velocity", _va_raw),
+    ):
+        r_nocap, wkb_nocap, va_nocap, s_nocap = _solve(
+            "(2) no cap (raw v_A, can exceed c)"
+        )
 
     # (3) B-dependent density floor, no post-cap
-    with patch.object(density_mod, "alfven_velocity", _va_density_floor), \
-         patch.object(field_profile_mod, "alfven_velocity", _va_density_floor):
-        r_floor, wkb_floor, va_floor, s_floor = _solve("(3) density floor n>=B^2/(mu0 m_i c^2), no post-cap")
+    with (
+        patch.object(density_mod, "alfven_velocity", _va_density_floor),
+        patch.object(field_profile_mod, "alfven_velocity", _va_density_floor),
+    ):
+        r_floor, wkb_floor, va_floor, s_floor = _solve(
+            "(3) density floor n>=B^2/(mu0 m_i c^2), no post-cap"
+        )
 
     # Plot v_A(s) overlays
     fig, ax = plt.subplots(figsize=(9, 4.5))
     ax.semilogy(s_def / SATURN_RADIUS, va_def / 1e3, label="(1) c-cap", lw=1.8)
-    ax.semilogy(s_nocap / SATURN_RADIUS, va_nocap / 1e3, "--", label="(2) no cap (raw)", lw=1.2)
-    ax.semilogy(s_floor / SATURN_RADIUS, va_floor / 1e3, ":", label="(3) density floor", lw=1.8)
+    ax.semilogy(
+        s_nocap / SATURN_RADIUS, va_nocap / 1e3, "--", label="(2) no cap (raw)", lw=1.2
+    )
+    ax.semilogy(
+        s_floor / SATURN_RADIUS, va_floor / 1e3, ":", label="(3) density floor", lw=1.8
+    )
     ax.axhline(SPEED_OF_LIGHT / 1e3, color="0.6", lw=0.5, label="c (km/s)")
     ax.set_xlabel("arc length s (R_S)")
     ax.set_ylabel("v_A (km/s)")
@@ -131,7 +153,11 @@ def main() -> None:
 
     # Plot mode-1 eigenfunctions
     fig, ax = plt.subplots(figsize=(9, 4.5))
-    for label, r in [("(1) c-cap", r_def), ("(2) no cap", r_nocap), ("(3) density floor", r_floor)]:
+    for label, r in [
+        ("(1) c-cap", r_def),
+        ("(2) no cap", r_nocap),
+        ("(3) density floor", r_floor),
+    ]:
         m = r.modes[0]
         y = m.eigenfunction
         if y is not None:

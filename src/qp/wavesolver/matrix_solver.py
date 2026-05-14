@@ -83,7 +83,10 @@ def find_eigenfrequencies_matrix(
     w = p / va**2
 
     sl = solve_sl_uniform_grid(
-        s, p, w, n_modes,
+        s,
+        p,
+        w,
+        n_modes,
         include_eigenfunctions=include_eigenfunctions,
         diagnostic_label="arc-length",
     )

@@ -32,11 +32,10 @@ import datetime
 import json
 import logging
 import time
-from pathlib import Path
+from pathlib import Path  # noqa: F401  (used in argparse type and helpers)
 
 import numpy as np
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+from _common import setup_logging  # noqa: E402
 
 import qp  # noqa: E402
 from qp.cli import (  # noqa: E402
@@ -87,9 +86,9 @@ def main() -> None:
     add_verbosity_arg(parser)
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.INFO if args.verbose else logging.WARNING,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    setup_logging(
+        args.verbose,
+        fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
     # ---- read parquet + check whether already enriched ---------------

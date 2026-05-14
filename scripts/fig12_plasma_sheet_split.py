@@ -15,25 +15,22 @@ inside plasma-sheet cells.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import numpy as np
-import xarray as xr
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import xarray as xr  # noqa: E402
+from _common import OUTPUT_DIR, ensure_figures_dir  # noqa: E402
 
 
 def main() -> None:
     dwell = xr.open_zarr(
-        _PROJECT_ROOT / "Output" / "dwell_grid_cassini_saturn.zarr",
+        OUTPUT_DIR / "dwell_grid_cassini_saturn.zarr",
         consolidated=False,
     )
     events = xr.open_zarr(
-        _PROJECT_ROOT / "Output" / "event_time_grid_v1.zarr",
+        OUTPUT_DIR / "event_time_grid_v1.zarr",
         consolidated=False,
     )
 
@@ -104,9 +101,7 @@ def main() -> None:
     fig.colorbar(im2, ax=axes[1], fraction=0.04, pad=0.02, label="event/dwell")
 
     fig.suptitle("Phase 6.8 — Plasma sheet proxy vs QP60 occurrence", fontsize=13)
-    out_dir = _PROJECT_ROOT / "Output" / "figures"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out = out_dir / "figure12_plasma_sheet_split.png"
+    out = ensure_figures_dir() / "figure12_plasma_sheet_split.png"
     fig.savefig(out, dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"Wrote {out}")

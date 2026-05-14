@@ -26,6 +26,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from _common import setup_logging
 from scipy.signal import butter, sosfiltfilt
 
 import qp
@@ -203,10 +204,7 @@ def _plot(df: pd.DataFrame, output_path: Path) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parquet = qp.OUTPUT_DIR / "events_round8.parquet"
     df, attrs = read_events_parquet(parquet)
     log.info(

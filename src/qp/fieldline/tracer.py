@@ -35,7 +35,23 @@ class FieldModel(Protocol):
     def __call__(self, position: np.ndarray) -> np.ndarray: ...
 
 
-@dataclass
+def _conjugate_latitude_from_spherical(
+    rtp: np.ndarray, surface_radius: float
+) -> float | None:
+    """Shared kernel: invariant latitude at the planet surface from
+    spherical coordinates ``rtp`` shape (N, 3).
+
+    Returns ``None`` if no trace point lies within 0.5 R_S of the
+    surface (i.e., the field line never reached the planet).
+    """
+    r = rtp[:, 0]
+    idx = np.argmin(np.abs(r - surface_radius))
+    if np.abs(r[idx] - surface_radius) > 0.5:
+        return None
+    return 90.0 - np.degrees(rtp[idx, 1])
+
+
+@dataclass(frozen=True, slots=True)
 class FieldLineTrace:
     """Result of a field line trace.
 
@@ -68,12 +84,7 @@ class FieldLineTrace:
 
         Returns latitude in degrees, or None if no intersection found.
         """
-        rtp = self.spherical
-        r = rtp[:, 0]
-        idx = np.argmin(np.abs(r - surface_radius))
-        if np.abs(r[idx] - surface_radius) > 0.5:
-            return None
-        return 90.0 - np.degrees(rtp[idx, 1])
+        return _conjugate_latitude_from_spherical(self.spherical, surface_radius)
 
 
 def _surface_radius(x: float, y: float, z: float, flattening: float) -> float:
@@ -205,17 +216,9 @@ def conjugate_latitude(
 
     Returns latitude in degrees, or None if no intersection.
     """
-    rtp = field_line_to_spherical(trace_xyz)
-    r = rtp[:, 0]
-
-    # Find where r is closest to surface_radius
-    idx = np.argmin(np.abs(r - surface_radius))
-    if np.abs(r[idx] - surface_radius) > 0.5:  # tolerance of 0.5 R_S
-        return None
-
-    theta = rtp[idx, 1]  # colatitude
-    lat_deg = 90.0 - np.degrees(theta)
-    return lat_deg
+    return _conjugate_latitude_from_spherical(
+        field_line_to_spherical(trace_xyz), surface_radius
+    )
 
 
 def _dipole_unit(pos: np.ndarray) -> np.ndarray:

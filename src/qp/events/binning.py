@@ -190,6 +190,11 @@ class SegmentPositions:
     central_mask: np.ndarray | None = None  # (N,) bool
 
 
+# ======================================================================
+# Reference per-minute walking binner (test fixture; not on round-8 path)
+# ======================================================================
+
+
 def bin_events_walking(
     events: Iterable[WaveEvent],
     segment_positions: dict[int, SegmentPositions],
@@ -424,6 +429,11 @@ class SegmentPositionsExt(SegmentPositions):
     ksm_z: np.ndarray | None = None  # (N,) R_S
     region_codes: np.ndarray | None = None  # (N,) int (0/1/2/9)
     b_total_nT: np.ndarray | None = None  # (N,) float
+
+
+# ======================================================================
+# Trajectory-binned event grids (numerator for Figs 7, SI 1, SI 2)
+# ======================================================================
 
 
 def accumulate_full_mirror(
@@ -678,6 +688,11 @@ def full_mirror_grids_to_xarray(
 # so the cost scales with total event minutes, not total mission
 # minutes.
 # ----------------------------------------------------------------------
+
+
+# ======================================================================
+# KMAG-traced event grids (numerator for Fig 8 + supplementary polar)
+# ======================================================================
 
 
 def accumulate_kmag_event_grids(

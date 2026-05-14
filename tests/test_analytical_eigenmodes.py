@@ -51,7 +51,6 @@ from scipy.optimize import brentq
 from qp.wavesolver.eigensolver import find_eigenfrequencies
 from qp.wavesolver.matrix_solver import find_eigenfrequencies_matrix
 
-
 # ---------------------------------------------------------------------------
 # Closed-form analytic references
 
@@ -77,10 +76,9 @@ def _two_section_string_modes(
     def char(omega: float) -> float:
         k1 = omega / v_1
         k2 = omega / v_2
-        return (
-            k1 * np.sin(k2 * L / 2) * np.cos(k1 * L / 2)
-            + k2 * np.sin(k1 * L / 2) * np.cos(k2 * L / 2)
-        )
+        return k1 * np.sin(k2 * L / 2) * np.cos(k1 * L / 2) + k2 * np.sin(
+            k1 * L / 2
+        ) * np.cos(k2 * L / 2)
 
     omega_max = 4 * n_modes * np.pi * max(v_1, v_2) / L
     grid = np.linspace(1e-3 * omega_max / n_modes, omega_max, 20000)
@@ -128,8 +126,12 @@ def test_matrix_linear_va_matches_analytic(alpha: float) -> None:
     n_modes = 5
     prof = _build_uniform_profile(L, 5000, lambda s: v_0 * (1 + alpha * s / L))
     modes = find_eigenfrequencies_matrix(
-        prof["s"], prof["h_alpha"], prof["B"], prof["va"],
-        n_modes=n_modes, include_eigenfunctions=False,
+        prof["s"],
+        prof["h_alpha"],
+        prof["B"],
+        prof["va"],
+        n_modes=n_modes,
+        include_eigenfunctions=False,
     )
     found = np.array([m.angular_frequency for m in modes])
     analytic = _linear_va_modes_analytic(v_0, alpha, L, n_modes)
@@ -186,8 +188,12 @@ def test_matrix_two_section_string_matches_analytic(v_ratio: float) -> None:
 
     prof = _build_uniform_profile(L, n_pts, va)
     modes = find_eigenfrequencies_matrix(
-        prof["s"], prof["h_alpha"], prof["B"], prof["va"],
-        n_modes=n_modes, include_eigenfunctions=False,
+        prof["s"],
+        prof["h_alpha"],
+        prof["B"],
+        prof["va"],
+        n_modes=n_modes,
+        include_eigenfunctions=False,
     )
     found = np.array([m.angular_frequency for m in modes])
     analytic = _two_section_string_modes(v_1, v_2, L, n_modes)
@@ -217,8 +223,12 @@ def test_matrix_and_shooter_agree_on_linear_va() -> None:
     prof = _build_uniform_profile(L, 5000, lambda s: v_0 * (1 + alpha * s / L))
 
     matrix_modes = find_eigenfrequencies_matrix(
-        prof["s"], prof["h_alpha"], prof["B"], prof["va"],
-        n_modes=n_modes, include_eigenfunctions=False,
+        prof["s"],
+        prof["h_alpha"],
+        prof["B"],
+        prof["va"],
+        n_modes=n_modes,
+        include_eigenfunctions=False,
     )
     shoot_modes = find_eigenfrequencies(
         s_span=(0.0, L),

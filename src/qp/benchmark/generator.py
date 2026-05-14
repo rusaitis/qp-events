@@ -75,7 +75,7 @@ class EventSpec:
     period_sec_override: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ScenarioConfig:
     """Configuration for one benchmark dataset."""
 

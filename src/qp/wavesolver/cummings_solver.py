@@ -132,9 +132,7 @@ def find_eigenfrequencies_cummings(
             arc_length = arc_length[keep]
 
     if mu.size < 8:
-        raise ValueError(
-            f"Cummings solver needs ≥8 monotonic μ samples; got {mu.size}"
-        )
+        raise ValueError(f"Cummings solver needs ≥8 monotonic μ samples; got {mu.size}")
 
     # 2. Splines as functions of μ
     h_alpha_of_mu = CubicSpline(mu, h_alpha)
@@ -160,7 +158,10 @@ def find_eigenfrequencies_cummings(
     w_mu = h_alpha_g**2 * B_g * J_g / va_g**2
 
     sl = solve_sl_uniform_grid(
-        mu_uniform, p_mu, w_mu, n_modes,
+        mu_uniform,
+        p_mu,
+        w_mu,
+        n_modes,
         include_eigenfunctions=include_eigenfunctions,
         mass_condition_warn=_MASS_CONDITION_WARN,
         diagnostic_label="Cummings μ-coordinate",

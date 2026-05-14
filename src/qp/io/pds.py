@@ -15,7 +15,7 @@ import qp
 # --- Column descriptor for PDS TAB files ---
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ColumnDef:
     """Describes one column in a PDS TAB file."""
 

@@ -30,6 +30,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from _common import setup_logging
 from scipy.signal import correlate
 
 import qp
@@ -246,10 +247,7 @@ def _plot(df: pd.DataFrame) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    setup_logging(fmt="%(asctime)s %(levelname)s %(name)s: %(message)s")
     df, attrs = read_events_parquet(qp.OUTPUT_DIR / "events_round8.parquet")
     log.info(
         "loaded %d events (schema=%s)",

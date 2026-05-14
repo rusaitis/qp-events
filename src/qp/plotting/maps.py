@@ -25,7 +25,6 @@ def plot_lt_lat_heatmap(
     log_scale: bool = False,
     xlabel: str = "Local Time [h]",
     ylabel: str = "Conjugate Latitude [deg]",
-    cbar_label: str = "Hours",
 ) -> plt.cm.ScalarMappable:
     """Plot a 2D heatmap in local time vs latitude bins.
 

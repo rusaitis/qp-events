@@ -29,12 +29,13 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from _common import setup_logging
 
 from qp.fieldline.kmag_model import SaturnField
 from qp.wavesolver.matrix_solver import find_eigenfrequencies_matrix
 from qp.wavesolver.solver import WavesolverConfig
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
+setup_logging()
 log = logging.getLogger(__name__)
 
 _REF_RUSAITIS_MHZ_BY_L = {8.0: 0.12, 10.0: 0.088, 15.0: 0.053}
@@ -68,7 +69,9 @@ def _truncated_mode1(
 
     phi = math.radians((cfg.local_time_hours - 12.0) * 15.0)
     start = np.array([l_shell * math.cos(phi), l_shell * math.sin(phi), 0.0])
-    trace = trace_fieldline_bidirectional(field_func, start, step=cfg.trace_step, max_steps=100000)
+    trace = trace_fieldline_bidirectional(
+        field_func, start, step=cfg.trace_step, max_steps=100000
+    )
     profile = compute_field_line_profile(trace, BagenalDelamere())
 
     s = profile.s_samples
@@ -118,16 +121,29 @@ def main() -> None:
 
     rows: list[dict[str, float]] = []
     log.info("Trace-truncation sweep across L=8, 10, 15 noon")
-    log.info("  L  |  r_min (R_S) |  mode 1 (mHz) |  WKB (mHz) |  ref (mHz) | f1/WKB | n_pts | frac")
+    log.info(
+        "  L  |  r_min (R_S) |  mode 1 (mHz) |  WKB (mHz) |  ref (mHz) | f1/WKB | n_pts | frac"
+    )
     log.info("  " + "-" * 96)
     r_mins = [1.00, 1.05, 1.10, 1.20, 1.30, 1.50, 2.00, 3.00]
     for L, ref in _REF_RUSAITIS_MHZ_BY_L.items():
         for r_min in r_mins:
             f1, fwkb, n_kept, frac, va_end = _truncated_mode1(L, r_min)
-            ratio = f1 / fwkb if np.isfinite(f1) and np.isfinite(fwkb) and fwkb > 0 else float("nan")
+            ratio = (
+                f1 / fwkb
+                if np.isfinite(f1) and np.isfinite(fwkb) and fwkb > 0
+                else float("nan")
+            )
             log.info(
                 "  %.0f  |   %.2f       |   %10.6f  |  %.4f    |   %.4f   |  %.3f |  %5d | %.2f",
-                L, r_min, f1, fwkb, ref, ratio, n_kept, frac,
+                L,
+                r_min,
+                f1,
+                fwkb,
+                ref,
+                ratio,
+                n_kept,
+                frac,
             )
             rows.append(
                 {
@@ -158,12 +174,33 @@ def main() -> None:
         xs = [r["r_min_rs"] for r in L_rows]
         ys = [r["mode1_mhz"] for r in L_rows]
         wkbs = [r["wkb_mhz"] for r in L_rows]
-        ax.plot(xs, ys, "o-", color=colors[L], lw=1.6, ms=6,
-                label=f"L={L:.0f} solver mode 1")
-        ax.plot(xs, wkbs, "s--", color=colors[L], lw=1.0, ms=4, alpha=0.6,
-                label=f"L={L:.0f} WKB asymptote")
-        ax.axhline(ref, ls=":", color=colors[L], lw=0.8, alpha=0.7,
-                   label=f"L={L:.0f} Rusaitis ref ({ref:.3f} mHz)")
+        ax.plot(
+            xs,
+            ys,
+            "o-",
+            color=colors[L],
+            lw=1.6,
+            ms=6,
+            label=f"L={L:.0f} solver mode 1",
+        )
+        ax.plot(
+            xs,
+            wkbs,
+            "s--",
+            color=colors[L],
+            lw=1.0,
+            ms=4,
+            alpha=0.6,
+            label=f"L={L:.0f} WKB asymptote",
+        )
+        ax.axhline(
+            ref,
+            ls=":",
+            color=colors[L],
+            lw=0.8,
+            alpha=0.7,
+            label=f"L={L:.0f} Rusaitis ref ({ref:.3f} mHz)",
+        )
     ax.set_xlabel("trace truncation r_min (R_S)")
     ax.set_ylabel("mode 1 (mHz)")
     ax.set_title("KMAG noon — mode 1 vs trace truncation radius")
@@ -182,9 +219,15 @@ def main() -> None:
         matches = [r for r in L_rows if abs(r["mode1_mhz"] - ref) / ref < 0.15]
         if matches:
             best = min(matches, key=lambda r: abs(r["r_min_rs"] - 1.0))
-            log.info("  L=%.0f: r_min=%.2f R_S reproduces Rusaitis %.3f mHz "
-                     "(solver=%.4f mHz, WKB=%.4f mHz)",
-                     L, best["r_min_rs"], ref, best["mode1_mhz"], best["wkb_mhz"])
+            log.info(
+                "  L=%.0f: r_min=%.2f R_S reproduces Rusaitis %.3f mHz "
+                "(solver=%.4f mHz, WKB=%.4f mHz)",
+                L,
+                best["r_min_rs"],
+                ref,
+                best["mode1_mhz"],
+                best["wkb_mhz"],
+            )
         else:
             log.info("  L=%.0f: no r_min in sweep reproduces %.3f mHz", L, ref)
 

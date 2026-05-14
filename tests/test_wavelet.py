@@ -41,6 +41,7 @@ def test_pure_tone_peak_recovery(period_min: float) -> None:
     )
 
 
+@pytest.mark.slow
 def test_exact_scale_to_frequency_inverse_is_unbiased() -> None:
     """At ω₀=10, the (s, f) relation matches T&C98 Table 1.
 

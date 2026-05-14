@@ -18,7 +18,6 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from qp.fieldline.kmag_model import SaturnField
 from qp.wavesolver.density import UniformDensity
 from qp.wavesolver.solver import WavesolverConfig, solve_eigenfrequencies
 
@@ -103,11 +102,16 @@ class TestDipoleTrends:
 
 
 class TestKMAGValidation:
-    """Cross-validate KMAG eigenfrequencies against published reference."""
+    """Cross-validate KMAG eigenfrequencies against published reference.
+
+    Uses the session-scoped ``saturn_field`` fixture from ``conftest.py``
+    (renamed locally to ``field`` for readability) so the KMAG model is
+    constructed once for the entire test run.
+    """
 
     @pytest.fixture(scope="class")
-    def field(self):
-        return SaturnField()
+    def field(self, saturn_field):
+        return saturn_field
 
     @pytest.mark.slow
     def test_kmag_matches_rusaitis_fig2_at_L20(self, field):
